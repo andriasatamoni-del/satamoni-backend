@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>ساتاموني — شاشة الكاشير</title>
+<style>
+  :root {
+    --bg: #0E0E10;
+    --bg-alt: #18181B;
+    --card: #1D1D20;
+    --border: #2E2C27;
+    --ink: #F4EFE4;
+    --faint: #9C948A;
+    --red: #C22A24;
+    --red-deep: #8F1E19;
+    --gold: #CBA135;
+    --gold-bright: #E8C468;
+    --green: #3FA34D;
+    --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+    font-size: 15px;
+  }
+  #root { display: flex; height: 100vh; overflow: hidden; }
+
+  /* ===== Top bar ===== */
+  #topbar {
+    position: fixed; top: 0; right: 0; left: 0; height: 56px; z-index: 20;
+    background: var(--bg-alt); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+  }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; letter-spacing: 0.5px; }
+  #topbar select {
+    background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px; font-size: 14px;
+  }
+  #topbar .status { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 6px; }
+  #topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  #topbar .dot.ok { background: var(--green); }
+  #topbar .dot.err { background: var(--red); }
+
+  /* ===== Layout ===== */
+  #main { display: flex; width: 100%; margin-top: 56px; height: calc(100vh - 56px); }
+  #menuPane { flex: 1; overflow-y: auto; padding: 16px; }
+  #cartPane {
+    width: 360px; min-width: 320px; background: var(--bg-alt); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; height: 100%;
+  }
+
+  /* ===== Category tabs ===== */
+  #tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .tab {
+    white-space: nowrap; padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line);
+    background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px;
+  }
+  .tab.active { background: var(--red); color: #fff; border-color: var(--red); }
+
+  /* ===== Item grid ===== */
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .item-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px; cursor: pointer; user-select: none; transition: border-color .1s;
+  }
+  .item-card:active { border-color: var(--gold); }
+  .item-card .name { font-weight: 700; font-size: 14px; margin-bottom: 6px; min-height: 36px; }
+  .item-card .price { color: var(--gold-bright); font-family: 'Courier New', monospace; font-size: 13px; }
+  .item-card .best { display: inline-block; font-size: 10px; background: var(--gold); color: #1A1508; padding: 1px 6px; border-radius: 4px; margin-bottom: 4px; }
+
+  /* ===== Cart ===== */
+  #cartHeader { padding: 14px 16px; border-bottom: 1px solid var(--line); font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
+  #orderTypeRow { display: flex; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .otype-btn {
+    flex: 1; padding: 8px 0; text-align: center; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); color: var(--faint); cursor: pointer; font-size: 13px; font-weight: 700;
+  }
+  .otype-btn.active { background: var(--red); border-color: var(--red); color: #fff; }
+  #extraFields { padding: 10px 16px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+  #extraFields input, #extraFields select {
+    background: var(--card); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%;
+  }
+  #cartList { flex: 1; overflow-y: auto; padding: 8px 16px; }
+  .cart-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+  .cart-row .info { flex: 1; }
+  .cart-row .info .n { font-size: 13px; font-weight: 700; }
+  .cart-row .info .l { font-size: 11px; color: var(--faint); }
+  .qty-ctrl { display: flex; align-items: center; gap: 6px; }
+  .qty-ctrl button {
+    width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line); background: var(--card);
+    color: var(--ink); cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .cart-empty { text-align: center; color: var(--faint); padding: 30px 10px; font-size: 13px; }
+  #cartFooter { padding: 14px 16px; border-top: 1px solid var(--line); }
+  .row { display: flex; justify-content: space-between; font-family: 'Courier New', monospace; font-size: 13px; margin-bottom: 4px; }
+  .row.total { font-weight: 800; color: var(--gold-bright); font-size: 16px; margin-top: 8px; }
+  #payRow { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+  .pay-opt {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--line); cursor: pointer; font-size: 13px;
+  }
+  .pay-opt.active { border-color: var(--gold); }
+  #submitBtn {
+    width: 100%; padding: 14px; border: none; border-radius: 8px; background: var(--red);
+    color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px;
+  }
+  #submitBtn:disabled { background: #3A3630; cursor: not-allowed; }
+  #errBox { color: #F08A83; font-size: 12px; text-align: center; margin-top: 6px; }
+
+  /* ===== Confirmation overlay ===== */
+  #confirmOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 50;
+  }
+  #confirmOverlay.show { display: flex; }
+  #confirmBox {
+    background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 30px; width: 320px; text-align: center;
+  }
+  #confirmBox h2 { color: var(--gold-bright); margin: 10px 0; }
+  #confirmBox .num { font-family: 'Courier New', monospace; font-size: 22px; font-weight: 800; }
+  #confirmBox button {
+    margin-top: 20px; width: 100%; padding: 12px; background: transparent; color: var(--gold-bright);
+    border: 1px solid var(--gold); border-radius: 8px; font-weight: 700; cursor: pointer;
+  }
+
+  /* ===== Loading / empty states ===== */
+  #loadingState, #errorState { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🍕 ساتاموني — كاشير</div>
+  <select id="branchSelect"></select>
+  <div class="status"><span class="dot" id="connDot"></span><span id="connText">جاري الاتصال بالسيرفر...</span></div>
+</div>
+
+<div id="main">
+  <div id="menuPane">
+    <div id="loadingState">جاري تحميل المنيو...</div>
+    <div id="tabs" style="display:none"></div>
+    <div id="grid" style="display:none"></div>
+  </div>
+
+  <div id="cartPane">
+    <div id="cartHeader">
+      <span>الطلب الحالي</span>
+      <span id="cartCount" style="font-size:12px;color:var(--faint)"></span>
+    </div>
+
+    <div id="orderTypeRow">
+      <div class="otype-btn active" data-type="dinein">صالة</div>
+      <div class="otype-btn" data-type="takeaway">تيك أواي</div>
+      <div class="otype-btn" data-type="delivery">دليفري</div>
+    </div>
+
+    <div id="extraFields">
+      <input id="tableInput" placeholder="رقم الطاولة" />
+      <input id="phoneInput" placeholder="رقم موبايل العميل (اختياري)" />
+    </div>
+
+    <div id="cartList"><div class="cart-empty">السلة فاضية — دوس على أي صنف من المنيو</div></div>
+
+    <div id="cartFooter">
+      <div class="row"><span>الإجمالي الفرعي</span><span id="subtotalVal">0 ج.م</span></div>
+      <div class="row total"><span>الإجمالي</span><span id="totalVal">0 ج.م</span></div>
+      <div id="payRow"></div>
+      <button id="submitBtn" disabled>أرسل الطلب</button>
+      <div id="errBox"></div>
+    </div>
+  </div>
+</div>
+
+<div id="confirmOverlay">
+  <div id="confirmBox">
+    <div style="font-size:36px">✅</div>
+    <h2>تم تسجيل الطلب</h2>
+    <div class="num" id="confirmOrderId">#0</div>
+    <button id="newOrderBtn">طلب جديد</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// إعدادات الاتصال بالـ Backend — عدّل العنوان ده لعنوان السيرفر الفعلي
+// ============================================================
+const API_BASE_URL = window.SATAMONI_API_URL || "http://localhost:4000";
+
+const state = {
+  menu: [],
+  branches: [],
+  paymentMethods: [],
+  cart: {},          // key: `${itemId}__${variantId}` -> {itemId, variantId, name, label, price, qty}
+  activeCategory: null,
+  orderType: "dinein",
+  selectedBranchId: "",
+  selectedPaymentId: "",
+};
+
+const money = (n) => `${n} ج.م`;
+
+async function loadConfig() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/config/full`);
+    if (!res.ok) throw new Error("bad response");
+    const data = await res.json();
+    state.menu = data.menu;
+    state.branches = data.branches;
+    state.paymentMethods = data.paymentMethods;
+    state.selectedBranchId = data.branches[0]?.id || "";
+    state.selectedPaymentId = data.paymentMethods.find(p => p.enabled)?.id || "";
+    state.activeCategory = [...new Set(data.menu.map(m => m.category))][0];
+
+    document.getElementById("connDot").className = "dot ok";
+    document.getElementById("connText").textContent = "متصل بالسيرفر";
+    renderBranchSelect();
+    renderTabs();
+    renderGrid();
+    renderPayments();
+    document.getElementById("loadingState").style.display = "none";
+    document.getElementById("tabs").style.display = "flex";
+    document.getElementById("grid").style.display = "grid";
+  } catch (e) {
+    document.getElementById("connDot").className = "dot err";
+    document.getElementById("connText").textContent = "تعذر الاتصال بالسيرفر";
+    document.getElementById("loadingState").innerHTML =
+      `تعذر تحميل المنيو من السيرفر.<br/>تأكد إن الـ Backend شغال على <b>${API_BASE_URL}</b><br/>وحاول تحدّث الصفحة.`;
+  }
+}
+
+function renderBranchSelect() {
+  const sel = document.getElementById("branchSelect");
+  sel.innerHTML = state.branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  sel.value = state.selectedBranchId;
+  sel.onchange = () => { state.selectedBranchId = sel.value; };
+}
+
+function renderTabs() {
+  const categories = [...new Set(state.menu.map(m => m.category))];
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = categories.map(c =>
+    `<div class="tab ${c === state.activeCategory ? "active" : ""}" data-cat="${c}">${c}</div>`
+  ).join("");
+  tabs.querySelectorAll(".tab").forEach(el => {
+    el.onclick = () => { state.activeCategory = el.dataset.cat; renderTabs(); renderGrid(); };
+  });
+}
+
+function renderGrid() {
+  const items = state.menu.filter(m => m.category === state.activeCategory);
+  const grid = document.getElementById("grid");
+  grid.innerHTML = items.map(item => {
+    const variants = item.variants;
+    const priceLabel = variants.length === 1 ? money(variants[0].price) : `من ${money(Math.min(...variants.map(v => v.price)))}`;
+    return `
+      <div class="item-card" data-item='${JSON.stringify(item).replace(/'/g, "&apos;")}'>
+        ${item.best ? '<span class="best">الأكثر طلبًا</span><br/>' : ""}
+        <div class="name">${item.name}</div>
+        <div class="price">${priceLabel}</div>
+      </div>`;
+  }).join("");
+  grid.querySelectorAll(".item-card").forEach(el => {
+    el.onclick = () => {
+      const item = JSON.parse(el.dataset.item.replace(/&apos;/g, "'"));
+      if (item.variants.length > 1) {
+        pickVariant(item);
+      } else {
+        addToCart(item, item.variants[0]);
+      }
+    };
+  });
+}
+
+function pickVariant(item) {
+  const choice = item.variants.map((v, i) => `${i + 1}) ${v.label} — ${money(v.price)}`).join("\n");
+  const answer = prompt(`اختار الحجم لـ "${item.name}":\n${choice}`, "1");
+  const idx = parseInt(answer, 10) - 1;
+  if (item.variants[idx]) addToCart(item, item.variants[idx]);
+}
+
+function addToCart(item, variant) {
+  const key = `${item.id}__${variant.id}`;
+  const existing = state.cart[key];
+  state.cart[key] = {
+    itemId: item.id, variantId: variant.id, name: item.name,
+    label: variant.label, price: Number(variant.price), qty: (existing?.qty || 0) + 1,
+  };
+  renderCart();
+}
+
+function changeQty(key, delta) {
+  const row = state.cart[key];
+  if (!row) return;
+  row.qty += delta;
+  if (row.qty <= 0) delete state.cart[key];
+  renderCart();
+}
+
+function renderPayments() {
+  const wrap = document.getElementById("payRow");
+  wrap.innerHTML = state.paymentMethods.map(p =>
+    `<div class="pay-opt ${p.id === state.selectedPaymentId ? "active" : ""}" data-id="${p.id}">
+      <input type="radio" name="pay" ${p.id === state.selectedPaymentId ? "checked" : ""} />
+      ${p.name}
+    </div>`
+  ).join("");
+  wrap.querySelectorAll(".pay-opt").forEach(el => {
+    el.onclick = () => { state.selectedPaymentId = el.dataset.id; renderPayments(); updateSubmitState(); };
+  });
+}
+
+function renderCart() {
+  const rows = Object.entries(state.cart);
+  const list = document.getElementById("cartList");
+  document.getElementById("cartCount").textContent = rows.length ? `${rows.reduce((s, [,v]) => s + v.qty, 0)} صنف` : "";
+
+  if (rows.length === 0) {
+    list.innerHTML = '<div class="cart-empty">السلة فاضية — دوس على أي صنف من المنيو</div>';
+  } else {
+    list.innerHTML = rows.map(([key, v]) => `
+      <div class="cart-row">
+        <div class="info"><div class="n">${v.name}</div><div class="l">${v.label} × ${money(v.price)}</div></div>
+        <div class="qty-ctrl">
+          <button data-key="${key}" data-d="-1">−</button>
+          <span>${v.qty}</span>
+          <button data-key="${key}" data-d="1">+</button>
+        </div>
+      </div>`).join("");
+    list.querySelectorAll("button[data-key]").forEach(btn => {
+      btn.onclick = () => changeQty(btn.dataset.key, parseInt(btn.dataset.d, 10));
+    });
+  }
+
+  const subtotal = rows.reduce((s, [,v]) => s + v.price * v.qty, 0);
+  document.getElementById("subtotalVal").textContent = money(subtotal);
+  document.getElementById("totalVal").textContent = money(subtotal);
+  updateSubmitState();
+}
+
+function updateSubmitState() {
+  const rows = Object.entries(state.cart);
+  const okBranch = state.orderType !== "delivery" ? !!state.selectedBranchId : true;
+  const okTable = state.orderType !== "dinein" || document.getElementById("tableInput").value.trim();
+  const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okTable;
+  document.getElementById("submitBtn").disabled = !ok;
+}
+
+document.querySelectorAll(".otype-btn").forEach(btn => {
+  btn.onclick = () => {
+    state.orderType = btn.dataset.type;
+    document.querySelectorAll(".otype-btn").forEach(b => b.classList.toggle("active", b === btn));
+    document.getElementById("tableInput").style.display = state.orderType === "dinein" ? "block" : "none";
+    updateSubmitState();
+  };
+});
+document.getElementById("tableInput").addEventListener("input", updateSubmitState);
+
+document.getElementById("submitBtn").onclick = async () => {
+  const btn = document.getElementById("submitBtn");
+  const errBox = document.getElementById("errBox");
+  btn.disabled = true;
+  btn.textContent = "جاري الإرسال...";
+  errBox.textContent = "";
+  try {
+    const payload = {
+      branchId: state.selectedBranchId,
+      source: "pos",
+      orderType: state.orderType,
+      tableNumber: state.orderType === "dinein" ? document.getElementById("tableInput").value.trim() : null,
+      customerPhone: document.getElementById("phoneInput").value.trim() || null,
+      paymentMethodId: state.selectedPaymentId,
+      deliveryFee: 0,
+      items: Object.values(state.cart).map(v => ({
+        itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty,
+      })),
+    };
+    const res = await fetch(`${API_BASE_URL}/api/orders`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error("submit failed");
+    const result = await res.json();
+    document.getElementById("confirmOrderId").textContent = `#${result.orderId}`;
+    document.getElementById("confirmOverlay").classList.add("show");
+  } catch (e) {
+    errBox.textContent = "تعذر إرسال الطلب. تأكد من الاتصال وحاول تاني.";
+  } finally {
+    btn.textContent = "أرسل الطلب";
+    updateSubmitState();
+  }
+};
+
+document.getElementById("newOrderBtn").onclick = () => {
+  state.cart = {};
+  document.getElementById("tableInput").value = "";
+  document.getElementById("phoneInput").value = "";
+  document.getElementById("confirmOverlay").classList.remove("show");
+  renderCart();
+};
+
+loadConfig();
+</script>
+</body>
+</html>
