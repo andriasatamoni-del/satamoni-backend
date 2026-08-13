@@ -159,6 +159,45 @@ CREATE TABLE supplier_ledger_entries (
   created_by    TEXT
 );
 
+-- ---------------- المخزون الفعلي ووصفات الأصناف (BOM) ----------------
+CREATE TABLE inventory_items (
+  id            SERIAL PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,        -- دقيق / جبنة موتزاريلا / زيت ...
+  unit          TEXT NOT NULL,               -- كيلو / لتر / قطعة
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE branch_inventory_stock (
+  id                SERIAL PRIMARY KEY,
+  branch_id         INTEGER REFERENCES branches(id),
+  inventory_item_id INTEGER REFERENCES inventory_items(id),
+  quantity          NUMERIC NOT NULL DEFAULT 0,
+  UNIQUE(branch_id, inventory_item_id)
+);
+
+-- كام وحدة من كل مكوّن بتتاخد لما يتباع variant واحد (الوصفة/BOM)
+CREATE TABLE menu_item_variant_ingredients (
+  id                  SERIAL PRIMARY KEY,
+  variant_id          INTEGER REFERENCES menu_item_variants(id) ON DELETE CASCADE,
+  inventory_item_id   INTEGER REFERENCES inventory_items(id),
+  quantity_per_unit   NUMERIC NOT NULL,
+  UNIQUE(variant_id, inventory_item_id)
+);
+
+-- سجل حركة المخزون (بديل الجرد اليدوي بالإكسل)
+CREATE TABLE inventory_movements (
+  id                SERIAL PRIMARY KEY,
+  branch_id         INTEGER REFERENCES branches(id),
+  inventory_item_id INTEGER REFERENCES inventory_items(id),
+  movement_type     TEXT NOT NULL CHECK (movement_type IN ('purchase', 'sale_deduction', 'transfer_in', 'transfer_out', 'adjustment')),
+  quantity          NUMERIC NOT NULL,        -- موجب = زيادة، سالب = نقصان
+  order_id          INTEGER REFERENCES orders(id),
+  business_date     DATE NOT NULL DEFAULT CURRENT_DATE,
+  notes             TEXT,
+  created_by        INTEGER REFERENCES users(id),
+  created_at        TIMESTAMPTZ DEFAULT now()
+);
+
 -- ---------------- رصيد المخزون الشهري ----------------
 CREATE TABLE inventory_snapshots (
   id                  SERIAL PRIMARY KEY,

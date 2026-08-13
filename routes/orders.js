@@ -55,6 +55,32 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       );
     }
 
+    // خصم المخزون تلقائيًا حسب وصفة كل صنف (BOM) - لو الطلب مربوط بفرع
+    if (branchId) {
+      for (const it of items) {
+        const recipe = await client.query(
+          "SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1",
+          [it.variantId]
+        );
+        for (const ing of recipe.rows) {
+          // الضرب بيحصل جوه Postgres (NUMERIC) عشان نتجنب أخطاء دقة الأرقام العشرية في JS
+          await client.query(
+            `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
+             VALUES ($1, $2, -($3::numeric * $4::numeric))
+             ON CONFLICT (branch_id, inventory_item_id)
+             DO UPDATE SET quantity = branch_inventory_stock.quantity - ($3::numeric * $4::numeric)`,
+            [branchId, ing.inventory_item_id, ing.quantity_per_unit, it.quantity]
+          );
+          await client.query(
+            `INSERT INTO inventory_movements
+              (branch_id, inventory_item_id, movement_type, quantity, order_id, business_date)
+             VALUES ($1, $2, 'sale_deduction', -($3::numeric * $4::numeric), $5, CURRENT_DATE)`,
+            [branchId, ing.inventory_item_id, ing.quantity_per_unit, it.quantity, orderId]
+          );
+        }
+      }
+    }
+
     await client.query("COMMIT");
     res.status(201).json({ orderId, subtotal, total });
   } catch (err) {
