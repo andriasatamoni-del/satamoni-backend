@@ -55,6 +55,23 @@ CREATE TABLE menu_item_variants (
   UNIQUE(item_id, label)
 );
 
+-- ---------------- العروض/الكومبوهات (أكتر من صنف بسعر واحد) ----------------
+CREATE TABLE combos (
+  id            SERIAL PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  price         NUMERIC NOT NULL,
+  is_active     BOOLEAN DEFAULT TRUE,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE combo_items (
+  id            SERIAL PRIMARY KEY,
+  combo_id      INTEGER REFERENCES combos(id) ON DELETE CASCADE,
+  variant_id    INTEGER REFERENCES menu_item_variants(id),
+  quantity      INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(combo_id, variant_id)
+);
+
 -- ---------------- مناطق التوصيل وطرق الدفع ----------------
 CREATE TABLE delivery_areas (
   id            SERIAL PRIMARY KEY,
@@ -99,6 +116,7 @@ CREATE TABLE order_items (
   order_id      INTEGER REFERENCES orders(id) ON DELETE CASCADE,
   item_id       INTEGER REFERENCES menu_items(id),
   variant_id    INTEGER REFERENCES menu_item_variants(id),
+  combo_id      INTEGER REFERENCES combos(id), -- لو السطر ده عرض/كومبو مش صنف مفرد (item_id/variant_id بيبقوا NULL)
   quantity      INTEGER NOT NULL DEFAULT 1,
   unit_price    NUMERIC NOT NULL,
   line_total    NUMERIC NOT NULL

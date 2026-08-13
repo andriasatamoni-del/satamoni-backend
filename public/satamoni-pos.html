@@ -235,11 +235,16 @@
 // ============================================================
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
 
+const COMBO_CATEGORY = "🎁 العروض";
+
 const state = {
   menu: [],
   branches: [],
   paymentMethods: [],
-  cart: {},          // key: `${itemId}__${variantId}` -> {itemId, variantId, name, label, price, qty}
+  combos: [],
+  // key: `${itemId}__${variantId}` أو `combo__${comboId}` للعروض
+  // -> {itemId, variantId, name, label, price, qty} أو {comboId, name, label, price, qty}
+  cart: {},
   activeCategory: null,
   channel: "branch", // "branch" (سعر الفرع العادي) | "talabat" (سعر تطبيق طلبات)
   orderType: "dinein",
@@ -324,6 +329,7 @@ async function loadConfig() {
     state.menu = data.menu;
     state.branches = data.branches;
     state.paymentMethods = data.paymentMethods;
+    state.combos = data.combos || [];
     const ownBranchId = auth.user && auth.user.role !== "admin" ? auth.user.branchId : null;
     state.selectedBranchId = ownBranchId || data.branches[0]?.id || "";
     state.selectedPaymentId = data.paymentMethods.find(p => p.enabled)?.id || "";
@@ -365,6 +371,7 @@ function menuForChannel() {
 
 function renderTabs() {
   const categories = [...new Set(menuForChannel().map(m => m.category))];
+  if (state.channel === "branch" && state.combos.length > 0) categories.push(COMBO_CATEGORY);
   const tabs = document.getElementById("tabs");
   tabs.innerHTML = categories.map(c =>
     `<div class="tab ${c === state.activeCategory ? "active" : ""}" data-cat="${c}">${c}</div>`
@@ -375,8 +382,22 @@ function renderTabs() {
 }
 
 function renderGrid() {
-  const items = menuForChannel().filter(m => m.category === state.activeCategory);
   const grid = document.getElementById("grid");
+
+  if (state.activeCategory === COMBO_CATEGORY) {
+    grid.innerHTML = state.combos.map(combo => `
+      <div class="item-card" data-combo='${JSON.stringify(combo).replace(/'/g, "&apos;")}'>
+        <span class="best">عرض</span><br/>
+        <div class="name">${combo.name}</div>
+        <div class="price">${money(combo.price)}</div>
+      </div>`).join("");
+    grid.querySelectorAll(".item-card").forEach(el => {
+      el.onclick = () => addComboToCart(JSON.parse(el.dataset.combo.replace(/&apos;/g, "'")));
+    });
+    return;
+  }
+
+  const items = menuForChannel().filter(m => m.category === state.activeCategory);
   grid.innerHTML = items.map(item => {
     const variants = item.variants;
     const prices = variants.map(priceFor);
@@ -413,6 +434,16 @@ function addToCart(item, variant) {
   state.cart[key] = {
     itemId: item.id, variantId: variant.id, name: item.name,
     label: variant.label, price: priceFor(variant), qty: (existing?.qty || 0) + 1,
+  };
+  renderCart();
+}
+
+function addComboToCart(combo) {
+  const key = `combo__${combo.id}`;
+  const existing = state.cart[key];
+  state.cart[key] = {
+    comboId: combo.id, name: combo.name, label: "عرض",
+    price: Number(combo.price), qty: (existing?.qty || 0) + 1,
   };
   renderCart();
 }
@@ -520,9 +551,10 @@ document.getElementById("submitBtn").onclick = async () => {
       customerPhone: !isTalabat ? (document.getElementById("phoneInput").value.trim() || null) : null,
       paymentMethodId: state.selectedPaymentId,
       deliveryFee: 0,
-      items: Object.values(state.cart).map(v => ({
-        itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty,
-      })),
+      items: Object.values(state.cart).map(v => v.comboId
+        ? { comboId: v.comboId, unitPrice: v.price, quantity: v.qty }
+        : { itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty }
+      ),
     };
     const res = await fetch(`${API_BASE_URL}/api/orders`, {
       method: "POST",

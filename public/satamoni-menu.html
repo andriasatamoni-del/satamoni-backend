@@ -51,6 +51,12 @@
   .addvariant input.price { width: 70px; }
   .addvariant button { padding: 6px 10px; border: 1px solid var(--gold); background: transparent; color: var(--gold-bright); border-radius: 6px; cursor: pointer; font-size: 12px; }
 
+  .pickrow { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .pickrow select { flex: 2; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px; font-size: 12px; }
+  .pickrow input { flex: 1; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px; font-size: 12px; }
+  .pickrow button { flex: 0; padding: 8px 10px; border: 1px solid var(--line); background: transparent; color: #F08A83; border-radius: 6px; cursor: pointer; }
+  .addrow-link { background: none; border: 1px dashed var(--line); color: var(--gold-bright); cursor: pointer; font-size: 12px; padding: 8px; border-radius: 6px; width: 100%; margin-bottom: 8px; }
+
   table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
   th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
   th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
@@ -94,6 +100,7 @@
     <div class="tabbtn active" data-tab="menu">المنيو</div>
     <div class="tabbtn" data-tab="areas">مناطق التوصيل</div>
     <div class="tabbtn" data-tab="payments">طرق الدفع</div>
+    <div class="tabbtn" data-tab="combos">العروض</div>
   </div>
 
   <!-- المنيو -->
@@ -151,6 +158,24 @@
       <div class="err" id="payErr"></div>
     </div>
     <table><thead><tr><th>الاسم</th><th>ملاحظة</th><th>الحالة</th><th></th></tr></thead><tbody id="paymentsBody"></tbody></table>
+  </div>
+
+  <!-- العروض -->
+  <div class="panel" id="panel-combos">
+    <h1>إضافة عرض جديد</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="comboName" placeholder="اسم العرض (وجبة عيلة / كومبو ٢ بيتزا ...)" />
+        <input id="comboPrice" type="number" placeholder="سعر العرض" />
+      </div>
+      <div id="comboItemRows"></div>
+      <button class="addrow-link" id="addComboItemRow">+ صنف تاني للعرض</button>
+      <button id="comboSubmit">إضافة العرض</button>
+      <div class="err" id="comboErr"></div>
+    </div>
+
+    <h1>العروض الحالية</h1>
+    <div id="combosList"></div>
   </div>
 </div>
 
@@ -219,10 +244,14 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 
 function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
 
+let menuItemsCache = [];
+
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
   await Promise.all([loadCategories(), loadItems(), loadAreas(), loadPayments()]);
+  addComboItemRow();
+  await loadCombos();
 }
 
 // ---------------- الأقسام ----------------
@@ -244,6 +273,7 @@ document.getElementById("catSubmit").onclick = async () => {
 // ---------------- الأصناف ----------------
 async function loadItems() {
   const items = await api("/api/menu/items");
+  menuItemsCache = items;
   document.getElementById("itemsList").innerHTML = items.length ? items.map(it => `
     <div class="item-card ${it.is_active ? "" : "inactive"}" data-id="${it.id}">
       <div class="head">
@@ -387,6 +417,114 @@ document.getElementById("paySubmit").onclick = async () => {
     await loadPayments();
   } catch (e) { errBox.textContent = e.message; }
 };
+
+// ---------------- العروض ----------------
+function variantOptions() {
+  const opts = [];
+  menuItemsCache.forEach(it => it.variants.forEach(v => opts.push(`<option value="${v.id}">${it.name} - ${v.label}</option>`)));
+  return opts.join("");
+}
+function addComboItemRow(variantId, quantity) {
+  const wrap = document.getElementById("comboItemRows");
+  const row = document.createElement("div");
+  row.className = "pickrow";
+  row.innerHTML = `
+    <select class="combo-item">${variantOptions()}</select>
+    <input class="combo-qty" type="number" placeholder="الكمية" value="${quantity || 1}" />
+    <button type="button" class="combo-remove">×</button>
+  `;
+  if (variantId) row.querySelector(".combo-item").value = variantId;
+  row.querySelector(".combo-remove").onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+document.getElementById("addComboItemRow").onclick = () => addComboItemRow();
+
+function collectComboItems(container) {
+  return [...container.querySelectorAll(".pickrow")].map(r => ({
+    variantId: r.querySelector(".combo-item").value,
+    quantity: Number(r.querySelector(".combo-qty").value),
+  })).filter(it => it.variantId && it.quantity > 0);
+}
+
+document.getElementById("comboSubmit").onclick = async () => {
+  const errBox = document.getElementById("comboErr");
+  errBox.textContent = "";
+  const items = collectComboItems(document.getElementById("comboItemRows"));
+  if (items.length === 0) { errBox.textContent = "لازم تحدد صنف وكمية على الأقل"; return; }
+  try {
+    await api("/api/combos", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("comboName").value.trim(),
+        price: Number(document.getElementById("comboPrice").value),
+        items,
+      }),
+    });
+    document.getElementById("comboName").value = "";
+    document.getElementById("comboPrice").value = "";
+    document.getElementById("comboItemRows").innerHTML = "";
+    addComboItemRow();
+    await loadCombos();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+async function loadCombos() {
+  const combos = await api("/api/combos/all");
+  document.getElementById("combosList").innerHTML = combos.length ? combos.map(c => `
+    <div class="item-card ${c.is_active ? "" : "inactive"}" data-combo="${c.id}">
+      <div class="head">
+        <div><div class="name">${c.name}</div><div class="cat">${money(c.price)}</div></div>
+        <button class="linkbtn ${c.is_active ? "danger" : ""}" data-toggleCombo="${c.id}" data-active="${c.is_active}">${c.is_active ? "تعطيل" : "تفعيل"}</button>
+      </div>
+      ${c.items.map(it => `<div class="variant-row"><span class="lbl">${it.item_name} - ${it.label}</span><span>× ${it.quantity}</span></div>`).join("")}
+      <button class="linkbtn" data-editComboItems="${c.id}">تعديل الأصناف</button>
+      <div class="formbox" style="display:none;margin-top:8px" data-editbox="${c.id}"></div>
+    </div>
+  `).join("") : `<div style="color:var(--faint);font-size:13px">لسه مفيش عروض</div>`;
+
+  document.querySelectorAll("[data-toggleCombo]").forEach(btn => {
+    btn.onclick = async () => {
+      const isActive = btn.dataset.active === "true";
+      await api(`/api/combos/${btn.dataset.togglecombo}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
+      loadCombos();
+    };
+  });
+  document.querySelectorAll("[data-editComboItems]").forEach(btn => {
+    btn.onclick = () => {
+      const comboId = btn.dataset.editcomboitems;
+      const combo = combos.find(c => String(c.id) === comboId);
+      const box = document.querySelector(`[data-editbox="${comboId}"]`);
+      box.style.display = box.style.display === "none" ? "block" : "none";
+      if (box.style.display === "none") return;
+      box.innerHTML = `<div class="edit-rows"></div><button class="addrow-link" data-addeditrow>+ صنف تاني</button><button data-saveComboItems="${comboId}">حفظ الأصناف</button><div class="err" data-editerr="${comboId}"></div>`;
+      const rowsWrap = box.querySelector(".edit-rows");
+      function addEditRow(variantId, quantity) {
+        const row = document.createElement("div");
+        row.className = "pickrow";
+        row.innerHTML = `
+          <select class="combo-item">${variantOptions()}</select>
+          <input class="combo-qty" type="number" value="${quantity || 1}" />
+          <button type="button" class="combo-remove">×</button>
+        `;
+        if (variantId) row.querySelector(".combo-item").value = variantId;
+        row.querySelector(".combo-remove").onclick = () => row.remove();
+        rowsWrap.appendChild(row);
+      }
+      combo.items.forEach(it => addEditRow(it.variant_id, it.quantity));
+      box.querySelector("[data-addeditrow]").onclick = () => addEditRow();
+      box.querySelector(`[data-savecomboitems="${comboId}"]`).onclick = async () => {
+        const errBox = box.querySelector(`[data-editerr="${comboId}"]`);
+        errBox.textContent = "";
+        const items = collectComboItems(rowsWrap);
+        if (items.length === 0) { errBox.textContent = "لازم صنف واحد على الأقل"; return; }
+        try {
+          await api(`/api/combos/${comboId}/items`, { method: "PUT", body: JSON.stringify({ items }) });
+          await loadCombos();
+        } catch (e) { errBox.textContent = e.message; }
+      };
+    };
+  });
+}
 
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;

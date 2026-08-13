@@ -135,6 +135,53 @@ router.post("/stock/adjust", requireAuth, stockManagers, async (req, res) => {
   }
 });
 
+// POST /api/inventory/reconcile - جرد فعلي: تدخل الكمية الحقيقية اللي عددتها، والسيستم
+// بيحسب الفرق عن رصيده الحالي ويسجله تلقائي (بدل ما تحسب الفرق بنفسك)
+// {branchId, inventoryItemId, actualQuantity, notes}
+router.post("/reconcile", requireAuth, stockManagers, async (req, res) => {
+  const { branchId, inventoryItemId, actualQuantity, notes } = req.body;
+  if (!branchId || !inventoryItemId || actualQuantity === undefined) {
+    return res.status(400).json({ error: "بيانات ناقصة" });
+  }
+  if (!assertOwnBranch(req.user, branchId)) {
+    return res.status(403).json({ error: "معندكش صلاحية تعدّل مخزون فرع تاني" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = await client.query(
+      "SELECT quantity FROM branch_inventory_stock WHERE branch_id = $1 AND inventory_item_id = $2",
+      [branchId, inventoryItemId]
+    );
+    const previousQuantity = current.rows.length > 0 ? Number(current.rows[0].quantity) : 0;
+    const variance = Number(actualQuantity) - previousQuantity;
+
+    if (variance !== 0) {
+      await client.query(
+        `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (branch_id, inventory_item_id) DO UPDATE SET quantity = $3`,
+        [branchId, inventoryItemId, actualQuantity]
+      );
+      const reconcileNote = `جرد: كان ${previousQuantity}، الفعلي ${actualQuantity}` + (notes ? ` - ${notes}` : "");
+      await client.query(
+        `INSERT INTO inventory_movements
+          (branch_id, inventory_item_id, movement_type, quantity, business_date, notes, created_by)
+         VALUES ($1, $2, 'adjustment', $3, CURRENT_DATE, $4, $5)`,
+        [branchId, inventoryItemId, variance, reconcileNote, req.user.id]
+      );
+    }
+    await client.query("COMMIT");
+    res.status(201).json({ previousQuantity, actualQuantity: Number(actualQuantity), variance });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // GET /api/inventory/recipe/:variantId - وصفة صنف (المكونات وكمياتها)
 router.get("/recipe/:variantId", requireAuth, staffRoles, async (req, res) => {
   try {

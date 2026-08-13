@@ -44,4 +44,53 @@ router.get("/branch-debt", requireAuth, canSeeReports, async (req, res) => {
   }
 });
 
+// GET /api/reports/menu-cost-analysis?targetFoodCostPercent=0.375
+// تكلفة الريسبي الفعلية لكل صنف مقابل سعر بيعه، ونسبة تكلفة الطعام، وهامش الربح
+// (بديل شيت "تحليل التكلفة والسعر")
+router.get("/menu-cost-analysis", requireAuth, canSeeReports, async (req, res) => {
+  const targetPercent = Number(req.query.targetFoodCostPercent) || 0.375;
+  try {
+    const result = await pool.query(`
+      SELECT mc.name AS category, mi.name AS item_name, mv.id AS variant_id, mv.label,
+             mv.price, mv.talabat_price,
+             COALESCE(SUM(mvi.quantity_per_unit * ii.unit_cost), 0) AS recipe_cost,
+             COUNT(mvi.id) AS ingredient_count,
+             COUNT(mvi.id) FILTER (WHERE ii.unit_cost IS NULL) AS missing_cost_count
+      FROM menu_item_variants mv
+      JOIN menu_items mi ON mi.id = mv.item_id
+      JOIN menu_categories mc ON mc.id = mi.category_id
+      LEFT JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = mv.id
+      LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+      WHERE mi.is_active = TRUE
+      GROUP BY mc.name, mi.name, mv.id, mv.label, mv.price, mv.talabat_price
+      ORDER BY mc.name, mi.name, mv.id
+    `);
+
+    const rows = result.rows.map((r) => {
+      const price = Number(r.price);
+      const recipeCost = Number(r.recipe_cost);
+      const hasRecipe = Number(r.ingredient_count) > 0;
+      const foodCostPct = price > 0 ? recipeCost / price : null;
+      return {
+        category: r.category,
+        itemName: r.item_name,
+        variantId: r.variant_id,
+        label: r.label,
+        price,
+        talabatPrice: r.talabat_price !== null ? Number(r.talabat_price) : null,
+        recipeCost,
+        hasRecipe,
+        missingCostCount: Number(r.missing_cost_count),
+        foodCostPercent: foodCostPct,
+        profit: hasRecipe ? price - recipeCost : null,
+        marginPercent: hasRecipe && price > 0 ? (price - recipeCost) / price : null,
+        fairPrice: hasRecipe ? recipeCost / targetPercent : null,
+      };
+    });
+    res.json({ targetFoodCostPercent: targetPercent, items: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

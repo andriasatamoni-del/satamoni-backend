@@ -72,34 +72,52 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
 
     for (const it of items) {
       await client.query(
-        `INSERT INTO order_items (order_id, item_id, variant_id, quantity, unit_price, line_total)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [orderId, it.itemId, it.variantId, it.quantity, it.unitPrice, it.unitPrice * it.quantity]
+        `INSERT INTO order_items (order_id, item_id, variant_id, combo_id, quantity, unit_price, line_total)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [orderId, it.comboId ? null : it.itemId, it.comboId ? null : it.variantId, it.comboId || null,
+         it.quantity, it.unitPrice, it.unitPrice * it.quantity]
       );
     }
 
     // خصم المخزون تلقائيًا حسب وصفة كل صنف (BOM) - لو الطلب مربوط بفرع
+    // العروض (combo) مفيهاش وصفة مباشرة - بنفكّها لأصنافها الأصلية وناخد وصفة كل صنف منهم
     if (branchId) {
       for (const it of items) {
-        const recipe = await client.query(
-          "SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1",
-          [it.variantId]
-        );
-        for (const ing of recipe.rows) {
-          // الضرب بيحصل جوه Postgres (NUMERIC) عشان نتجنب أخطاء دقة الأرقام العشرية في JS
-          await client.query(
-            `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
-             VALUES ($1, $2, -($3::numeric * $4::numeric))
-             ON CONFLICT (branch_id, inventory_item_id)
-             DO UPDATE SET quantity = branch_inventory_stock.quantity - ($3::numeric * $4::numeric)`,
-            [branchId, ing.inventory_item_id, ing.quantity_per_unit, it.quantity]
+        let variantsToDeduct = [];
+        if (it.comboId) {
+          const comboItems = await client.query(
+            "SELECT variant_id, quantity FROM combo_items WHERE combo_id = $1",
+            [it.comboId]
           );
-          await client.query(
-            `INSERT INTO inventory_movements
-              (branch_id, inventory_item_id, movement_type, quantity, order_id, business_date)
-             VALUES ($1, $2, 'sale_deduction', -($3::numeric * $4::numeric), $5, CURRENT_DATE)`,
-            [branchId, ing.inventory_item_id, ing.quantity_per_unit, it.quantity, orderId]
+          variantsToDeduct = comboItems.rows.map((ci) => ({
+            variantId: ci.variant_id,
+            multiplier: ci.quantity * it.quantity,
+          }));
+        } else if (it.variantId) {
+          variantsToDeduct = [{ variantId: it.variantId, multiplier: it.quantity }];
+        }
+
+        for (const v of variantsToDeduct) {
+          const recipe = await client.query(
+            "SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1",
+            [v.variantId]
           );
+          for (const ing of recipe.rows) {
+            // الضرب بيحصل جوه Postgres (NUMERIC) عشان نتجنب أخطاء دقة الأرقام العشرية في JS
+            await client.query(
+              `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
+               VALUES ($1, $2, -($3::numeric * $4::numeric))
+               ON CONFLICT (branch_id, inventory_item_id)
+               DO UPDATE SET quantity = branch_inventory_stock.quantity - ($3::numeric * $4::numeric)`,
+              [branchId, ing.inventory_item_id, ing.quantity_per_unit, v.multiplier]
+            );
+            await client.query(
+              `INSERT INTO inventory_movements
+                (branch_id, inventory_item_id, movement_type, quantity, order_id, business_date)
+               VALUES ($1, $2, 'sale_deduction', -($3::numeric * $4::numeric), $5, CURRENT_DATE)`,
+              [branchId, ing.inventory_item_id, ing.quantity_per_unit, v.multiplier, orderId]
+            );
+          }
         }
       }
     }

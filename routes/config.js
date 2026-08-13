@@ -34,7 +34,7 @@ router.get("/", async (req, res) => {
 // GET /api/config/full - كل حاجة محتاجها الواجهة في نداء واحد (منيو + فروع + مناطق + دفع)
 router.get("/full", async (req, res) => {
   try {
-    const [menu, branches, areas, payments] = await Promise.all([
+    const [menu, branches, areas, payments, combos, comboItems] = await Promise.all([
       pool.query(`
         SELECT mi.id, mi.name, mi.description, mi.image_url AS image, mi.is_best AS best,
                mc.name AS category,
@@ -49,6 +49,13 @@ router.get("/full", async (req, res) => {
       pool.query("SELECT * FROM branches WHERE is_central_kitchen = FALSE ORDER BY id"),
       pool.query("SELECT * FROM delivery_areas ORDER BY id"),
       pool.query("SELECT * FROM payment_methods WHERE enabled = TRUE ORDER BY id"),
+      pool.query("SELECT * FROM combos WHERE is_active = TRUE ORDER BY id"),
+      pool.query(`
+        SELECT ci.combo_id, ci.variant_id, ci.quantity, mv.label, mi.name AS item_name
+        FROM combo_items ci
+        JOIN menu_item_variants mv ON mv.id = ci.variant_id
+        JOIN menu_items mi ON mi.id = mv.item_id
+      `),
     ]);
 
     res.json({
@@ -63,6 +70,10 @@ router.get("/full", async (req, res) => {
       })),
       paymentMethods: payments.rows.map((p) => ({
         id: p.id, name: p.name, note: p.note, enabled: p.enabled,
+      })),
+      combos: combos.rows.map((c) => ({
+        id: c.id, name: c.name, price: Number(c.price),
+        items: comboItems.rows.filter((it) => it.combo_id === c.id),
       })),
     });
   } catch (err) {

@@ -12,6 +12,7 @@ app.use("/api/auth", require("./routes/auth"));
 app.use("/api/users", require("./routes/users"));
 app.use("/api/branches", require("./routes/branches"));
 app.use("/api/menu", require("./routes/menu"));
+app.use("/api/combos", require("./routes/combos"));
 app.use("/api/orders", require("./routes/orders"));
 app.use("/api/inventory", require("./routes/inventory"));
 app.use("/api/expenses", require("./routes/expenses"));

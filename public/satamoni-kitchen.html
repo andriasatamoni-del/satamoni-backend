@@ -47,6 +47,8 @@
   th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
   th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
   tr:last-child td { border-bottom: none; }
+  .diffneg { color: #F08A83; font-weight: 700; }
+  .diffpos { color: var(--green); font-weight: 700; }
   .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
   .badge.pending { background: rgba(203,161,53,.15); color: var(--gold-bright); }
   .badge.fulfilled { background: rgba(63,163,77,.15); color: var(--green); }
@@ -89,6 +91,7 @@
     <div class="tabbtn active" data-tab="order">اطلب من السنتر كيتشن</div>
     <div class="tabbtn" data-tab="fulfill" style="display:none">تنفيذ الطلبيات</div>
     <div class="tabbtn" data-tab="manufacturing" style="display:none">التصنيع</div>
+    <div class="tabbtn" data-tab="reconcile" style="display:none">جرد المخزون</div>
   </div>
 
   <!-- طلب من السنتر كيتشن -->
@@ -154,6 +157,21 @@
     <h1>كتالوج المكونات (تصحيح الوحدة أو النوع)</h1>
     <div class="formbox"><input id="catalogSearch" placeholder="دور بالاسم..." /></div>
     <table><thead><tr><th>الاسم</th><th>الوحدة</th><th>النوع</th><th></th></tr></thead><tbody id="catalogBody"></tbody></table>
+  </div>
+
+  <!-- جرد المخزون -->
+  <div class="panel" id="panel-reconcile">
+    <h1>جرد المخزون</h1>
+    <div class="formbox" id="reconcileBranchBox" style="display:none">
+      <div class="row">
+        <label style="flex:0;white-space:nowrap;font-size:12px;color:var(--faint)">الفرع:</label>
+        <select id="reconcileBranchSelect"></select>
+      </div>
+    </div>
+    <div class="formbox">
+      <div style="font-size:12px;color:var(--faint);margin-bottom:8px">دخّل الكمية الفعلية بعد الجرد لكل صنف، والفرق هيتسجل تلقائيًا كحركة تسوية.</div>
+      <table><thead><tr><th>الصنف</th><th>الرصيد الحالي</th><th>الكمية الفعلية</th><th>الفرق</th><th></th></tr></thead><tbody id="reconcileBody"></tbody></table>
+    </div>
   </div>
 </div>
 
@@ -233,7 +251,8 @@ async function boot() {
   inventoryItems = await api("/api/inventory/items");
 
   addOrderRow();
-  await loadMyOrders();
+  // أدمن مش تابع لفرع معين مفيش عنده "طلبياتي" - يتخطى الجزء ده من غير ما يوقف باقي الصفحة
+  if (auth.user.branchId) await loadMyOrders();
 
   if (isKitchenStaff()) {
     document.querySelector('[data-tab="fulfill"]').style.display = "block";
@@ -241,9 +260,70 @@ async function boot() {
     await loadPendingOrders();
     populateProduceAndRecipeSelects();
     addRecipeRow();
-    await loadKitchenStock();
+    if (auth.user.branchId) await loadKitchenStock();
     renderCatalogTable();
   }
+
+  if (auth.user.role === "admin" || auth.user.role === "branch_manager") {
+    document.querySelector('[data-tab="reconcile"]').style.display = "block";
+    await setupReconcileTab();
+  }
+}
+
+// ---------------- جرد المخزون ----------------
+function reconcileBranchId() {
+  if (auth.user.role === "admin") return document.getElementById("reconcileBranchSelect").value;
+  return auth.user.branchId;
+}
+async function setupReconcileTab() {
+  if (auth.user.role === "admin") {
+    const branches = await api("/api/branches/all");
+    const sel = document.getElementById("reconcileBranchSelect");
+    sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
+    document.getElementById("reconcileBranchBox").style.display = "block";
+    sel.onchange = loadReconcileTable;
+  }
+  await loadReconcileTable();
+}
+async function loadReconcileTable() {
+  const branchId = reconcileBranchId();
+  if (!branchId) { document.getElementById("reconcileBody").innerHTML = ""; return; }
+  const [items, stock] = await Promise.all([
+    inventoryItems.length ? Promise.resolve(inventoryItems) : api("/api/inventory/items"),
+    api(`/api/inventory/stock?branchId=${branchId}`),
+  ]);
+  document.getElementById("reconcileBody").innerHTML = items.map(i => {
+    const s = stock.find(x => x.name === i.name);
+    const current = s ? Number(s.quantity) : 0;
+    return `
+      <tr data-recrow="${i.id}">
+        <td>${i.name} (${i.unit})</td>
+        <td>${current}</td>
+        <td><input type="number" class="rec-actual" style="width:100px;background:var(--bg-alt);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px" value="${current}" /></td>
+        <td class="rec-variance">—</td>
+        <td><button class="linkbtn" data-reconcile="${i.id}" data-current="${current}">تحديث</button></td>
+      </tr>
+    `;
+  }).join("") || `<tr><td colspan="5">مفيش أصناف</td></tr>`;
+
+  document.querySelectorAll("[data-reconcile]").forEach(btn => {
+    btn.onclick = async () => {
+      const row = btn.closest("tr");
+      const actual = Number(row.querySelector(".rec-actual").value);
+      const varianceCell = row.querySelector(".rec-variance");
+      try {
+        const result = await api("/api/inventory/reconcile", {
+          method: "POST",
+          body: JSON.stringify({ branchId, inventoryItemId: btn.dataset.reconcile, actualQuantity: actual }),
+        });
+        const v = Number(result.variance);
+        varianceCell.textContent = v === 0 ? "بدون فرق" : v.toFixed(3);
+        varianceCell.className = `rec-variance ${v < 0 ? "diffneg" : v > 0 ? "diffpos" : ""}`;
+        row.children[1].textContent = result.actualQuantity;
+        btn.dataset.current = result.actualQuantity;
+      } catch (e) { alert(e.message); }
+    };
+  });
 }
 
 function renderCatalogTable() {
