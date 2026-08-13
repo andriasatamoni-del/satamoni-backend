@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — الحسابات</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 900px; margin: 0 auto; padding: 20px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  #branchBar { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 6px; }
+  #branchBar label { font-size: 12px; color: var(--faint); }
+  #branchBar select { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+
+  #tabs { display: flex; gap: 6px; margin: 16px 0; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .formbox input, .formbox select { flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .diffneg { color: #F08A83; font-weight: 700; }
+  .diffpos { color: var(--green); font-weight: 700; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">💰 ساتاموني — الحسابات</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>💰 تسجيل دخول الحسابات</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="branchBar">
+    <label>الفرع:</label>
+    <select id="branchSelect"></select>
+  </div>
+
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="expenses">المصروفات</div>
+    <div class="tabbtn" data-tab="purchases">المشتريات</div>
+    <div class="tabbtn" data-tab="cash">تقفيل الكاش</div>
+    <div class="tabbtn" data-tab="ledger">كشف حساب المخزن</div>
+  </div>
+
+  <!-- المصروفات -->
+  <div class="panel active" id="panel-expenses">
+    <div class="formbox">
+      <div class="row">
+        <input id="expDate" type="date" />
+        <input id="expCategory" placeholder="النوع (إيجار / رواتب / صيانة ...)" />
+        <input id="expAmount" type="number" placeholder="المبلغ" />
+      </div>
+      <div class="row"><input id="expNotes" placeholder="ملاحظات (اختياري)" /><button id="expSubmit">تسجيل</button></div>
+      <div class="err" id="expErr"></div>
+    </div>
+    <table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>ملاحظات</th></tr></thead><tbody id="expBody"></tbody></table>
+  </div>
+
+  <!-- المشتريات -->
+  <div class="panel" id="panel-purchases">
+    <div class="formbox">
+      <div class="row">
+        <input id="purDate" type="date" />
+        <input id="purCategory" placeholder="النوع (لحوم / خضار / بقالة ...)" />
+        <input id="purAmount" type="number" placeholder="المبلغ" />
+      </div>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--faint)">
+          <input type="checkbox" id="purFromKitchen" style="flex:0;width:auto" /> من سنتر كيتشن
+        </label>
+        <input id="purNotes" placeholder="ملاحظات (اختياري)" />
+        <button id="purSubmit">تسجيل</button>
+      </div>
+      <div class="err" id="purErr"></div>
+    </div>
+    <table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>سنتر كيتشن</th></tr></thead><tbody id="purBody"></tbody></table>
+  </div>
+
+  <!-- تقفيل الكاش -->
+  <div class="panel" id="panel-cash">
+    <div class="formbox">
+      <div class="row">
+        <input id="cashDate" type="date" />
+        <input id="cashOpening" type="number" placeholder="كاش أول اليوم" />
+        <input id="cashSales" type="number" placeholder="مبيعات كاش" />
+        <input id="cardSales" type="number" placeholder="مبيعات فيزا" />
+      </div>
+      <div class="row">
+        <input id="creditSales" type="number" placeholder="مبيعات آجل" />
+        <input id="deliverySales" type="number" placeholder="مبيعات تطبيقات توصيل" />
+        <input id="paidToKitchen" type="number" placeholder="مدفوع نقدي للمخزن" />
+        <input id="otherPayments" type="number" placeholder="مدفوعات نقدية أخرى" />
+      </div>
+      <div class="row">
+        <input id="countedCash" type="number" placeholder="الكاش الفعلي بعد الجرد" />
+        <button id="cashSubmit">تقفيل اليوم</button>
+      </div>
+      <div class="err" id="cashErr"></div>
+      <div class="ok" id="cashOk"></div>
+    </div>
+    <table><thead><tr><th>التاريخ</th><th>متوقع</th><th>فعلي</th><th>الفرق</th></tr></thead><tbody id="cashBody"></tbody></table>
+  </div>
+
+  <!-- كشف حساب المخزن -->
+  <div class="panel" id="panel-ledger">
+    <div class="formbox">
+      <div class="row">
+        <input id="ledgerDate" type="date" />
+        <select id="ledgerType">
+          <option value="مشتريات">فاتورة مشتريات</option>
+          <option value="سداد">سداد نقدي</option>
+        </select>
+        <input id="ledgerInvoice" type="number" placeholder="مبلغ الفاتورة (لو فاتورة)" />
+        <input id="ledgerPayment" type="number" placeholder="مبلغ السداد (لو سداد)" />
+      </div>
+      <div class="row"><input id="ledgerNotes" placeholder="ملاحظات (اختياري)" /><button id="ledgerSubmit">تسجيل قيد</button></div>
+      <div class="err" id="ledgerErr"></div>
+    </div>
+    <table><thead><tr><th>التاريخ</th><th>النوع</th><th>فاتورة</th><th>سداد</th></tr></thead><tbody id="ledgerBody"></tbody></table>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || "http://localhost:4000";
+const allowedRoles = ["admin", "accountant", "branch_manager"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    if (!allowedRoles.includes(data.user.role)) {
+      setSession(data.token, data.user);
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    setSession(data.token, data.user);
+    hideLogin();
+    boot();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+  };
+});
+
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
+function currentBranchId() { return document.getElementById("branchSelect").value; }
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  ["expDate", "purDate", "cashDate", "ledgerDate"].forEach(id => document.getElementById(id).value = todayStr());
+  if (auth.user.role === "branch_manager") {
+    // مدير الفرع يقدر يشوف كشف حساب المخزن بس، مش يضيف قيود (أدمن/محاسب بس)
+    document.getElementById("ledgerSubmit").disabled = true;
+    document.getElementById("ledgerSubmit").title = "الإضافة لأدمن/محاسب بس";
+  }
+  await loadBranches();
+  await Promise.all([loadExpenses(), loadPurchases(), loadCash(), loadLedger()]);
+}
+
+async function loadBranches() {
+  const branches = await api("/api/branches");
+  const sel = document.getElementById("branchSelect");
+  sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  if (auth.user.role === "branch_manager") {
+    sel.value = auth.user.branchId;
+    sel.disabled = true;
+  }
+  sel.onchange = () => Promise.all([loadExpenses(), loadPurchases(), loadCash(), loadLedger()]);
+}
+
+// ---------------- المصروفات ----------------
+async function loadExpenses() {
+  const rows = await api(`/api/expenses?branchId=${currentBranchId()}`);
+  document.getElementById("expBody").innerHTML = rows.map(r => `
+    <tr><td>${r.business_date.slice(0, 10)}</td><td>${r.category}</td><td>${money(r.amount)}</td><td>${r.notes || "—"}</td></tr>
+  `).join("") || `<tr><td colspan="4">مفيش مصروفات مسجلة</td></tr>`;
+}
+document.getElementById("expSubmit").onclick = async () => {
+  const errBox = document.getElementById("expErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/expenses", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId: currentBranchId(),
+        businessDate: document.getElementById("expDate").value,
+        category: document.getElementById("expCategory").value.trim(),
+        amount: Number(document.getElementById("expAmount").value),
+        notes: document.getElementById("expNotes").value.trim() || null,
+      }),
+    });
+    document.getElementById("expCategory").value = "";
+    document.getElementById("expAmount").value = "";
+    document.getElementById("expNotes").value = "";
+    loadExpenses();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- المشتريات ----------------
+async function loadPurchases() {
+  const rows = await api(`/api/purchases?branchId=${currentBranchId()}`);
+  document.getElementById("purBody").innerHTML = rows.map(r => `
+    <tr><td>${r.business_date.slice(0, 10)}</td><td>${r.category || "—"}</td><td>${money(r.amount)}</td><td>${r.from_kitchen ? "نعم" : "لا"}</td></tr>
+  `).join("") || `<tr><td colspan="4">مفيش مشتريات مسجلة</td></tr>`;
+}
+document.getElementById("purSubmit").onclick = async () => {
+  const errBox = document.getElementById("purErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/purchases", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId: currentBranchId(),
+        businessDate: document.getElementById("purDate").value,
+        category: document.getElementById("purCategory").value.trim() || null,
+        amount: Number(document.getElementById("purAmount").value),
+        fromKitchen: document.getElementById("purFromKitchen").checked,
+        notes: document.getElementById("purNotes").value.trim() || null,
+      }),
+    });
+    document.getElementById("purCategory").value = "";
+    document.getElementById("purAmount").value = "";
+    document.getElementById("purNotes").value = "";
+    document.getElementById("purFromKitchen").checked = false;
+    loadPurchases();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- تقفيل الكاش ----------------
+async function loadCash() {
+  const rows = await api(`/api/cash-sessions?branchId=${currentBranchId()}`);
+  document.getElementById("cashBody").innerHTML = rows.map(r => `
+    <tr><td>${r.business_date.slice(0, 10)}</td><td>${money(r.expected_closing_cash)}</td><td>${money(r.actual_counted_cash)}</td>
+    <td class="${Number(r.cash_difference) < 0 ? "diffneg" : "diffpos"}">${money(r.cash_difference)}</td></tr>
+  `).join("") || `<tr><td colspan="4">مفيش تقفيلات مسجلة</td></tr>`;
+}
+document.getElementById("cashSubmit").onclick = async () => {
+  const errBox = document.getElementById("cashErr");
+  const okBox = document.getElementById("cashOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const num = (id) => Number(document.getElementById(id).value || 0);
+  try {
+    const result = await api("/api/cash-sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId: currentBranchId(),
+        businessDate: document.getElementById("cashDate").value,
+        openingCash: num("cashOpening"), cashSales: num("cashSales"), cardSales: num("cardSales"),
+        creditSales: num("creditSales"), deliveryAppSales: num("deliverySales"),
+        cashPaidToKitchen: num("paidToKitchen"), otherCashPayments: num("otherPayments"),
+        actualCountedCash: num("countedCash"),
+      }),
+    });
+    okBox.textContent = `تم التقفيل — الفرق: ${money(result.cash_difference)}`;
+    loadCash();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- كشف حساب المخزن ----------------
+async function loadLedger() {
+  const rows = await api(`/api/suppliers/ledger?branchId=${currentBranchId()}`);
+  document.getElementById("ledgerBody").innerHTML = rows.map(r => `
+    <tr><td>${r.entry_date.slice(0, 10)}</td><td>${r.entry_type || "—"}</td><td>${money(r.invoice_amount)}</td><td>${money(r.payment_amount)}</td></tr>
+  `).join("") || `<tr><td colspan="4">مفيش قيود مسجلة</td></tr>`;
+}
+document.getElementById("ledgerSubmit").onclick = async () => {
+  const errBox = document.getElementById("ledgerErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/suppliers/ledger", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId: currentBranchId(),
+        entryDate: document.getElementById("ledgerDate").value,
+        entryType: document.getElementById("ledgerType").value,
+        invoiceAmount: Number(document.getElementById("ledgerInvoice").value || 0),
+        paymentAmount: Number(document.getElementById("ledgerPayment").value || 0),
+        notes: document.getElementById("ledgerNotes").value.trim() || null,
+      }),
+    });
+    document.getElementById("ledgerInvoice").value = "";
+    document.getElementById("ledgerPayment").value = "";
+    document.getElementById("ledgerNotes").value = "";
+    loadLedger();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>
