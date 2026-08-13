@@ -67,7 +67,8 @@ router.post("/", requireAuth, canOperate, async (req, res) => {
          other_cash_payments = EXCLUDED.other_cash_payments,
          expected_closing_cash = EXCLUDED.expected_closing_cash,
          actual_counted_cash = EXCLUDED.actual_counted_cash,
-         cash_difference = EXCLUDED.cash_difference
+         cash_difference = EXCLUDED.cash_difference,
+         updated_at = now()
        RETURNING *`,
       [branchId, businessDate, openingCash, cashSales, cardSales, creditSales,
        deliveryAppSales, cashPaidToKitchen, otherCashPayments, actualCountedCash]

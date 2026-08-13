@@ -28,5 +28,23 @@ services:
     ports:
       - "4000:4000"
 
+  # مزامنة اختيارية مع سيرفر مركزي أونلاين (لو الفرع ده عنده واحد).
+  # سيبها زي ما هي (فاضية) لو مش محتاج مزامنة - هتشتغل مرة وتقفل نفسها من غير أي تأثير.
+  # لتفعيلها: املأ الثلاث قيم دول من صفحة إعدادات السيرفر المركزي، وشغّل:
+  #   docker compose up sync -d
+  sync:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://satamoni:satamoni@db:5432/satamoni
+      CENTRAL_SYNC_URL: ""
+      SYNC_API_KEY: ""
+      CENTRAL_BRANCH_ID: ""
+      SYNC_INTERVAL_SECONDS: "300"
+    command: ["node", "db/sync-worker.js"]
+    restart: "no"
+
 volumes:
   satamoni_pgdata:

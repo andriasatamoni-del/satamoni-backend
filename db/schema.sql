@@ -86,7 +86,9 @@ CREATE TABLE orders (
   discount          NUMERIC NOT NULL DEFAULT 0,
   total             NUMERIC NOT NULL DEFAULT 0,
   status            TEXT NOT NULL DEFAULT 'pending', -- pending/confirmed/preparing/done/cancelled
-  created_at        TIMESTAMPTZ DEFAULT now()
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  sync_uuid         UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE, -- هوية ثابتة عبر الفروع لمزامنة السيرفر المركزي
+  synced_at         TIMESTAMPTZ -- NULL يعني لسه محتاج يترفع للمركزي
 );
 
 CREATE TABLE order_items (
@@ -114,6 +116,9 @@ CREATE TABLE daily_cash_sessions (
   expected_closing_cash NUMERIC DEFAULT 0,
   actual_counted_cash   NUMERIC DEFAULT 0,
   cash_difference       NUMERIC DEFAULT 0,      -- فرق الكاش
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(), -- بيتحدث كل تعديل، عشان المزامنة تعرف تبعت النسخة الأحدث
+  sync_uuid             UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  synced_at             TIMESTAMPTZ,
   UNIQUE(branch_id, business_date)
 );
 
@@ -124,7 +129,9 @@ CREATE TABLE expenses (
   business_date DATE NOT NULL,
   category      TEXT NOT NULL,   -- رواتب / إيجار / مرافق / صيانة / أخرى
   amount        NUMERIC NOT NULL,
-  notes         TEXT
+  notes         TEXT,
+  sync_uuid     UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  synced_at     TIMESTAMPTZ
 );
 
 -- ---------------- المشتريات والتحويلات ----------------
@@ -135,7 +142,9 @@ CREATE TABLE purchases (
   category      TEXT,            -- لحوم/خضار/بقالة/أخرى (لو سنتر كيتشن) أو مباشر (لو فرع)
   amount        NUMERIC NOT NULL,
   from_kitchen  BOOLEAN DEFAULT FALSE, -- مشتريات من سنتر كيتشن بالتكلفة
-  notes         TEXT
+  notes         TEXT,
+  sync_uuid     UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  synced_at     TIMESTAMPTZ
 );
 
 CREATE TABLE kitchen_transfers (
