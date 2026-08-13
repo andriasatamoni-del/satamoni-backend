@@ -24,11 +24,12 @@ router.get("/", async (req, res) => {
 // POST /api/users - إنشاء موظف جديد
 router.post("/", async (req, res) => {
   const { name, email, password, role, branchId } = req.body;
-  const validRoles = ["admin", "branch_manager", "accountant", "cashier"];
+  const validRoles = ["admin", "branch_manager", "accountant", "cashier", "callcenter"];
+  const branchFreeRoles = ["admin", "accountant", "callcenter"];
   if (!name || !email || !password || !validRoles.includes(role)) {
     return res.status(400).json({ error: "بيانات ناقصة أو الدور غير معروف" });
   }
-  if (role !== "admin" && role !== "accountant" && !branchId) {
+  if (!branchFreeRoles.includes(role) && !branchId) {
     return res.status(400).json({ error: "لازم تحدد الفرع لدور المدير/الكاشير" });
   }
   try {

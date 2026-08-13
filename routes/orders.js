@@ -5,12 +5,22 @@ const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/aut
 
 // طلبات الموقع (source=website) عامة من غير تسجيل دخول.
 // طلبات الكاشير (source=pos) لازم كاشير/مدير فرع/أدمن مسجل دخول، وعلى فرعه بس.
+// طلبات الكول سنتر (source=callcenter) لازم موظف كول سنتر/أدمن، من غير قفل على فرع معين
+// (موظف الكول سنتر بياخد طلبات لأي فرع/منطقة توصيل).
 function requirePosAuthIfNeeded(req, res, next) {
-  if (req.body.source !== "pos") return next();
-  requireAuth(req, res, (err) => {
-    if (err) return next(err);
-    requireRole("cashier", "branch_manager", "admin")(req, res, next);
-  });
+  if (req.body.source === "pos") {
+    return requireAuth(req, res, (err) => {
+      if (err) return next(err);
+      requireRole("cashier", "branch_manager", "admin")(req, res, next);
+    });
+  }
+  if (req.body.source === "callcenter") {
+    return requireAuth(req, res, (err) => {
+      if (err) return next(err);
+      requireRole("callcenter", "admin")(req, res, next);
+    });
+  }
+  next();
 }
 
 // POST /api/orders - إنشاء طلب جديد (من الموقع أو من شاشة الكاشير)
@@ -32,7 +42,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
 
     const subtotal = items.reduce((s, it) => s + it.unitPrice * it.quantity, 0);
     const total = subtotal + deliveryFee - discount;
-    const createdBy = source === "pos" ? req.user.id : null;
+    const createdBy = source === "pos" || source === "callcenter" ? req.user.id : null;
 
     const orderResult = await client.query(
       `INSERT INTO orders
@@ -46,6 +56,18 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
        createdBy, subtotal, deliveryFee, discount, total]
     );
     const orderId = orderResult.rows[0].id;
+
+    // تسجيل/تحديث العميل في سجل CRM المركزي عشان الكول سنتر يشوف تاريخه
+    if (customerPhone) {
+      await client.query(
+        `INSERT INTO customers (phone, name)
+         VALUES ($1, $2)
+         ON CONFLICT (phone) DO UPDATE SET
+           name = COALESCE(EXCLUDED.name, customers.name),
+           updated_at = now()`,
+        [customerPhone, customerName || null]
+      );
+    }
 
     for (const it of items) {
       await client.query(
@@ -95,11 +117,11 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
 router.get(
   "/",
   requireAuth,
-  requireRole("cashier", "branch_manager", "accountant", "admin"),
+  requireRole("cashier", "branch_manager", "accountant", "admin", "callcenter"),
   async (req, res) => {
     let { branchId, date } = req.query;
 
-    if (req.user.role !== "admin" && req.user.role !== "accountant") {
+    if (req.user.role === "cashier" || req.user.role === "branch_manager") {
       if (branchId && !assertOwnBranch(req.user, branchId)) {
         return res.status(403).json({ error: "معندكش صلاحية تشوف طلبات فرع تاني" });
       }

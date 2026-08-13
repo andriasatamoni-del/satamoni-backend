@@ -23,7 +23,7 @@ CREATE TABLE users (
   name          TEXT NOT NULL,
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role          TEXT NOT NULL CHECK (role IN ('admin', 'branch_manager', 'accountant', 'cashier')),
+  role          TEXT NOT NULL CHECK (role IN ('admin', 'branch_manager', 'accountant', 'cashier', 'callcenter')),
   is_active     BOOLEAN DEFAULT TRUE,
   created_at    TIMESTAMPTZ DEFAULT now()
 );
@@ -198,6 +198,38 @@ CREATE TABLE inventory_movements (
   created_at        TIMESTAMPTZ DEFAULT now()
 );
 
+-- ---------------- العملاء (CRM) - لدعم كول سنتر وتاريخ الطلبات ----------------
+CREATE TABLE customers (
+  id              SERIAL PRIMARY KEY,
+  phone           TEXT NOT NULL UNIQUE,
+  name            TEXT,
+  notes           TEXT,             -- ملاحظات كول سنتر (عنوان مفضل، شكوى سابقة، ...)
+  loyalty_points  INTEGER DEFAULT 0,
+  created_at      TIMESTAMPTZ DEFAULT now(),
+  updated_at      TIMESTAMPTZ DEFAULT now()
+);
+
+-- ---------------- الموارد البشرية: شيفتات وحضور/انصراف ----------------
+CREATE TABLE shifts (
+  id            SERIAL PRIMARY KEY,
+  user_id       INTEGER REFERENCES users(id),
+  branch_id     INTEGER REFERENCES branches(id),
+  shift_date    DATE NOT NULL,
+  start_time    TIME NOT NULL,
+  end_time      TIME NOT NULL,
+  notes         TEXT,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE attendance_records (
+  id            SERIAL PRIMARY KEY,
+  user_id       INTEGER REFERENCES users(id),
+  branch_id     INTEGER REFERENCES branches(id),
+  business_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  clock_in      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  clock_out     TIMESTAMPTZ
+);
+
 -- ---------------- رصيد المخزون الشهري ----------------
 CREATE TABLE inventory_snapshots (
   id                  SERIAL PRIMARY KEY,
@@ -233,3 +265,14 @@ LEFT JOIN (
   FROM purchases GROUP BY branch_id, business_date
 ) pur ON pur.branch_id = b.id AND pur.business_date = dcs.business_date
 WHERE b.is_central_kitchen = FALSE;
+
+-- إحصائيات كل عميل من تاريخ طلباته الفعلي (بديل الاعتماد على شيت يدوي وقت المكالمة)
+CREATE VIEW v_customer_order_stats AS
+SELECT
+  customer_phone AS phone,
+  COUNT(*) AS orders_count,
+  SUM(total) AS total_spent,
+  MAX(created_at) AS last_order_at
+FROM orders
+WHERE customer_phone IS NOT NULL
+GROUP BY customer_phone;

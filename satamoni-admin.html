@@ -87,6 +87,7 @@
         <option value="cashier">كاشير</option>
         <option value="branch_manager">مدير فرع</option>
         <option value="accountant">محاسب</option>
+        <option value="callcenter">كول سنتر</option>
         <option value="admin">أدمن</option>
       </select>
       <select id="fBranch"></select>
@@ -188,7 +189,7 @@ async function loadBranches() {
 
 async function loadUsers() {
   const users = await api("/api/users");
-  const roleLabels = { admin: "أدمن", branch_manager: "مدير فرع", accountant: "محاسب", cashier: "كاشير" };
+  const roleLabels = { admin: "أدمن", branch_manager: "مدير فرع", accountant: "محاسب", cashier: "كاشير", callcenter: "كول سنتر" };
   document.getElementById("usersBody").innerHTML = users.map(u => `
     <tr>
       <td>${u.name}</td>
