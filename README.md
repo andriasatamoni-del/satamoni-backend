@@ -13,6 +13,7 @@
 | `public/index.html` | الصفحة الرئيسية — روابط لكل الشاشات |
 | `public/satamoni-pos.html` | الكاشير |
 | `public/satamoni-admin.html` | الأدمن — إدارة الموظفين |
+| `public/satamoni-menu.html` | الأدمن — المنيو، مناطق التوصيل، طرق الدفع |
 | `public/satamoni-callcenter.html` | موظف الكول سنتر — بحث عملاء وتسجيل طلبات تليفونية |
 | `public/satamoni-accounting.html` | أدمن/محاسب/مدير فرع — مصروفات، مشتريات، تقفيل كاش، كشف حساب المخزن |
 | `public/satamoni-attendance.html` | كل الموظفين (حضور/انصراف) + أدمن/مدير فرع (شيفتات وسجل الحضور) |
@@ -89,6 +90,18 @@ npm run dev                # تشغيل السيرفر محليًا للتجرب
 - طلبات الموقع العامة (`source: "website"`) لسه من غير تسجيل دخول — العميل مش موظف.
 - `satamoni-admin.html` — صفحة لإدارة الموظفين (أدمن بس): إضافة كاشير/مدير فرع/محاسب، تفعيل/تعطيل حساب.
 - API الموظفين: `GET/POST /api/users` و`PATCH /api/users/:id` (أدمن بس).
+
+## المنيو ومناطق التوصيل وطرق الدفع (بيانات حقيقية، من غير SQL)
+
+`satamoni-menu.html` — شاشة أدمن بس لإدخال بيانات مطعمك الفعلية بنفسك (أقسام، أصناف، أحجام وأسعار، مناطق توصيل، طرق دفع) من غير أي دخول مباشر على قاعدة البيانات:
+
+- `GET/POST /api/menu/categories` — أقسام المنيو
+- `GET/POST /api/menu/items`، `PATCH /api/menu/items/:id` — الأصناف (اسم، وصف، تفعيل/تعطيل، "الأكثر طلبًا")
+- `POST /api/menu/items/:id/variants`، `PATCH|DELETE /api/menu/variants/:id` — الأحجام والأسعار لكل صنف
+- `GET/POST /api/config/delivery-areas`، `PATCH /api/config/delivery-areas/:id` — مناطق التوصيل ورسومها
+- `GET/POST /api/config/payment-methods`، `PATCH /api/config/payment-methods/:id` — طرق الدفع وتفعيلها/تعطيلها
+
+كل ده أدمن بس. أي حاجة تتضاف من هنا بتظهر فورًا في شاشة الكاشير والكول سنتر وموقع الطلب العام (بيقروا من نفس الـ `/api/config/full`).
 
 ## المخازن الفعلية (Inventory / BOM)
 
