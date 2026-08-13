@@ -16,6 +16,18 @@ CREATE TABLE branches (
   created_at    TIMESTAMPTZ DEFAULT now()
 );
 
+-- ---------------- المستخدمين والصلاحيات ----------------
+CREATE TABLE users (
+  id            SERIAL PRIMARY KEY,
+  branch_id     INTEGER REFERENCES branches(id), -- NULL = صلاحية على كل الفروع (إدارة)
+  name          TEXT NOT NULL,
+  email         TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL CHECK (role IN ('admin', 'branch_manager', 'accountant', 'cashier')),
+  is_active     BOOLEAN DEFAULT TRUE,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
 -- ---------------- المنيو ----------------
 CREATE TABLE menu_categories (
   id    SERIAL PRIMARY KEY,
@@ -68,6 +80,7 @@ CREATE TABLE orders (
   customer_name     TEXT,
   customer_phone    TEXT,
   payment_method_id INTEGER REFERENCES payment_methods(id),
+  created_by        INTEGER REFERENCES users(id), -- الكاشير اللي سجل الطلب (NULL لو أونلاين من الموقع)
   subtotal          NUMERIC NOT NULL DEFAULT 0,
   delivery_fee      NUMERIC NOT NULL DEFAULT 0,
   discount          NUMERIC NOT NULL DEFAULT 0,

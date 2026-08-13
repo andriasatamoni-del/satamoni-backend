@@ -129,6 +129,26 @@
 
   /* ===== Loading / empty states ===== */
   #loadingState, #errorState { padding: 60px 20px; text-align: center; color: var(--faint); }
+
+  /* ===== Login overlay ===== */
+  #loginOverlay {
+    position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60;
+  }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input {
+    width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px;
+  }
+  #loginBox button {
+    width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red);
+    color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px;
+  }
+  #loginBox button:disabled { background: #3A3630; cursor: not-allowed; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -137,6 +157,20 @@
   <div class="brand">🍕 ساتاموني — كاشير</div>
   <select id="branchSelect"></select>
   <div class="status"><span class="dot" id="connDot"></span><span id="connText">جاري الاتصال بالسيرفر...</span></div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🍕 تسجيل دخول الكاشير</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
 </div>
 
 <div id="main">
@@ -201,7 +235,70 @@ const state = {
   selectedPaymentId: "",
 };
 
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
 const money = (n) => `${n} ج.م`;
+
+function showLogin() {
+  document.getElementById("loginOverlay").classList.remove("hidden");
+}
+function hideLogin() {
+  document.getElementById("loginOverlay").classList.add("hidden");
+}
+
+function setSession(token, user) {
+  auth.token = token;
+  auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+
+function clearSession() {
+  auth.token = null;
+  auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const btn = document.getElementById("loginBtn");
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  if (!email || !password) {
+    errBox.textContent = "دخّل البريد الإلكتروني وكلمة المرور";
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "جاري الدخول...";
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "تعذر تسجيل الدخول");
+    setSession(data.token, data.user);
+    hideLogin();
+    document.getElementById("loginPassword").value = "";
+    loadConfig();
+  } catch (e) {
+    errBox.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "دخول";
+  }
+};
+
+document.getElementById("logoutBtn").onclick = () => {
+  clearSession();
+  location.reload();
+};
 
 async function loadConfig() {
   try {
@@ -211,7 +308,8 @@ async function loadConfig() {
     state.menu = data.menu;
     state.branches = data.branches;
     state.paymentMethods = data.paymentMethods;
-    state.selectedBranchId = data.branches[0]?.id || "";
+    const ownBranchId = auth.user && auth.user.role !== "admin" ? auth.user.branchId : null;
+    state.selectedBranchId = ownBranchId || data.branches[0]?.id || "";
     state.selectedPaymentId = data.paymentMethods.find(p => p.enabled)?.id || "";
     state.activeCategory = [...new Set(data.menu.map(m => m.category))][0];
 
@@ -236,6 +334,8 @@ function renderBranchSelect() {
   const sel = document.getElementById("branchSelect");
   sel.innerHTML = state.branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
   sel.value = state.selectedBranchId;
+  const isLockedToOwnBranch = auth.user && auth.user.role !== "admin";
+  sel.disabled = isLockedToOwnBranch;
   sel.onchange = () => { state.selectedBranchId = sel.value; };
 }
 
@@ -379,14 +479,23 @@ document.getElementById("submitBtn").onclick = async () => {
       })),
     };
     const res = await fetch(`${API_BASE_URL}/api/orders`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+      body: JSON.stringify(payload),
     });
+    if (res.status === 401) {
+      clearSession();
+      showLogin();
+      throw new Error("انتهت الجلسة، سجل دخول تاني");
+    }
     if (!res.ok) throw new Error("submit failed");
     const result = await res.json();
     document.getElementById("confirmOrderId").textContent = `#${result.orderId}`;
     document.getElementById("confirmOverlay").classList.add("show");
   } catch (e) {
-    errBox.textContent = "تعذر إرسال الطلب. تأكد من الاتصال وحاول تاني.";
+    errBox.textContent = e.message === "submit failed" || !e.message
+      ? "تعذر إرسال الطلب. تأكد من الاتصال وحاول تاني."
+      : e.message;
   } finally {
     btn.textContent = "أرسل الطلب";
     updateSubmitState();
@@ -401,7 +510,13 @@ document.getElementById("newOrderBtn").onclick = () => {
   renderCart();
 };
 
-loadConfig();
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  loadConfig();
+} else {
+  showLogin();
+}
 </script>
 </body>
 </html>
