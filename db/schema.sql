@@ -47,10 +47,11 @@ CREATE TABLE menu_items (
 );
 
 CREATE TABLE menu_item_variants (
-  id          SERIAL PRIMARY KEY,
-  item_id     INTEGER REFERENCES menu_items(id) ON DELETE CASCADE,
-  label       TEXT NOT NULL,              -- وسط / كبير / عادي
-  price       NUMERIC NOT NULL,
+  id            SERIAL PRIMARY KEY,
+  item_id       INTEGER REFERENCES menu_items(id) ON DELETE CASCADE,
+  label         TEXT NOT NULL,              -- وسط / كبير / عادي
+  price         NUMERIC NOT NULL,           -- سعر الفرع (كاشير/موقع/كول سنتر)
+  talabat_price NUMERIC,                    -- سعر تطبيق طلبات (NULL = الصنف مش مباع على طلبات حاليًا)
   UNIQUE(item_id, label)
 );
 

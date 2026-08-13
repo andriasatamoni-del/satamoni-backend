@@ -4,11 +4,12 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 
 // طلبات الموقع (source=website) عامة من غير تسجيل دخول.
-// طلبات الكاشير (source=pos) لازم كاشير/مدير فرع/أدمن مسجل دخول، وعلى فرعه بس.
+// طلبات الكاشير (source=pos) وطلبات طلبات (source=talabat، بتتسجل يدويًا بعد التنفيذ
+// عشان تتحسب في المخزون والمحاسبة) لازم كاشير/مدير فرع/أدمن مسجل دخول، وعلى فرعه بس.
 // طلبات الكول سنتر (source=callcenter) لازم موظف كول سنتر/أدمن، من غير قفل على فرع معين
 // (موظف الكول سنتر بياخد طلبات لأي فرع/منطقة توصيل).
 function requirePosAuthIfNeeded(req, res, next) {
-  if (req.body.source === "pos") {
+  if (req.body.source === "pos" || req.body.source === "talabat") {
     return requireAuth(req, res, (err) => {
       if (err) return next(err);
       requireRole("cashier", "branch_manager", "admin")(req, res, next);
@@ -34,7 +35,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       paymentMethodId, items, deliveryFee = 0, discount = 0,
     } = req.body;
 
-    if (source === "pos" && !assertOwnBranch(req.user, branchId)) {
+    if ((source === "pos" || source === "talabat") && !assertOwnBranch(req.user, branchId)) {
       return res.status(403).json({ error: "معندكش صلاحية تسجل طلب على فرع تاني" });
     }
 
@@ -42,7 +43,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
 
     const subtotal = items.reduce((s, it) => s + it.unitPrice * it.quantity, 0);
     const total = subtotal + deliveryFee - discount;
-    const createdBy = source === "pos" || source === "callcenter" ? req.user.id : null;
+    const createdBy = source === "pos" || source === "callcenter" || source === "talabat" ? req.user.id : null;
 
     const orderResult = await client.query(
       `INSERT INTO orders

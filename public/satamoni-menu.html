@@ -253,6 +253,8 @@ async function loadItems() {
       ${it.variants.map(v => `
         <div class="variant-row">
           <span class="lbl">${v.label}</span><span>${money(v.price)}</span>
+          <span style="color:var(--faint)">طلبات: ${v.talabatPrice != null ? money(v.talabatPrice) : "—"}</span>
+          <button class="linkbtn" data-edittalabat="${v.id}" data-current="${v.talabatPrice ?? ""}">تعديل سعر طلبات</button>
           <button class="linkbtn danger" data-delvariant="${v.id}" data-item="${it.id}">حذف</button>
         </div>`).join("")}
       <div class="addvariant">
@@ -273,6 +275,15 @@ async function loadItems() {
   document.querySelectorAll("[data-delvariant]").forEach(btn => {
     btn.onclick = async () => {
       await api(`/api/menu/variants/${btn.dataset.delvariant}`, { method: "DELETE" });
+      loadItems();
+    };
+  });
+  document.querySelectorAll("[data-edittalabat]").forEach(btn => {
+    btn.onclick = async () => {
+      const answer = prompt("سعر طلبات (سيبه فاضي لو الصنف مش مباع على طلبات):", btn.dataset.current);
+      if (answer === null) return;
+      const talabatPrice = answer.trim() === "" ? null : Number(answer);
+      await api(`/api/menu/variants/${btn.dataset.edittalabat}`, { method: "PATCH", body: JSON.stringify({ talabatPrice }) });
       loadItems();
     };
   });

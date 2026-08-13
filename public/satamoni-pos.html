@@ -74,6 +74,12 @@
 
   /* ===== Cart ===== */
   #cartHeader { padding: 14px 16px; border-bottom: 1px solid var(--line); font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
+  #channelRow { display: flex; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .channel-btn {
+    flex: 1; padding: 9px 0; text-align: center; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); color: var(--faint); cursor: pointer; font-size: 13px; font-weight: 800;
+  }
+  .channel-btn.active { background: var(--gold); border-color: var(--gold); color: #1A1508; }
   #orderTypeRow { display: flex; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .otype-btn {
     flex: 1; padding: 8px 0; text-align: center; border-radius: 8px; border: 1px solid var(--line);
@@ -186,6 +192,11 @@
       <span id="cartCount" style="font-size:12px;color:var(--faint)"></span>
     </div>
 
+    <div id="channelRow">
+      <div class="channel-btn active" data-channel="branch">بيع الفرع</div>
+      <div class="channel-btn" data-channel="talabat">طلبات 🛵</div>
+    </div>
+
     <div id="orderTypeRow">
       <div class="otype-btn active" data-type="dinein">صالة</div>
       <div class="otype-btn" data-type="takeaway">تيك أواي</div>
@@ -230,10 +241,15 @@ const state = {
   paymentMethods: [],
   cart: {},          // key: `${itemId}__${variantId}` -> {itemId, variantId, name, label, price, qty}
   activeCategory: null,
+  channel: "branch", // "branch" (سعر الفرع العادي) | "talabat" (سعر تطبيق طلبات)
   orderType: "dinein",
   selectedBranchId: "",
   selectedPaymentId: "",
 };
+
+function priceFor(variant) {
+  return state.channel === "talabat" ? Number(variant.talabatPrice) : Number(variant.price);
+}
 
 const auth = {
   token: sessionStorage.getItem("satamoni_token") || null,
@@ -339,8 +355,16 @@ function renderBranchSelect() {
   sel.onchange = () => { state.selectedBranchId = sel.value; };
 }
 
+function menuForChannel() {
+  if (state.channel !== "talabat") return state.menu;
+  // في قناة طلبات، بنعرض بس الأصناف اللي ليها سعر طلبات محدد لحجم واحد على الأقل
+  return state.menu
+    .map(item => ({ ...item, variants: item.variants.filter(v => v.talabatPrice != null) }))
+    .filter(item => item.variants.length > 0);
+}
+
 function renderTabs() {
-  const categories = [...new Set(state.menu.map(m => m.category))];
+  const categories = [...new Set(menuForChannel().map(m => m.category))];
   const tabs = document.getElementById("tabs");
   tabs.innerHTML = categories.map(c =>
     `<div class="tab ${c === state.activeCategory ? "active" : ""}" data-cat="${c}">${c}</div>`
@@ -351,11 +375,12 @@ function renderTabs() {
 }
 
 function renderGrid() {
-  const items = state.menu.filter(m => m.category === state.activeCategory);
+  const items = menuForChannel().filter(m => m.category === state.activeCategory);
   const grid = document.getElementById("grid");
   grid.innerHTML = items.map(item => {
     const variants = item.variants;
-    const priceLabel = variants.length === 1 ? money(variants[0].price) : `من ${money(Math.min(...variants.map(v => v.price)))}`;
+    const prices = variants.map(priceFor);
+    const priceLabel = variants.length === 1 ? money(prices[0]) : `من ${money(Math.min(...prices))}`;
     return `
       <div class="item-card" data-item='${JSON.stringify(item).replace(/'/g, "&apos;")}'>
         ${item.best ? '<span class="best">الأكثر طلبًا</span><br/>' : ""}
@@ -376,7 +401,7 @@ function renderGrid() {
 }
 
 function pickVariant(item) {
-  const choice = item.variants.map((v, i) => `${i + 1}) ${v.label} — ${money(v.price)}`).join("\n");
+  const choice = item.variants.map((v, i) => `${i + 1}) ${v.label} — ${money(priceFor(v))}`).join("\n");
   const answer = prompt(`اختار الحجم لـ "${item.name}":\n${choice}`, "1");
   const idx = parseInt(answer, 10) - 1;
   if (item.variants[idx]) addToCart(item, item.variants[idx]);
@@ -387,7 +412,7 @@ function addToCart(item, variant) {
   const existing = state.cart[key];
   state.cart[key] = {
     itemId: item.id, variantId: variant.id, name: item.name,
-    label: variant.label, price: Number(variant.price), qty: (existing?.qty || 0) + 1,
+    label: variant.label, price: priceFor(variant), qty: (existing?.qty || 0) + 1,
   };
   renderCart();
 }
@@ -443,11 +468,31 @@ function renderCart() {
 
 function updateSubmitState() {
   const rows = Object.entries(state.cart);
-  const okBranch = state.orderType !== "delivery" ? !!state.selectedBranchId : true;
-  const okTable = state.orderType !== "dinein" || document.getElementById("tableInput").value.trim();
+  const okBranch = !!state.selectedBranchId;
+  const okTable = state.channel === "talabat" || state.orderType !== "dinein" ||
+    document.getElementById("tableInput").value.trim();
   const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okTable;
   document.getElementById("submitBtn").disabled = !ok;
 }
+
+document.querySelectorAll(".channel-btn").forEach(btn => {
+  btn.onclick = () => {
+    if (btn.dataset.channel === state.channel) return;
+    if (Object.keys(state.cart).length > 0 &&
+        !confirm("تغيير القناة هيمسح السلة الحالية (الأسعار مختلفة). تكمل؟")) {
+      return;
+    }
+    state.channel = btn.dataset.channel;
+    state.cart = {};
+    document.querySelectorAll(".channel-btn").forEach(b => b.classList.toggle("active", b === btn));
+    document.getElementById("orderTypeRow").style.display = state.channel === "talabat" ? "none" : "flex";
+    document.getElementById("extraFields").style.display = state.channel === "talabat" ? "none" : "flex";
+    state.activeCategory = [...new Set(menuForChannel().map(m => m.category))][0];
+    renderTabs();
+    renderGrid();
+    renderCart();
+  };
+});
 
 document.querySelectorAll(".otype-btn").forEach(btn => {
   btn.onclick = () => {
@@ -466,12 +511,13 @@ document.getElementById("submitBtn").onclick = async () => {
   btn.textContent = "جاري الإرسال...";
   errBox.textContent = "";
   try {
+    const isTalabat = state.channel === "talabat";
     const payload = {
       branchId: state.selectedBranchId,
-      source: "pos",
-      orderType: state.orderType,
-      tableNumber: state.orderType === "dinein" ? document.getElementById("tableInput").value.trim() : null,
-      customerPhone: document.getElementById("phoneInput").value.trim() || null,
+      source: isTalabat ? "talabat" : "pos",
+      orderType: isTalabat ? "talabat" : state.orderType,
+      tableNumber: !isTalabat && state.orderType === "dinein" ? document.getElementById("tableInput").value.trim() : null,
+      customerPhone: !isTalabat ? (document.getElementById("phoneInput").value.trim() || null) : null,
       paymentMethodId: state.selectedPaymentId,
       deliveryFee: 0,
       items: Object.values(state.cart).map(v => ({

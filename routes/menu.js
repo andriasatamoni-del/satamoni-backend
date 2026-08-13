@@ -9,7 +9,7 @@ router.get("/", async (req, res) => {
     const items = await pool.query(`
       SELECT mi.id, mi.name, mi.description, mi.image_url, mi.is_best,
              mc.name AS category,
-             json_agg(json_build_object('id', v.id, 'label', v.label, 'price', v.price)) AS variants
+             json_agg(json_build_object('id', v.id, 'label', v.label, 'price', v.price, 'talabatPrice', v.talabat_price)) AS variants
       FROM menu_items mi
       JOIN menu_categories mc ON mc.id = mi.category_id
       JOIN menu_item_variants v ON v.item_id = mi.id
@@ -57,7 +57,7 @@ router.get("/items", requireAuth, requireRole("admin"), async (req, res) => {
     const items = await pool.query(`
       SELECT mi.id, mi.name, mi.description, mi.image_url, mi.is_best, mi.is_active,
              mi.category_id, mc.name AS category,
-             COALESCE(json_agg(json_build_object('id', v.id, 'label', v.label, 'price', v.price) ORDER BY v.id)
+             COALESCE(json_agg(json_build_object('id', v.id, 'label', v.label, 'price', v.price, 'talabatPrice', v.talabat_price) ORDER BY v.id)
                FILTER (WHERE v.id IS NOT NULL), '[]') AS variants
       FROM menu_items mi
       JOIN menu_categories mc ON mc.id = mi.category_id
@@ -117,14 +117,15 @@ router.patch("/items/:id", requireAuth, requireRole("admin"), async (req, res) =
 });
 
 // POST /api/menu/items/:id/variants - إضافة حجم/سعر لصنف (وسط / كبير / عادي)
+// talabatPrice اختياري - سعر مختلف لتطبيق طلبات (سيبه فاضي لو الصنف مش مباع هناك)
 router.post("/items/:id/variants", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { label, price } = req.body;
+  const { label, price, talabatPrice } = req.body;
   if (!label || price === undefined) return res.status(400).json({ error: "لازم اسم الحجم والسعر" });
   try {
     const result = await pool.query(
-      "INSERT INTO menu_item_variants (item_id, label, price) VALUES ($1, $2, $3) RETURNING *",
-      [id, label, price]
+      "INSERT INTO menu_item_variants (item_id, label, price, talabat_price) VALUES ($1, $2, $3, $4) RETURNING *",
+      [id, label, price, talabatPrice ?? null]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -132,15 +133,16 @@ router.post("/items/:id/variants", requireAuth, requireRole("admin"), async (req
   }
 });
 
-// PATCH /api/menu/variants/:id - تعديل حجم/سعر
+// PATCH /api/menu/variants/:id - تعديل حجم/سعر/سعر طلبات
 router.patch("/variants/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { label, price } = req.body;
+  const { label, price, talabatPrice } = req.body;
   const fields = [];
   const values = [];
   let i = 1;
   if (label !== undefined) { fields.push(`label = $${i++}`); values.push(label); }
   if (price !== undefined) { fields.push(`price = $${i++}`); values.push(price); }
+  if (talabatPrice !== undefined) { fields.push(`talabat_price = $${i++}`); values.push(talabatPrice); }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
 
   values.push(id);

@@ -38,7 +38,7 @@ router.get("/full", async (req, res) => {
       pool.query(`
         SELECT mi.id, mi.name, mi.description, mi.image_url AS image, mi.is_best AS best,
                mc.name AS category,
-               json_agg(json_build_object('id', v.id, 'label', v.label, 'price', v.price) ORDER BY v.id) AS variants
+               json_agg(json_build_object('id', v.id, 'label', v.label, 'price', v.price, 'talabatPrice', v.talabat_price) ORDER BY v.id) AS variants
         FROM menu_items mi
         JOIN menu_categories mc ON mc.id = mi.category_id
         JOIN menu_item_variants v ON v.item_id = mi.id
