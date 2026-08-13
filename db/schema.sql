@@ -150,14 +150,6 @@ CREATE TABLE purchases (
   synced_at     TIMESTAMPTZ
 );
 
-CREATE TABLE kitchen_transfers (
-  id              SERIAL PRIMARY KEY,
-  to_branch_id    INTEGER REFERENCES branches(id),
-  business_date   DATE NOT NULL,
-  amount_at_cost  NUMERIC NOT NULL,
-  notes           TEXT
-);
-
 -- ---------------- مديونية الفروع للمخزن الرئيسي (كمورد) ----------------
 CREATE TABLE supplier_ledger_entries (
   id            SERIAL PRIMARY KEY,
@@ -177,7 +169,52 @@ CREATE TABLE inventory_items (
   name          TEXT NOT NULL UNIQUE,        -- دقيق / جبنة موتزاريلا / زيت ...
   unit          TEXT NOT NULL,               -- كيلو / لتر / قطعة
   unit_cost     NUMERIC,                     -- تكلفة الوحدة (لحساب تكلفة الريسبي مستقبلًا) - اختياري
+  item_type     TEXT NOT NULL DEFAULT 'raw' CHECK (item_type IN ('raw', 'manufactured')), -- خام (بيتشترى) أو مصنّع (بيتعمل في السنتر كيتشن)
   created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+-- وصفة تصنيع صنف مصنّع من مكونات خام/مصنّعة تانية (كام وحدة من كل مكوّن داخل عشان تنتج وحدة واحدة من الناتج)
+CREATE TABLE manufacturing_recipe_items (
+  id                 SERIAL PRIMARY KEY,
+  output_item_id     INTEGER REFERENCES inventory_items(id) ON DELETE CASCADE, -- الصنف المصنّع الناتج
+  input_item_id      INTEGER REFERENCES inventory_items(id), -- مكوّن داخل في التصنيع
+  quantity_per_unit  NUMERIC NOT NULL,
+  UNIQUE(output_item_id, input_item_id)
+);
+
+-- ---------------- طلبيات الفروع للسنتر كيتشن ----------------
+CREATE TABLE kitchen_orders (
+  id            SERIAL PRIMARY KEY,
+  branch_id     INTEGER REFERENCES branches(id),  -- الفرع الطالب
+  business_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'fulfilled', 'cancelled')),
+  notes         TEXT,
+  created_by    INTEGER REFERENCES users(id),
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE kitchen_order_items (
+  id                  SERIAL PRIMARY KEY,
+  kitchen_order_id    INTEGER REFERENCES kitchen_orders(id) ON DELETE CASCADE,
+  inventory_item_id   INTEGER REFERENCES inventory_items(id),
+  quantity_requested  NUMERIC NOT NULL
+);
+
+CREATE TABLE kitchen_transfers (
+  id               SERIAL PRIMARY KEY,
+  to_branch_id     INTEGER REFERENCES branches(id),
+  business_date    DATE NOT NULL,
+  amount_at_cost   NUMERIC NOT NULL,
+  notes            TEXT,
+  kitchen_order_id INTEGER REFERENCES kitchen_orders(id) -- لو التحويل ده تنفيذ لطلبية فرع (اختياري)
+);
+
+-- بنود التحويل بالتفصيل (أصناف وكميات) - amount_at_cost فوق بيتحسب من مجموعها
+CREATE TABLE kitchen_transfer_items (
+  id                    SERIAL PRIMARY KEY,
+  kitchen_transfer_id   INTEGER REFERENCES kitchen_transfers(id) ON DELETE CASCADE,
+  inventory_item_id     INTEGER REFERENCES inventory_items(id),
+  quantity              NUMERIC NOT NULL
 );
 
 CREATE TABLE branch_inventory_stock (
@@ -202,7 +239,7 @@ CREATE TABLE inventory_movements (
   id                SERIAL PRIMARY KEY,
   branch_id         INTEGER REFERENCES branches(id),
   inventory_item_id INTEGER REFERENCES inventory_items(id),
-  movement_type     TEXT NOT NULL CHECK (movement_type IN ('purchase', 'sale_deduction', 'transfer_in', 'transfer_out', 'adjustment')),
+  movement_type     TEXT NOT NULL CHECK (movement_type IN ('purchase', 'sale_deduction', 'transfer_in', 'transfer_out', 'adjustment', 'production_in', 'production_out')),
   quantity          NUMERIC NOT NULL,        -- موجب = زيادة، سالب = نقصان
   order_id          INTEGER REFERENCES orders(id),
   business_date     DATE NOT NULL DEFAULT CURRENT_DATE,

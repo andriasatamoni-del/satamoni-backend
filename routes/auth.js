@@ -16,7 +16,10 @@ router.post("/login", async (req, res) => {
   }
   try {
     const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1 AND is_active = TRUE",
+      `SELECT u.*, COALESCE(b.is_central_kitchen, FALSE) AS is_central_kitchen
+       FROM users u
+       LEFT JOIN branches b ON b.id = u.branch_id
+       WHERE u.email = $1 AND u.is_active = TRUE`,
       [email]
     );
     const user = result.rows[0];
@@ -31,6 +34,7 @@ router.post("/login", async (req, res) => {
       email: user.email,
       role: user.role,
       branchId: user.branch_id,
+      isCentralKitchen: user.is_central_kitchen,
     };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_TTL });
 
@@ -38,7 +42,7 @@ router.post("/login", async (req, res) => {
       token,
       user: {
         id: user.id, name: user.name, email: user.email,
-        role: user.role, branchId: user.branch_id,
+        role: user.role, branchId: user.branch_id, isCentralKitchen: user.is_central_kitchen,
       },
     });
   } catch (err) {

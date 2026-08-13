@@ -16,14 +16,21 @@ router.get("/items", requireAuth, staffRoles, async (req, res) => {
   }
 });
 
-// POST /api/inventory/items - إضافة مكوّن جديد للكتالوج (أدمن بس)
-router.post("/items", requireAuth, requireRole("admin"), async (req, res) => {
-  const { name, unit } = req.body;
+// POST /api/inventory/items - إضافة مكوّن جديد للكتالوج (أدمن أو مدير السنتر كيتشن)
+// itemType: 'raw' (بيتشترى من مورد) أو 'manufactured' (بيتعمل في السنتر كيتشن من مكونات تانية)
+router.post("/items", requireAuth, stockManagers, async (req, res) => {
+  if (req.user.role !== "admin" && !req.user.isCentralKitchen) {
+    return res.status(403).json({ error: "إضافة مكونات جديدة للكتالوج للأدمن أو مدير السنتر كيتشن بس" });
+  }
+  const { name, unit, itemType = "raw" } = req.body;
   if (!name || !unit) return res.status(400).json({ error: "لازم اسم ووحدة قياس" });
+  if (!["raw", "manufactured"].includes(itemType)) {
+    return res.status(400).json({ error: "نوع الصنف غير معروف" });
+  }
   try {
     const result = await pool.query(
-      "INSERT INTO inventory_items (name, unit) VALUES ($1, $2) RETURNING *",
-      [name, unit]
+      "INSERT INTO inventory_items (name, unit, item_type) VALUES ($1, $2, $3) RETURNING *",
+      [name, unit, itemType]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -133,6 +140,124 @@ router.put("/recipe/:variantId", requireAuth, requireRole("admin"), async (req, 
     }
     await client.query("COMMIT");
     res.json({ ok: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ---------------- التصنيع (خام -> مصنّع) ----------------
+
+// GET /api/inventory/manufacturing-recipe/:itemId - وصفة تصنيع صنف مصنّع
+router.get("/manufacturing-recipe/:itemId", requireAuth, staffRoles, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT mri.input_item_id, ii.name, ii.unit, mri.quantity_per_unit
+       FROM manufacturing_recipe_items mri
+       JOIN inventory_items ii ON ii.id = mri.input_item_id
+       WHERE mri.output_item_id = $1
+       ORDER BY ii.name`,
+      [req.params.itemId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/inventory/manufacturing-recipe/:itemId - استبدال وصفة تصنيع بالكامل (أدمن أو مدير السنتر كيتشن)
+// body: { ingredients: [{ inputItemId, quantityPerUnit }] }
+router.put("/manufacturing-recipe/:itemId", requireAuth, stockManagers, async (req, res) => {
+  if (req.user.role !== "admin" && !req.user.isCentralKitchen) {
+    return res.status(403).json({ error: "وصفات التصنيع بيعدّلها الأدمن أو مدير السنتر كيتشن بس" });
+  }
+  const { itemId } = req.params;
+  const { ingredients } = req.body;
+  if (!Array.isArray(ingredients)) return res.status(400).json({ error: "لازم قايمة مكونات" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM manufacturing_recipe_items WHERE output_item_id = $1", [itemId]);
+    for (const ing of ingredients) {
+      await client.query(
+        `INSERT INTO manufacturing_recipe_items (output_item_id, input_item_id, quantity_per_unit)
+         VALUES ($1, $2, $3)`,
+        [itemId, ing.inputItemId, ing.quantityPerUnit]
+      );
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/inventory/produce - تسجيل عملية تصنيع فعلية (بيستهلك المكونات الخام وينتج الصنف المصنّع)
+// {branchId (لازم يكون فرع is_central_kitchen), outputItemId, quantityProduced, notes}
+router.post("/produce", requireAuth, stockManagers, async (req, res) => {
+  const { branchId, outputItemId, quantityProduced, notes } = req.body;
+  if (!branchId || !outputItemId || !quantityProduced || quantityProduced <= 0) {
+    return res.status(400).json({ error: "بيانات ناقصة" });
+  }
+  if (!assertOwnBranch(req.user, branchId)) {
+    return res.status(403).json({ error: "معندكش صلاحية تسجل تصنيع لفرع تاني" });
+  }
+
+  const client = await pool.connect();
+  try {
+    const branchCheck = await client.query("SELECT is_central_kitchen FROM branches WHERE id = $1", [branchId]);
+    if (branchCheck.rows.length === 0 || !branchCheck.rows[0].is_central_kitchen) {
+      return res.status(400).json({ error: "التصنيع بيتسجل بس على فرع السنتر كيتشن" });
+    }
+
+    const recipe = await client.query(
+      "SELECT input_item_id, quantity_per_unit FROM manufacturing_recipe_items WHERE output_item_id = $1",
+      [outputItemId]
+    );
+    if (recipe.rows.length === 0) {
+      return res.status(400).json({ error: "الصنف ده مفيش له وصفة تصنيع محددة لسه" });
+    }
+
+    await client.query("BEGIN");
+
+    for (const ing of recipe.rows) {
+      await client.query(
+        `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
+         VALUES ($1, $2, -($3::numeric * $4::numeric))
+         ON CONFLICT (branch_id, inventory_item_id)
+         DO UPDATE SET quantity = branch_inventory_stock.quantity - ($3::numeric * $4::numeric)`,
+        [branchId, ing.input_item_id, ing.quantity_per_unit, quantityProduced]
+      );
+      await client.query(
+        `INSERT INTO inventory_movements
+          (branch_id, inventory_item_id, movement_type, quantity, business_date, notes)
+         VALUES ($1, $2, 'production_out', -($3::numeric * $4::numeric), CURRENT_DATE, $5)`,
+        [branchId, ing.input_item_id, ing.quantity_per_unit, quantityProduced, notes || null]
+      );
+    }
+
+    await client.query(
+      `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (branch_id, inventory_item_id)
+       DO UPDATE SET quantity = branch_inventory_stock.quantity + $3`,
+      [branchId, outputItemId, quantityProduced]
+    );
+    await client.query(
+      `INSERT INTO inventory_movements
+        (branch_id, inventory_item_id, movement_type, quantity, business_date, notes)
+       VALUES ($1, $2, 'production_in', $3, CURRENT_DATE, $4)`,
+      [branchId, outputItemId, quantityProduced, notes || null]
+    );
+
+    await client.query("COMMIT");
+    res.status(201).json({ ok: true, consumedIngredients: recipe.rows.length });
   } catch (err) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });

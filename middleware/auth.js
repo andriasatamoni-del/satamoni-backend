@@ -19,6 +19,7 @@ function requireAuth(req, res, next) {
       email: payload.email,
       role: payload.role,
       branchId: payload.branchId,
+      isCentralKitchen: payload.isCentralKitchen || false,
     };
     next();
   } catch (err) {

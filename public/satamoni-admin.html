@@ -23,13 +23,13 @@
   #main { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
   h1 { font-size: 18px; color: var(--gold-bright); margin-bottom: 16px; }
 
-  #userForm { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 24px; }
-  #userForm .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-  #userForm input, #userForm select {
+  #userForm, #branchForm { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 24px; }
+  #userForm .row, #branchForm .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  #userForm input, #userForm select, #branchForm input, #branchForm select {
     flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink);
     border-radius: 6px; padding: 9px 10px; font-size: 13px;
   }
-  #userForm button {
+  #userForm button, #branchForm button {
     padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff;
     font-weight: 800; cursor: pointer; font-size: 13px;
   }
@@ -52,6 +52,8 @@
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
   #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
   #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+  label.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); flex: 0; white-space: nowrap; }
+  label.chk input { flex: 0; width: auto; }
 </style>
 </head>
 <body>
@@ -75,6 +77,25 @@
 </div>
 
 <div id="main" style="display:none">
+  <h1>إضافة فرع جديد</h1>
+  <div id="branchForm">
+    <div class="row">
+      <input id="brName" placeholder="اسم الفرع" />
+      <input id="brAddress" placeholder="العنوان (اختياري)" />
+      <input id="brPhone" placeholder="التليفون (اختياري)" />
+    </div>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="brIsKitchen" /> ده السنتر كيتشن (مش فرع بيع)</label>
+      <button id="branchSubmit">إضافة</button>
+    </div>
+    <div id="branchErr"></div>
+  </div>
+
+  <table style="margin-bottom:24px">
+    <thead><tr><th>الاسم</th><th>العنوان</th><th>النوع</th></tr></thead>
+    <tbody id="branchesBody"></tbody>
+  </table>
+
   <h1>إضافة موظف جديد</h1>
   <div id="userForm">
     <div class="row">
@@ -180,12 +201,36 @@ async function boot() {
 }
 
 async function loadBranches() {
-  const data = await api("/api/branches");
+  const data = await api("/api/branches/all");
   branches = data;
   document.getElementById("fBranch").innerHTML =
     `<option value="">— بدون فرع (أدمن/محاسب) —</option>` +
-    branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    branches.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
+  document.getElementById("branchesBody").innerHTML = branches.map(b => `
+    <tr><td>${b.name}</td><td>${b.address || "—"}</td><td>${b.is_central_kitchen ? "سنتر كيتشن" : "فرع بيع"}</td></tr>
+  `).join("") || `<tr><td colspan="3">لسه مفيش فروع</td></tr>`;
 }
+
+document.getElementById("branchSubmit").onclick = async () => {
+  const errBox = document.getElementById("branchErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/branches", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("brName").value.trim(),
+        address: document.getElementById("brAddress").value.trim() || null,
+        phone: document.getElementById("brPhone").value.trim() || null,
+        isCentralKitchen: document.getElementById("brIsKitchen").checked,
+      }),
+    });
+    document.getElementById("brName").value = "";
+    document.getElementById("brAddress").value = "";
+    document.getElementById("brPhone").value = "";
+    document.getElementById("brIsKitchen").checked = false;
+    await loadBranches();
+  } catch (e) { errBox.textContent = e.message; }
+};
 
 async function loadUsers() {
   const users = await api("/api/users");
