@@ -110,7 +110,7 @@
 </div>
 
 <script>
-const API_BASE_URL = window.SATAMONI_API_URL || "http://localhost:4000";
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
 const managerRoles = ["admin", "branch_manager"];
 
 const auth = {
