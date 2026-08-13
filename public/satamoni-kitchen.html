@@ -150,6 +150,10 @@
 
     <h1>مخزون السنتر كيتشن</h1>
     <table><thead><tr><th>المكوّن</th><th>الرصيد</th></tr></thead><tbody id="kitchenStockBody"></tbody></table>
+
+    <h1>كتالوج المكونات (تصحيح الوحدة أو النوع)</h1>
+    <div class="formbox"><input id="catalogSearch" placeholder="دور بالاسم..." /></div>
+    <table><thead><tr><th>الاسم</th><th>الوحدة</th><th>النوع</th><th></th></tr></thead><tbody id="catalogBody"></tbody></table>
   </div>
 </div>
 
@@ -238,8 +242,40 @@ async function boot() {
     populateProduceAndRecipeSelects();
     addRecipeRow();
     await loadKitchenStock();
+    renderCatalogTable();
   }
 }
+
+function renderCatalogTable() {
+  const q = document.getElementById("catalogSearch").value.trim();
+  const typeLabels = { raw: "خام", manufactured: "مصنّع" };
+  const rows = inventoryItems.filter((i) => !q || i.name.includes(q));
+  document.getElementById("catalogBody").innerHTML = rows.map((i) => `
+    <tr>
+      <td>${i.name}</td><td>${i.unit}</td><td>${typeLabels[i.item_type] || i.item_type}</td>
+      <td><button class="linkbtn" data-edititem="${i.id}">تعديل</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="4">مفيش نتائج</td></tr>`;
+  document.querySelectorAll("[data-edititem]").forEach((btn) => {
+    btn.onclick = async () => {
+      const item = inventoryItems.find((i) => String(i.id) === btn.dataset.edititem);
+      const newUnit = prompt("الوحدة:", item.unit);
+      if (newUnit === null) return;
+      const newType = prompt("النوع (raw أو manufactured):", item.item_type);
+      if (newType === null) return;
+      try {
+        await api(`/api/inventory/items/${item.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ unit: newUnit.trim(), itemType: newType.trim() }),
+        });
+        inventoryItems = await api("/api/inventory/items");
+        renderCatalogTable();
+        populateProduceAndRecipeSelects();
+      } catch (e) { alert(e.message); }
+    };
+  });
+}
+document.getElementById("catalogSearch").addEventListener("input", renderCatalogTable);
 
 function itemOptions(filterType) {
   const items = filterType ? inventoryItems.filter(i => i.item_type === filterType) : inventoryItems;

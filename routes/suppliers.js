@@ -49,4 +49,58 @@ router.post("/ledger", requireAuth, requireRole("admin", "accountant"), async (r
   }
 });
 
+// ---------------- سجل الموردين (شركات المواد الخام) ----------------
+
+// GET /api/suppliers - كل الموردين مع الأصناف اللي بيبيعوها وأسعارهم
+router.get("/", requireAuth, requireRole("admin", "accountant", "branch_manager"), async (req, res) => {
+  try {
+    const suppliers = await pool.query("SELECT * FROM suppliers ORDER BY name");
+    const items = await pool.query(`
+      SELECT ins.supplier_id, ins.unit_price, ii.id AS inventory_item_id, ii.name, ii.unit
+      FROM inventory_item_suppliers ins
+      JOIN inventory_items ii ON ii.id = ins.inventory_item_id
+    `);
+    res.json(suppliers.rows.map((s) => ({
+      ...s,
+      items: items.rows.filter((it) => it.supplier_id === s.id),
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/suppliers - إضافة مورد جديد
+router.post("/", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
+  const { name, phone, notes } = req.body;
+  if (!name) return res.status(400).json({ error: "لازم اسم المورد" });
+  try {
+    const result = await pool.query(
+      "INSERT INTO suppliers (name, phone, notes) VALUES ($1, $2, $3) RETURNING *",
+      [name, phone || null, notes || null]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ error: "المورد ده موجود بالفعل" });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/suppliers/:id/items - ربط صنف بمورد وسعره
+router.post("/:id/items", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
+  const { inventoryItemId, unitPrice } = req.body;
+  if (!inventoryItemId || unitPrice === undefined) return res.status(400).json({ error: "لازم صنف وسعر" });
+  try {
+    const result = await pool.query(
+      `INSERT INTO inventory_item_suppliers (inventory_item_id, supplier_id, unit_price)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (inventory_item_id, supplier_id) DO UPDATE SET unit_price = EXCLUDED.unit_price
+       RETURNING *`,
+      [inventoryItemId, req.params.id, unitPrice]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

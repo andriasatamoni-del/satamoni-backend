@@ -39,6 +39,38 @@ router.post("/items", requireAuth, stockManagers, async (req, res) => {
   }
 });
 
+// PATCH /api/inventory/items/:id - تصحيح اسم/وحدة/تكلفة/نوع مكوّن (أدمن أو مدير السنتر كيتشن)
+router.patch("/items/:id", requireAuth, stockManagers, async (req, res) => {
+  if (req.user.role !== "admin" && !req.user.isCentralKitchen) {
+    return res.status(403).json({ error: "تعديل الكتالوج للأدمن أو مدير السنتر كيتشن بس" });
+  }
+  const { name, unit, unitCost, itemType } = req.body;
+  const fields = [];
+  const values = [];
+  let i = 1;
+  if (name !== undefined) { fields.push(`name = $${i++}`); values.push(name); }
+  if (unit !== undefined) { fields.push(`unit = $${i++}`); values.push(unit); }
+  if (unitCost !== undefined) { fields.push(`unit_cost = $${i++}`); values.push(unitCost); }
+  if (itemType !== undefined) {
+    if (!["raw", "manufactured"].includes(itemType)) return res.status(400).json({ error: "نوع الصنف غير معروف" });
+    fields.push(`item_type = $${i++}`); values.push(itemType);
+  }
+  if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
+
+  values.push(req.params.id);
+  try {
+    const result = await pool.query(
+      `UPDATE inventory_items SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`,
+      values
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "المكوّن مش موجود" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ error: "الاسم ده مستخدم بالفعل" });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/inventory/stock?branchId= - رصيد المخزون الحالي لفرع
 router.get("/stock", requireAuth, staffRoles, async (req, res) => {
   let { branchId } = req.query;

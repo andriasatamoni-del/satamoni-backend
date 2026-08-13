@@ -173,6 +173,24 @@ CREATE TABLE inventory_items (
   created_at    TIMESTAMPTZ DEFAULT now()
 );
 
+-- ---------------- الموردين (شركات المواد الخام) ----------------
+CREATE TABLE suppliers (
+  id            SERIAL PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  phone         TEXT,
+  notes         TEXT,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+-- سعر كل مكوّن عند كل مورد بيبيعه (لمقارنة الأسعار واختيار الأرخص)
+CREATE TABLE inventory_item_suppliers (
+  id                SERIAL PRIMARY KEY,
+  inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE CASCADE,
+  supplier_id       INTEGER REFERENCES suppliers(id) ON DELETE CASCADE,
+  unit_price        NUMERIC NOT NULL,
+  UNIQUE(inventory_item_id, supplier_id)
+);
+
 -- وصفة تصنيع صنف مصنّع من مكونات خام/مصنّعة تانية (كام وحدة من كل مكوّن داخل عشان تنتج وحدة واحدة من الناتج)
 CREATE TABLE manufacturing_recipe_items (
   id                 SERIAL PRIMARY KEY,

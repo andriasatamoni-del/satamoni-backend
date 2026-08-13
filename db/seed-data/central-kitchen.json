@@ -1,0 +1,1151 @@
+{
+  "rawMaterials": [
+    {
+      "name": "اكياس زيرو 15*25",
+      "unit": "كجم",
+      "source": "supplier_sheet"
+    },
+    {
+      "name": "بابريكا",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "بسطرمة خام",
+      "unit": "كجم",
+      "source": "supplier_sheet"
+    },
+    {
+      "name": "بصل احمر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "بطاطس فريش",
+      "unit": "كجم",
+      "source": "supplier_sheet"
+    },
+    {
+      "name": "بقسماط مطحون",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "بكينيج بودر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "بنجر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "بهارات برجر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "بهارات سدق",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "بهارات سمك",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "بهارات شرق اقصي",
+      "unit": "كجم",
+      "source": "existing_catalog"
+    },
+    {
+      "name": "ثوم",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "جزر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "جمبري مقشر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "جنزبيل",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "جوزة الطيب",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "خل",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "خميرة",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "دقيق",
+      "unit": "كجم",
+      "source": "existing_catalog"
+    },
+    {
+      "name": "دقيق فينو",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "رومي اقراص - مبشور",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "ريحان",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "زبدة الطاهي",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "زبدة كريستال",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "زعتر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "زيت لتر",
+      "unit": "لتر",
+      "source": "existing_catalog"
+    },
+    {
+      "name": "سكر بودرة",
+      "unit": "كجم",
+      "source": "existing_catalog"
+    },
+    {
+      "name": "سلامي",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "سمنة جنة",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "شبت",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "شطة",
+      "unit": "كجم",
+      "source": "existing_catalog"
+    },
+    {
+      "name": "صلصة خام",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "صوص باربكيو",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "طماطم",
+      "unit": "كجم",
+      "source": "existing_catalog"
+    },
+    {
+      "name": "عين جمل",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "فراخ بانية ني",
+      "unit": "كجم",
+      "source": "supplier_sheet"
+    },
+    {
+      "name": "فراخ كريسبي",
+      "unit": "كجم",
+      "source": "supplier_sheet"
+    },
+    {
+      "name": "فلفل اسمر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "فول صويا",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "قرفة",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "كاجو",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "لحمة هندى",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "للبن",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "لوز",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "مرقة خضار بودر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "مرقة دجاج بودر",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "مرقة دجاج مكعبات",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "مسطردة",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    },
+    {
+      "name": "ملح",
+      "unit": "كجم",
+      "source": "existing_catalog"
+    },
+    {
+      "name": "موتزريلا بيتزا",
+      "unit": "كجم",
+      "source": "supplier_sheet"
+    },
+    {
+      "name": "موتزريلا فطير",
+      "unit": "كجم",
+      "source": "supplier_sheet"
+    },
+    {
+      "name": "نهد",
+      "unit": "كجم",
+      "source": "supplier_sheet"
+    },
+    {
+      "name": "هانك",
+      "unit": "قطعة",
+      "source": "fallback_as_given"
+    }
+  ],
+  "manufacturedProducts": [
+    {
+      "name": "برجر 100 جرام",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "لحمة هندى",
+          "quantityPerUnit": 0.062536
+        },
+        {
+          "ingredient": "بكينيج بودر",
+          "quantityPerUnit": 0.009665
+        },
+        {
+          "ingredient": "نهد",
+          "quantityPerUnit": 0.006254
+        },
+        {
+          "ingredient": "فول صويا",
+          "quantityPerUnit": 0.006254
+        },
+        {
+          "ingredient": "بقسماط مطحون",
+          "quantityPerUnit": 0.005969
+        },
+        {
+          "ingredient": "بهارات برجر",
+          "quantityPerUnit": 0.003937
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.000776
+        },
+        {
+          "ingredient": "فلفل اسمر",
+          "quantityPerUnit": 0.000375
+        }
+      ]
+    },
+    {
+      "name": "برسيون بسطرمة صغير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "بسطرمة خام",
+          "quantityPerUnit": 0.090012
+        }
+      ]
+    },
+    {
+      "name": "برسيون بسطرمة كبير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "بسطرمة خام",
+          "quantityPerUnit": 0.12
+        }
+      ]
+    },
+    {
+      "name": "برسيون جبنة رومي صغير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "رومي اقراص - مبشور",
+          "quantityPerUnit": 0.047783
+        }
+      ]
+    },
+    {
+      "name": "برسيون جمبري صغير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "جمبري مقشر",
+          "quantityPerUnit": 0.122951
+        },
+        {
+          "ingredient": "شبت",
+          "quantityPerUnit": 0.02459
+        },
+        {
+          "ingredient": "مسطردة",
+          "quantityPerUnit": 0.005123
+        },
+        {
+          "ingredient": "ثوم",
+          "quantityPerUnit": 0.004918
+        },
+        {
+          "ingredient": "بهارات سمك",
+          "quantityPerUnit": 0.004918
+        },
+        {
+          "ingredient": "زيت لتر",
+          "quantityPerUnit": 0.003074
+        },
+        {
+          "ingredient": "اكياس زيرو 15*25",
+          "quantityPerUnit": 0.00125
+        }
+      ]
+    },
+    {
+      "name": "برسيون سدق صغير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "لحمة هندى",
+          "quantityPerUnit": 0.108845
+        },
+        {
+          "ingredient": "بطاطس فريش",
+          "quantityPerUnit": 0.030311
+        },
+        {
+          "ingredient": "نهد",
+          "quantityPerUnit": 0.009231
+        },
+        {
+          "ingredient": "هانك",
+          "quantityPerUnit": 0.008956
+        },
+        {
+          "ingredient": "فول صويا",
+          "quantityPerUnit": 0.008267
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.001929
+        },
+        {
+          "ingredient": "ثوم",
+          "quantityPerUnit": 0.001488
+        },
+        {
+          "ingredient": "بهارات سدق",
+          "quantityPerUnit": 0.001487
+        },
+        {
+          "ingredient": "فلفل اسمر",
+          "quantityPerUnit": 0.000328
+        },
+        {
+          "ingredient": "شطة",
+          "quantityPerUnit": 9.9e-05
+        }
+      ]
+    },
+    {
+      "name": "برسيون سدق كبير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "لحمة هندى",
+          "quantityPerUnit": 0.145
+        },
+        {
+          "ingredient": "بطاطس فريش",
+          "quantityPerUnit": 0.04
+        },
+        {
+          "ingredient": "نهد",
+          "quantityPerUnit": 0.014545
+        },
+        {
+          "ingredient": "فول صويا",
+          "quantityPerUnit": 0.010909
+        },
+        {
+          "ingredient": "هانك",
+          "quantityPerUnit": 0.008182
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.002545
+        },
+        {
+          "ingredient": "ثوم",
+          "quantityPerUnit": 0.002182
+        },
+        {
+          "ingredient": "بهارات سدق",
+          "quantityPerUnit": 0.002
+        },
+        {
+          "ingredient": "فلفل اسمر",
+          "quantityPerUnit": 0.000436
+        },
+        {
+          "ingredient": "شطة",
+          "quantityPerUnit": 0.000123
+        }
+      ]
+    },
+    {
+      "name": "برسيون سلامي صغير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "سلامي",
+          "quantityPerUnit": 0.069862
+        }
+      ]
+    },
+    {
+      "name": "برسيون فراخ جريل صغير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "فراخ بانية ني",
+          "quantityPerUnit": 0.172083
+        },
+        {
+          "ingredient": "طماطم",
+          "quantityPerUnit": 0.010069
+        },
+        {
+          "ingredient": "بصل احمر",
+          "quantityPerUnit": 0.010069
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.003403
+        },
+        {
+          "ingredient": "صوص باربكيو",
+          "quantityPerUnit": 0.002535
+        },
+        {
+          "ingredient": "خل",
+          "quantityPerUnit": 0.002257
+        },
+        {
+          "ingredient": "مسطردة",
+          "quantityPerUnit": 0.001701
+        },
+        {
+          "ingredient": "مرقة دجاج بودر",
+          "quantityPerUnit": 0.001424
+        },
+        {
+          "ingredient": "بهارات شرق اقصي",
+          "quantityPerUnit": 0.001424
+        },
+        {
+          "ingredient": "زيت لتر",
+          "quantityPerUnit": 0.001076
+        },
+        {
+          "ingredient": "ريحان",
+          "quantityPerUnit": 0.000285
+        },
+        {
+          "ingredient": "قرفة",
+          "quantityPerUnit": 0.000281
+        },
+        {
+          "ingredient": "جنزبيل",
+          "quantityPerUnit": 0.000281
+        },
+        {
+          "ingredient": "زعتر",
+          "quantityPerUnit": 0.000264
+        },
+        {
+          "ingredient": "بابريكا",
+          "quantityPerUnit": 0.00026
+        },
+        {
+          "ingredient": "فلفل اسمر",
+          "quantityPerUnit": 0.000142
+        }
+      ]
+    },
+    {
+      "name": "برسيون فراخ جريل كبير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "فراخ بانية ني",
+          "quantityPerUnit": 0.237624
+        },
+        {
+          "ingredient": "طماطم",
+          "quantityPerUnit": 0.013201
+        },
+        {
+          "ingredient": "بصل احمر",
+          "quantityPerUnit": 0.013201
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.004785
+        },
+        {
+          "ingredient": "صوص باربكيو",
+          "quantityPerUnit": 0.003465
+        },
+        {
+          "ingredient": "خل",
+          "quantityPerUnit": 0.0033
+        },
+        {
+          "ingredient": "مسطردة",
+          "quantityPerUnit": 0.00231
+        },
+        {
+          "ingredient": "زيت لتر",
+          "quantityPerUnit": 0.00165
+        },
+        {
+          "ingredient": "مرقة دجاج بودر",
+          "quantityPerUnit": 0.00132
+        },
+        {
+          "ingredient": "بهارات شرق اقصي",
+          "quantityPerUnit": 0.00132
+        },
+        {
+          "ingredient": "زعتر",
+          "quantityPerUnit": 0.000462
+        },
+        {
+          "ingredient": "قرفة",
+          "quantityPerUnit": 0.000347
+        },
+        {
+          "ingredient": "جنزبيل",
+          "quantityPerUnit": 0.000347
+        },
+        {
+          "ingredient": "بابريكا",
+          "quantityPerUnit": 0.000347
+        },
+        {
+          "ingredient": "ريحان",
+          "quantityPerUnit": 0.000264
+        },
+        {
+          "ingredient": "فلفل اسمر",
+          "quantityPerUnit": 0.000231
+        }
+      ]
+    },
+    {
+      "name": "برسيون فراخ كريسبي صغير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "فراخ كريسبي",
+          "quantityPerUnit": 0.171522
+        },
+        {
+          "ingredient": "اكياس زيرو 15*25",
+          "quantityPerUnit": 0.001251
+        }
+      ]
+    },
+    {
+      "name": "برسيون فراخ كريسبي كبير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "فراخ كريسبي",
+          "quantityPerUnit": 0.25641
+        }
+      ]
+    },
+    {
+      "name": "برسيون لحمة مفرومة",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "بصل احمر",
+          "quantityPerUnit": 0.112957
+        },
+        {
+          "ingredient": "لحمة هندى",
+          "quantityPerUnit": 0.066445
+        },
+        {
+          "ingredient": "نهد",
+          "quantityPerUnit": 0.006645
+        },
+        {
+          "ingredient": "فول صويا",
+          "quantityPerUnit": 0.006645
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.002326
+        },
+        {
+          "ingredient": "زيت لتر",
+          "quantityPerUnit": 0.000831
+        },
+        {
+          "ingredient": "سمنة جنة",
+          "quantityPerUnit": 0.000831
+        },
+        {
+          "ingredient": "فلفل اسمر",
+          "quantityPerUnit": 0.000332
+        },
+        {
+          "ingredient": "قرفة",
+          "quantityPerUnit": 0.000166
+        },
+        {
+          "ingredient": "جنزبيل",
+          "quantityPerUnit": 0.000166
+        },
+        {
+          "ingredient": "جوزة الطيب",
+          "quantityPerUnit": 0.000166
+        }
+      ]
+    },
+    {
+      "name": "برسيون مكسرات",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "عين جمل",
+          "quantityPerUnit": 0.013793
+        },
+        {
+          "ingredient": "لوز",
+          "quantityPerUnit": 0.012759
+        },
+        {
+          "ingredient": "كاجو",
+          "quantityPerUnit": 0.012414
+        }
+      ]
+    },
+    {
+      "name": "برسيون موتزريلا بيتزا صغير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "موتزريلا فطير",
+          "quantityPerUnit": 0.08442
+        },
+        {
+          "ingredient": "موتزريلا بيتزا",
+          "quantityPerUnit": 0.084171
+        },
+        {
+          "ingredient": "اكياس زيرو 15*25",
+          "quantityPerUnit": 0.001251
+        }
+      ]
+    },
+    {
+      "name": "برسيون موتزريلا بيتزا كبير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "موتزريلا بيتزا",
+          "quantityPerUnit": 0.125
+        },
+        {
+          "ingredient": "موتزريلا فطير",
+          "quantityPerUnit": 0.125
+        }
+      ]
+    },
+    {
+      "name": "برسيون موتزريلا فطير صغير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "موتزريلا فطير",
+          "quantityPerUnit": 0.168519
+        },
+        {
+          "ingredient": "اكياس زيرو 15*25",
+          "quantityPerUnit": 0.00125
+        }
+      ]
+    },
+    {
+      "name": "برسيون موتزريلا فطير كبير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "موتزريلا فطير",
+          "quantityPerUnit": 0.25
+        }
+      ]
+    },
+    {
+      "name": "بشاميل مصنع",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "للبن",
+          "quantityPerUnit": 0.6
+        },
+        {
+          "ingredient": "مرقة دجاج مكعبات",
+          "quantityPerUnit": 0.4
+        },
+        {
+          "ingredient": "دقيق فينو",
+          "quantityPerUnit": 0.12
+        },
+        {
+          "ingredient": "سمنة جنة",
+          "quantityPerUnit": 0.1
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.01
+        },
+        {
+          "ingredient": "مرقة دجاج بودر",
+          "quantityPerUnit": 0.007179
+        }
+      ]
+    },
+    {
+      "name": "بشاميل مصنع صيامي",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "دقيق فينو",
+          "quantityPerUnit": 0.12
+        },
+        {
+          "ingredient": "سمنة جنة",
+          "quantityPerUnit": 0.1
+        },
+        {
+          "ingredient": "مرقة خضار بودر",
+          "quantityPerUnit": 0.02
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.01
+        }
+      ]
+    },
+    {
+      "name": "صلصة مصنع",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "طماطم",
+          "quantityPerUnit": 0.928467
+        },
+        {
+          "ingredient": "صلصة خام",
+          "quantityPerUnit": 0.140146
+        },
+        {
+          "ingredient": "بصل احمر",
+          "quantityPerUnit": 0.070511
+        },
+        {
+          "ingredient": "جزر",
+          "quantityPerUnit": 0.023358
+        },
+        {
+          "ingredient": "بنجر",
+          "quantityPerUnit": 0.023358
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.015912
+        },
+        {
+          "ingredient": "ثوم",
+          "quantityPerUnit": 0.011679
+        },
+        {
+          "ingredient": "سمنة جنة",
+          "quantityPerUnit": 0.010219
+        },
+        {
+          "ingredient": "فلفل اسمر",
+          "quantityPerUnit": 0.002336
+        },
+        {
+          "ingredient": "زعتر",
+          "quantityPerUnit": 0.002044
+        },
+        {
+          "ingredient": "ريحان",
+          "quantityPerUnit": 0.001927
+        },
+        {
+          "ingredient": "قرفة",
+          "quantityPerUnit": 0.000496
+        },
+        {
+          "ingredient": "جنزبيل",
+          "quantityPerUnit": 0.000496
+        },
+        {
+          "ingredient": "جوزة الطيب",
+          "quantityPerUnit": 0.000301
+        }
+      ]
+    },
+    {
+      "name": "عجين بيتزا",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "دقيق",
+          "quantityPerUnit": 0.481521
+        },
+        {
+          "ingredient": "دقيق فينو",
+          "quantityPerUnit": 0.190074
+        },
+        {
+          "ingredient": "زبدة الطاهي",
+          "quantityPerUnit": 0.026693
+        },
+        {
+          "ingredient": "للبن",
+          "quantityPerUnit": 0.023231
+        },
+        {
+          "ingredient": "زبدة كريستال",
+          "quantityPerUnit": 0.011616
+        },
+        {
+          "ingredient": "زيت لتر",
+          "quantityPerUnit": 0.007686
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.003796
+        },
+        {
+          "ingredient": "سكر بودرة",
+          "quantityPerUnit": 0.003141
+        },
+        {
+          "ingredient": "خميرة",
+          "quantityPerUnit": 0.000961
+        }
+      ]
+    },
+    {
+      "name": "عجين فطير",
+      "alreadyInCatalog": true,
+      "recipe": [
+        {
+          "ingredient": "دقيق فينو",
+          "quantityPerUnit": 0.141192
+        },
+        {
+          "ingredient": "ملح",
+          "quantityPerUnit": 0.00144
+        },
+        {
+          "ingredient": "زيت لتر",
+          "quantityPerUnit": 0.000823
+        },
+        {
+          "ingredient": "زبدة الطاهي",
+          "quantityPerUnit": 0.000411
+        }
+      ]
+    }
+  ],
+  "suppliers": [
+    "احمد شعبان زيتون",
+    "اطياب",
+    "السوق",
+    "الشيخ فراخ",
+    "الفورسيزون",
+    "القاسم",
+    "المطبخ الشرقي",
+    "بن لادن",
+    "ثلاجة الخير ام علاء",
+    "جولدن",
+    "رضا فراخ",
+    "سامي وكالة",
+    "شركة الفتح",
+    "طازة للتجارة و التوزيع",
+    "عمر بسطرمة",
+    "عمرو الزهراء",
+    "فارم فريتس",
+    "فروزينا بطاطس",
+    "موتزريلا الكفراوى",
+    "مودرن تريد ميزه",
+    "يثرب"
+  ],
+  "supplierPrices": [
+    {
+      "itemName": "طماطم",
+      "supplier": "السوق",
+      "unitPrice": 8.83
+    },
+    {
+      "itemName": "طماطم",
+      "supplier": "سامي وكالة",
+      "unitPrice": 14.89
+    },
+    {
+      "itemName": "بسطرمة خام",
+      "supplier": "عمر بسطرمة",
+      "unitPrice": 330.0
+    },
+    {
+      "itemName": "بسطرمة خام",
+      "supplier": "ثلاجة الخير ام علاء",
+      "unitPrice": 350.0
+    },
+    {
+      "itemName": "فراخ بانية ني",
+      "supplier": "رضا فراخ",
+      "unitPrice": 169.21
+    },
+    {
+      "itemName": "فراخ بانية ني",
+      "supplier": "الشيخ فراخ",
+      "unitPrice": 201.63
+    },
+    {
+      "itemName": "بكر استرتش",
+      "supplier": "بن لادن",
+      "unitPrice": 450.0
+    },
+    {
+      "itemName": "بكر استرتش",
+      "supplier": "شركة الفتح",
+      "unitPrice": 720.0
+    },
+    {
+      "itemName": "موتزريلا بيتزا",
+      "supplier": "الفورسيزون",
+      "unitPrice": 121.82
+    },
+    {
+      "itemName": "موتزريلا بيتزا",
+      "supplier": "موتزريلا الكفراوى",
+      "unitPrice": 125.0
+    },
+    {
+      "itemName": "شوك بلاستيك",
+      "supplier": "شركة الفتح",
+      "unitPrice": 0.17
+    },
+    {
+      "itemName": "شوك بلاستيك",
+      "supplier": "بن لادن",
+      "unitPrice": 0.3
+    },
+    {
+      "itemName": "فراخ كريسبي",
+      "supplier": "مودرن تريد ميزه",
+      "unitPrice": 145.0
+    },
+    {
+      "itemName": "فراخ كريسبي",
+      "supplier": "اطياب",
+      "unitPrice": 157.12
+    },
+    {
+      "itemName": "بطاطس كرينكل",
+      "supplier": "فارم فريتس",
+      "unitPrice": 42.0
+    },
+    {
+      "itemName": "بطاطس كرينكل",
+      "supplier": "فروزينا بطاطس",
+      "unitPrice": 49.38
+    },
+    {
+      "itemName": "زيت لتر",
+      "supplier": "عمرو الزهراء",
+      "unitPrice": 64.0
+    },
+    {
+      "itemName": "زيت لتر",
+      "supplier": "طازة للتجارة و التوزيع",
+      "unitPrice": 68.33
+    },
+    {
+      "itemName": "رول سلفر",
+      "supplier": "شركة الفتح",
+      "unitPrice": 410.0
+    },
+    {
+      "itemName": "رول سلفر",
+      "supplier": "بن لادن",
+      "unitPrice": 475.0
+    },
+    {
+      "itemName": "نهد",
+      "supplier": "الشيخ فراخ",
+      "unitPrice": 140.0
+    },
+    {
+      "itemName": "نهد",
+      "supplier": "جولدن",
+      "unitPrice": 150.0
+    },
+    {
+      "itemName": "زيتون اخضر شرايح",
+      "supplier": "احمد شعبان زيتون",
+      "unitPrice": 88.0
+    },
+    {
+      "itemName": "زيتون اخضر شرايح",
+      "supplier": "القاسم",
+      "unitPrice": 90.0
+    },
+    {
+      "itemName": "زيتون اسود شرايح",
+      "supplier": "احمد شعبان زيتون",
+      "unitPrice": 88.0
+    },
+    {
+      "itemName": "زيتون اسود شرايح",
+      "supplier": "القاسم",
+      "unitPrice": 90.0
+    },
+    {
+      "itemName": "اكياس زيرو 15*25",
+      "supplier": "شركة الفتح",
+      "unitPrice": 105.0
+    },
+    {
+      "itemName": "اكياس زيرو 15*25",
+      "supplier": "بن لادن",
+      "unitPrice": 110.0
+    },
+    {
+      "itemName": "بطاطس فريش",
+      "supplier": "سامي وكالة",
+      "unitPrice": 14.1
+    },
+    {
+      "itemName": "بطاطس فريش",
+      "supplier": "السوق",
+      "unitPrice": 19.0
+    },
+    {
+      "itemName": "ملح",
+      "supplier": "عمرو الزهراء",
+      "unitPrice": 6.22
+    },
+    {
+      "itemName": "ملح",
+      "supplier": "المطبخ الشرقي",
+      "unitPrice": 8.46
+    },
+    {
+      "itemName": "صوص رانش",
+      "supplier": "يثرب",
+      "unitPrice": 97.46
+    },
+    {
+      "itemName": "صوص رانش",
+      "supplier": "المطبخ الشرقي",
+      "unitPrice": 98.0
+    },
+    {
+      "itemName": "موتزريلا فطير",
+      "supplier": "الفورسيزون",
+      "unitPrice": 90.0
+    },
+    {
+      "itemName": "موتزريلا فطير",
+      "supplier": "موتزريلا الكفراوى",
+      "unitPrice": 90.0
+    }
+  ]
+}
