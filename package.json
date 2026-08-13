@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "migrate": "psql \"$DATABASE_URL\" -f db/schema.sql",
     "seed:admin": "node db/seed-admin.js",
-    "ensure-schema": "node db/ensure-schema.js"
+    "ensure-schema": "node db/ensure-schema.js",
+    "import-menu": "node db/import-menu-data.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

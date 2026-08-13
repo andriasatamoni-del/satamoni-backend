@@ -42,14 +42,16 @@ CREATE TABLE menu_items (
   image_url     TEXT,
   is_best       BOOLEAN DEFAULT FALSE,
   is_active     BOOLEAN DEFAULT TRUE,
-  created_at    TIMESTAMPTZ DEFAULT now()
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(category_id, name)
 );
 
 CREATE TABLE menu_item_variants (
   id          SERIAL PRIMARY KEY,
   item_id     INTEGER REFERENCES menu_items(id) ON DELETE CASCADE,
   label       TEXT NOT NULL,              -- وسط / كبير / عادي
-  price       NUMERIC NOT NULL
+  price       NUMERIC NOT NULL,
+  UNIQUE(item_id, label)
 );
 
 -- ---------------- مناطق التوصيل وطرق الدفع ----------------
@@ -173,6 +175,7 @@ CREATE TABLE inventory_items (
   id            SERIAL PRIMARY KEY,
   name          TEXT NOT NULL UNIQUE,        -- دقيق / جبنة موتزاريلا / زيت ...
   unit          TEXT NOT NULL,               -- كيلو / لتر / قطعة
+  unit_cost     NUMERIC,                     -- تكلفة الوحدة (لحساب تكلفة الريسبي مستقبلًا) - اختياري
   created_at    TIMESTAMPTZ DEFAULT now()
 );
 
