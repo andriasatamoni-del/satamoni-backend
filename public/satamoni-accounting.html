@@ -44,6 +44,10 @@
   tr:last-child td { border-bottom: none; }
   .diffneg { color: #F08A83; font-weight: 700; }
   .diffpos { color: var(--green); font-weight: 700; }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .badge.active { background: rgba(63,163,77,.15); color: var(--green); }
+  .badge.inactive { background: rgba(194,42,36,.15); color: #F08A83; }
 
   #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
   #loginOverlay.hidden { display: none; }
@@ -95,13 +99,22 @@
     <div class="formbox">
       <div class="row">
         <input id="expDate" type="date" />
-        <input id="expCategory" placeholder="النوع (إيجار / رواتب / صيانة ...)" />
+        <select id="expCategory"></select>
         <input id="expAmount" type="number" placeholder="المبلغ" />
       </div>
       <div class="row"><input id="expNotes" placeholder="ملاحظات (اختياري)" /><button id="expSubmit">تسجيل</button></div>
       <div class="err" id="expErr"></div>
     </div>
     <table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>ملاحظات</th></tr></thead><tbody id="expBody"></tbody></table>
+
+    <div id="expCategoriesAdmin" style="display:none">
+      <h1>بنود المصروفات (تكويد)</h1>
+      <div class="formbox">
+        <div class="row"><input id="expCatName" placeholder="اسم البند الجديد" /><button id="expCatSubmit">إضافة بند</button></div>
+        <div class="err" id="expCatErr"></div>
+      </div>
+      <table><thead><tr><th>البند</th><th>الحالة</th><th></th></tr></thead><tbody id="expCategoriesBody"></tbody></table>
+    </div>
   </div>
 
   <!-- المشتريات -->
@@ -318,6 +331,7 @@ async function boot() {
   }
   populateIncPeriodSelectors();
   await loadBranches();
+  await loadExpenseCategories();
   await Promise.all([loadExpenses(), loadPurchases(), loadCash(), loadLedger(), loadCostAnalysis(), loadIncomeStatement()]);
 }
 
@@ -341,6 +355,42 @@ async function loadBranches() {
 }
 
 // ---------------- المصروفات ----------------
+// البند لازم يتختار من ليستة ثابتة (تكويد) بدل ما يتكتب نص حر - عشان التقارير تتجمع صح
+async function loadExpenseCategories() {
+  const cats = await api("/api/expenses/categories");
+  const active = cats.filter(c => c.is_active);
+  document.getElementById("expCategory").innerHTML = active.length
+    ? active.map(c => `<option value="${c.id}">${c.name}</option>`).join("")
+    : `<option value="">لسه مفيش بنود مصروفات مفعّلة</option>`;
+
+  if (auth.user.role === "admin") {
+    document.getElementById("expCategoriesAdmin").style.display = "block";
+    document.getElementById("expCategoriesBody").innerHTML = cats.map(c => `
+      <tr>
+        <td>${c.name}</td>
+        <td><span class="badge ${c.is_active ? "active" : "inactive"}">${c.is_active ? "شغال" : "معطّل"}</span></td>
+        <td><button class="linkbtn" data-togglecat="${c.id}" data-active="${c.is_active}">${c.is_active ? "تعطيل" : "تفعيل"}</button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="3">لسه مفيش بنود</td></tr>`;
+    document.querySelectorAll("[data-togglecat]").forEach(btn => {
+      btn.onclick = async () => {
+        const isActive = btn.dataset.active === "true";
+        await api(`/api/expenses/categories/${btn.dataset.togglecat}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
+        loadExpenseCategories();
+      };
+    });
+  }
+}
+document.getElementById("expCatSubmit").onclick = async () => {
+  const errBox = document.getElementById("expCatErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/expenses/categories", { method: "POST", body: JSON.stringify({ name: document.getElementById("expCatName").value.trim() }) });
+    document.getElementById("expCatName").value = "";
+    await loadExpenseCategories();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
 async function loadExpenses() {
   const rows = await api(`/api/expenses?branchId=${currentBranchId()}`);
   document.getElementById("expBody").innerHTML = rows.map(r => `
@@ -350,18 +400,19 @@ async function loadExpenses() {
 document.getElementById("expSubmit").onclick = async () => {
   const errBox = document.getElementById("expErr");
   errBox.textContent = "";
+  const categoryId = document.getElementById("expCategory").value;
+  if (!categoryId) { errBox.textContent = "لازم تختار بند مصروف"; return; }
   try {
     await api("/api/expenses", {
       method: "POST",
       body: JSON.stringify({
         branchId: currentBranchId(),
         businessDate: document.getElementById("expDate").value,
-        category: document.getElementById("expCategory").value.trim(),
+        categoryId,
         amount: Number(document.getElementById("expAmount").value),
         notes: document.getElementById("expNotes").value.trim() || null,
       }),
     });
-    document.getElementById("expCategory").value = "";
     document.getElementById("expAmount").value = "";
     document.getElementById("expNotes").value = "";
     loadExpenses();

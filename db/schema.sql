@@ -188,11 +188,23 @@ CREATE TABLE daily_cash_sessions (
 );
 
 -- ---------------- المصروفات ----------------
+-- بنود مصروفات ثابتة (تكويد) - الأدمن بس بيضيف/يعطّل بند، وأي حد بيسجل مصروف لازم يختار من الليستة
+-- دي بدل ما يكتب نص حر (عشان التقارير تتجمع صح ومحدش يكتب نفس البند بصياغات مختلفة)
+CREATE TABLE expense_categories (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,   -- رواتب / إيجار / مرافق / صيانة / أخرى ...
+  is_active   BOOLEAN DEFAULT TRUE
+);
+
+INSERT INTO expense_categories (name) VALUES
+  ('إيجار'), ('مرافق (كهرباء/مياه/غاز)'), ('صيانة'), ('نقل ومواصلات'),
+  ('تسويق وإعلانات'), ('أدوات ومستلزمات'), ('رسوم وضرائب'), ('أخرى');
+
 CREATE TABLE expenses (
   id            SERIAL PRIMARY KEY,
   branch_id     INTEGER REFERENCES branches(id),
   business_date DATE NOT NULL,
-  category      TEXT NOT NULL,   -- رواتب / إيجار / مرافق / صيانة / أخرى
+  category_id   INTEGER NOT NULL REFERENCES expense_categories(id),
   amount        NUMERIC NOT NULL,
   notes         TEXT,
   sync_uuid     UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,

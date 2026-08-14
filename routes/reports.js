@@ -215,12 +215,13 @@ router.get("/income-statement", requireAuth, canSeeReports, async (req, res) => 
     const grossProfit = revenue - cogs;
 
     const expensesResult = await pool.query(
-      `SELECT category, SUM(amount) AS total
-       FROM expenses
-       WHERE EXTRACT(YEAR FROM business_date) = $1
-         AND EXTRACT(MONTH FROM business_date) = $2
-         AND ($3::int IS NULL OR branch_id = $3)
-       GROUP BY category
+      `SELECT ec.name AS category, SUM(e.amount) AS total
+       FROM expenses e
+       JOIN expense_categories ec ON ec.id = e.category_id
+       WHERE EXTRACT(YEAR FROM e.business_date) = $1
+         AND EXTRACT(MONTH FROM e.business_date) = $2
+         AND ($3::int IS NULL OR e.branch_id = $3)
+       GROUP BY ec.name
        ORDER BY total DESC`,
       [year, month, branchId]
     );
