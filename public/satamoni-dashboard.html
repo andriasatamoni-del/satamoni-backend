@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — داش بورد المالك</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+    --c1: #CBA135; --c2: #3FA34D; --c3: #4A90D9; --c4: #C22A24; --c5: #9C6ADE; --c6: #D98E2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+
+  #filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; align-items: center; }
+  #filters select { background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  #refreshBtn { background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 12px; font-weight: 700; }
+
+  #kpiRow { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .kpi .label { font-size: 11px; color: var(--faint); margin-bottom: 6px; }
+  .kpi .value { font-size: 20px; font-weight: 800; font-family: 'Courier New', monospace; color: var(--ink); }
+  .kpi .value.gold { color: var(--gold-bright); }
+  .kpi .value.green { color: var(--green); }
+  .kpi .value.red { color: #F08A83; }
+  .kpi .sub { font-size: 11px; color: var(--faint); margin-top: 4px; }
+
+  #grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 800px) { #grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .panel.wide { grid-column: 1 / -1; }
+  .panel h3 { margin: 0 0 12px; font-size: 14px; color: var(--gold-bright); }
+  .panel .empty { color: var(--faint); font-size: 12px; text-align: center; padding: 20px 0; }
+
+  /* Bar chart (horizontal) */
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+  .bar-row .bl { flex: 0 0 130px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-row .bt { flex: 1; background: var(--bg-alt); border-radius: 4px; height: 18px; position: relative; overflow: hidden; }
+  .bar-row .bt .fill { height: 100%; border-radius: 4px; background: var(--gold); }
+  .bar-row .bv { flex: 0 0 90px; text-align: left; font-family: 'Courier New', monospace; color: var(--ink); font-size: 11px; }
+
+  /* Line chart */
+  #trendSvg { width: 100%; height: 220px; }
+
+  /* Donut chart */
+  .donut-wrap { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; justify-content: center; }
+  .donut { width: 140px; height: 140px; border-radius: 50%; flex-shrink: 0; }
+  .donut-legend { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  .donut-legend .item { display: flex; align-items: center; gap: 6px; }
+  .donut-legend .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  #loadingState { padding: 60px 20px; text-align: center; color: var(--faint); }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">📊 ساتاموني — داش بورد المالك</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>📊 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="filters">
+    <select id="yearSelect"></select>
+    <select id="monthSelect"></select>
+    <select id="branchSelect"><option value="">كل الفروع</option></select>
+    <button id="refreshBtn">تحديث</button>
+  </div>
+
+  <div id="loadingState" style="display:none">...جاري التحميل</div>
+
+  <div id="kpiRow"></div>
+
+  <div id="grid">
+    <div class="panel wide">
+      <h3>المبيعات اليومية</h3>
+      <div id="trendWrap"></div>
+    </div>
+
+    <div class="panel">
+      <h3>الأصناف الأكثر مبيعًا</h3>
+      <div id="topItemsWrap"></div>
+    </div>
+
+    <div class="panel">
+      <h3>الفروع الأكثر مبيعًا</h3>
+      <div id="topBranchesWrap"></div>
+    </div>
+
+    <div class="panel">
+      <h3>مناطق التوصيل الأكثر مبيعًا</h3>
+      <div id="topAreasWrap"></div>
+    </div>
+
+    <div class="panel">
+      <h3>المصروفات حسب البند</h3>
+      <div id="expensesWrap"></div>
+    </div>
+
+    <div class="panel">
+      <h3>حالة التحصيل</h3>
+      <div id="paymentStatusWrap"></div>
+    </div>
+
+    <div class="panel">
+      <h3>حالة الطلبات</h3>
+      <div id="orderStatusWrap"></div>
+    </div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الداش بورد ده.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+const allowedRoles = ["admin", "accountant"];
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+const money = (n) => `${Number(n).toLocaleString("ar-EG", { maximumFractionDigits: 0 })} ج.م`;
+const pct = (n) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;
+
+function populateFilters() {
+  const now = new Date();
+  const yearSel = document.getElementById("yearSelect");
+  const years = [now.getFullYear(), now.getFullYear() - 1];
+  yearSel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join("");
+  const monthSel = document.getElementById("monthSelect");
+  const monthNames = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+  monthSel.innerHTML = monthNames.map((m, i) => `<option value="${i + 1}">${m}</option>`).join("");
+  monthSel.value = now.getMonth() + 1;
+}
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  populateFilters();
+  try {
+    const branches = await api("/api/branches");
+    document.getElementById("branchSelect").innerHTML =
+      `<option value="">كل الفروع</option>` + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  } catch (e) { /* تجاهل - الفلتر هيفضل "كل الفروع" بس */ }
+  await loadDashboard();
+}
+document.getElementById("refreshBtn").onclick = loadDashboard;
+
+async function loadDashboard() {
+  const year = document.getElementById("yearSelect").value;
+  const month = document.getElementById("monthSelect").value;
+  const branchId = document.getElementById("branchSelect").value;
+  document.getElementById("loadingState").style.display = "block";
+  try {
+    const qs = new URLSearchParams({ year, month });
+    if (branchId) qs.set("branchId", branchId);
+    const data = await api(`/api/reports/dashboard?${qs.toString()}`);
+    renderKpis(data.summary);
+    renderTrend(data.dailySales);
+    renderBarChart("topItemsWrap", data.topItems, (r) => r.name, (r) => r.revenue, (r) => `${money(r.revenue)} · ${r.quantity} قطعة`);
+    renderBarChart("topBranchesWrap", data.topBranches, (r) => r.branchName || "بدون فرع", (r) => r.revenue, (r) => `${money(r.revenue)} · ${r.ordersCount} طلب`);
+    renderBarChart("topAreasWrap", data.topAreas, (r) => r.areaName, (r) => r.revenue, (r) => `${money(r.revenue)} · ${r.ordersCount} طلب`);
+    renderBarChart("expensesWrap", data.expenseLines, (r) => r.category, (r) => r.amount, (r) => money(r.amount));
+    const paymentLabels = { collected: "محصّل", pending_collection: "تحت التحصيل" };
+    renderDonut("paymentStatusWrap", data.paymentStatusBreakdown.map(r => ({
+      label: paymentLabels[r.status] || r.status, value: r.amount, sub: `${r.count} طلب`,
+    })));
+    const statusLabels = { preparing: "تحت التحضير", out_for_delivery: "في الطريق", completed: "مكتملة", cancelled: "ملغاة" };
+    renderDonut("orderStatusWrap", data.orderStatusBreakdown.map(r => ({
+      label: statusLabels[r.status] || r.status, value: r.count, sub: `${r.count} طلب`,
+    })));
+  } catch (e) {
+    document.getElementById("kpiRow").innerHTML = `<div class="panel wide" style="color:#F08A83">${e.message}</div>`;
+  } finally {
+    document.getElementById("loadingState").style.display = "none";
+  }
+}
+
+function renderKpis(s) {
+  const tiles = [
+    { label: "الإيرادات", value: money(s.revenue), cls: "gold" },
+    { label: "عدد الطلبات", value: s.ordersCount, cls: "" },
+    { label: "متوسط قيمة الطلب", value: money(s.avgOrderValue), cls: "" },
+    { label: "تكلفة البضاعة المباعة", value: money(s.cogs), cls: "" },
+    { label: "مجمل الربح", value: money(s.grossProfit), cls: "green" },
+    { label: "هامش الربح الإجمالي", value: pct(s.grossMarginPercent), cls: "green" },
+    { label: "المصروفات التشغيلية", value: money(s.totalOpex), cls: "red" },
+    { label: "تكلفة الرواتب", value: money(s.payrollCost), cls: "red" },
+    { label: "صافي الربح", value: money(s.netProfitAfterPayroll), cls: s.netProfitAfterPayroll >= 0 ? "green" : "red" },
+  ];
+  document.getElementById("kpiRow").innerHTML = tiles.map(t => `
+    <div class="kpi"><div class="label">${t.label}</div><div class="value ${t.cls}">${t.value}</div></div>
+  `).join("");
+}
+
+function renderTrend(rows) {
+  const wrap = document.getElementById("trendWrap");
+  if (!rows || rows.length === 0) { wrap.innerHTML = `<div class="empty">مفيش مبيعات في الفترة دي</div>`; return; }
+  const w = 1000, h = 220, padX = 40, padY = 20;
+  const maxRevenue = Math.max(...rows.map(r => r.revenue), 1);
+  const stepX = rows.length > 1 ? (w - padX * 2) / (rows.length - 1) : 0;
+  const points = rows.map((r, i) => {
+    const x = padX + i * stepX;
+    const y = h - padY - (r.revenue / maxRevenue) * (h - padY * 2);
+    return { x, y, r };
+  });
+  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+  const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(1)} ${h - padY} L ${points[0].x.toFixed(1)} ${h - padY} Z`;
+  const dayLabels = points.filter((_, i) => i % Math.ceil(points.length / 8 || 1) === 0);
+  wrap.innerHTML = `
+    <svg id="trendSvg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <path d="${areaPath}" fill="rgba(203,161,53,.12)" stroke="none"></path>
+      <path d="${linePath}" fill="none" stroke="var(--gold)" stroke-width="2"></path>
+      ${points.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="var(--gold-bright)"><title>${p.r.date.slice(0,10)}: ${money(p.r.revenue)} (${p.r.ordersCount} طلب)</title></circle>`).join("")}
+      ${dayLabels.map(p => `<text x="${p.x.toFixed(1)}" y="${h - 4}" font-size="10" fill="var(--faint)" text-anchor="middle">${p.r.date.slice(8,10)}</text>`).join("")}
+    </svg>`;
+}
+
+function renderBarChart(elId, rows, labelFn, valueFn, valueLabelFn) {
+  const wrap = document.getElementById(elId);
+  if (!rows || rows.length === 0) { wrap.innerHTML = `<div class="empty">مفيش بيانات في الفترة دي</div>`; return; }
+  const max = Math.max(...rows.map(valueFn), 1);
+  wrap.innerHTML = rows.map(r => `
+    <div class="bar-row">
+      <div class="bl">${labelFn(r)}</div>
+      <div class="bt"><div class="fill" style="width:${Math.max((valueFn(r) / max) * 100, 2)}%"></div></div>
+      <div class="bv">${valueLabelFn(r)}</div>
+    </div>
+  `).join("");
+}
+
+const donutColors = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)", "var(--c5)", "var(--c6)"];
+function renderDonut(elId, rows) {
+  const wrap = document.getElementById(elId);
+  const total = rows.reduce((s, r) => s + r.value, 0);
+  if (!rows || rows.length === 0 || total === 0) { wrap.innerHTML = `<div class="empty">مفيش بيانات في الفترة دي</div>`; return; }
+  let acc = 0;
+  const segments = rows.map((r, i) => {
+    const start = (acc / total) * 360;
+    acc += r.value;
+    const end = (acc / total) * 360;
+    return `${donutColors[i % donutColors.length]} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
+  });
+  wrap.innerHTML = `
+    <div class="donut-wrap">
+      <div class="donut" style="background: conic-gradient(${segments.join(", ")})"></div>
+      <div class="donut-legend">
+        ${rows.map((r, i) => `
+          <div class="item"><span class="dot" style="background:${donutColors[i % donutColors.length]}"></span>
+          ${r.label} — ${r.sub} (${((r.value / total) * 100).toFixed(0)}%)</div>
+        `).join("")}
+      </div>
+    </div>`;
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

@@ -332,4 +332,127 @@ router.get(
   }
 );
 
+// GET /api/reports/dashboard?year=&month=&branchId= - داش بورد المالك: كل تفاصيل الشغل في نداء واحد
+// (المبيعات اليومية، الأصناف/الفروع/المناطق الأكثر مبيعًا، التكلفة والمصروفات، حالة التحصيل، حالة الطلبات)
+router.get("/dashboard", requireAuth, canSeeReports, async (req, res) => {
+  const year = Number(req.query.year);
+  const month = Number(req.query.month);
+  if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const [
+      byBranch, dailySales, topItems, topAreas,
+      paymentStatusBreakdown, orderStatusBreakdown, expensesResult, payroll,
+    ] = await Promise.all([
+      computeRevenueAndCogsByBranch(year, month),
+      pool.query(
+        `SELECT o.created_at::date AS date, COUNT(*) AS orders_count, SUM(o.total) AS revenue
+         FROM orders o
+         WHERE o.status <> 'cancelled'
+           AND EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY o.created_at::date ORDER BY date`,
+        [year, month, branchId]
+      ),
+      pool.query(
+        `SELECT COALESCE(mi.name || ' - ' || mv.label, c.name) AS name,
+                SUM(oi.quantity) AS quantity, SUM(oi.line_total) AS revenue
+         FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id
+         LEFT JOIN menu_item_variants mv ON mv.id = oi.variant_id
+         LEFT JOIN menu_items mi ON mi.id = mv.item_id
+         LEFT JOIN combos c ON c.id = oi.combo_id
+         WHERE o.status <> 'cancelled'
+           AND EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY COALESCE(mi.name || ' - ' || mv.label, c.name)
+         ORDER BY revenue DESC LIMIT 10`,
+        [year, month, branchId]
+      ),
+      pool.query(
+        `SELECT da.id AS area_id, da.name AS area_name, COUNT(*) AS orders_count, SUM(o.total) AS revenue
+         FROM orders o
+         JOIN delivery_areas da ON da.id = o.delivery_area_id
+         WHERE o.status <> 'cancelled' AND o.order_type = 'delivery'
+           AND EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY da.id, da.name ORDER BY revenue DESC LIMIT 10`,
+        [year, month, branchId]
+      ),
+      pool.query(
+        `SELECT payment_status, COUNT(*) AS count, SUM(total) AS amount
+         FROM orders o
+         WHERE o.status <> 'cancelled'
+           AND EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY payment_status`,
+        [year, month, branchId]
+      ),
+      pool.query(
+        `SELECT status, COUNT(*) AS count
+         FROM orders o
+         WHERE EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY status`,
+        [year, month, branchId]
+      ),
+      pool.query(
+        `SELECT ec.name AS category, SUM(e.amount) AS total
+         FROM expenses e
+         JOIN expense_categories ec ON ec.id = e.category_id
+         WHERE EXTRACT(YEAR FROM e.business_date) = $1 AND EXTRACT(MONTH FROM e.business_date) = $2
+           AND ($3::int IS NULL OR e.branch_id = $3)
+         GROUP BY ec.name ORDER BY total DESC`,
+        [year, month, branchId]
+      ),
+      computePayrollCostByBranch(year, month),
+    ]);
+
+    const scopedBranches = branchId ? byBranch.filter((r) => r.branchId === branchId) : byBranch;
+    const revenue = scopedBranches.reduce((s, r) => s + r.revenue, 0);
+    const cogs = scopedBranches.reduce((s, r) => s + r.cogs, 0);
+    const ordersCount = scopedBranches.reduce((s, r) => s + r.ordersCount, 0);
+    const grossProfit = revenue - cogs;
+    const totalOpex = expensesResult.rows.reduce((s, r) => s + Number(r.total), 0);
+    const payrollCost = branchId ? (payroll.byBranch[branchId] || 0) : payroll.total;
+    const netProfitBeforePayroll = grossProfit - totalOpex;
+    const netProfitAfterPayroll = netProfitBeforePayroll - payrollCost;
+
+    res.json({
+      year, month, branchId,
+      summary: {
+        revenue, cogs, grossProfit,
+        grossMarginPercent: revenue > 0 ? grossProfit / revenue : null,
+        ordersCount,
+        avgOrderValue: ordersCount > 0 ? revenue / ordersCount : 0,
+        totalOpex, payrollCost, netProfitBeforePayroll, netProfitAfterPayroll,
+      },
+      dailySales: dailySales.rows.map((r) => ({
+        date: r.date, ordersCount: Number(r.orders_count), revenue: Number(r.revenue),
+      })),
+      topItems: topItems.rows.map((r) => ({
+        name: r.name, quantity: Number(r.quantity), revenue: Number(r.revenue),
+      })),
+      topBranches: [...scopedBranches].sort((a, b) => b.revenue - a.revenue),
+      topAreas: topAreas.rows.map((r) => ({
+        areaId: r.area_id, areaName: r.area_name,
+        ordersCount: Number(r.orders_count), revenue: Number(r.revenue),
+      })),
+      paymentStatusBreakdown: paymentStatusBreakdown.rows.map((r) => ({
+        status: r.payment_status, count: Number(r.count), amount: Number(r.amount),
+      })),
+      orderStatusBreakdown: orderStatusBreakdown.rows.map((r) => ({
+        status: r.status, count: Number(r.count),
+      })),
+      expenseLines: expensesResult.rows.map((r) => ({
+        category: r.category, amount: Number(r.total),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
