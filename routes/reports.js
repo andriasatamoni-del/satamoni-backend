@@ -93,4 +93,164 @@ router.get("/menu-cost-analysis", requireAuth, canSeeReports, async (req, res) =
   }
 });
 
+// حساب الإيرادات وتكلفة البضاعة المباعة لكل فرع في شهر معين، من بيانات الطلبات الفعلية
+// (مش من قيود يدوية) - العروض/الكومبو بتتفكّ لأصنافها الأصلية لحساب تكلفتها الحقيقية
+async function computeRevenueAndCogsByBranch(year, month) {
+  // تكلفة البضاعة المباعة بتتاخد من cost_at_sale المسجّلة على كل سطر طلب وقت البيع نفسه (مش لحظيًا وقت التقرير)
+  // عشان لو الريسبي أو تركيبة عرض اتغيرت بعد كدة، الطلبات القديمة تفضل بتكلفتها الحقيقية وقتها
+  const result = await pool.query(
+    `WITH qualifying_orders AS (
+       SELECT o.id, o.branch_id, o.total
+       FROM orders o
+       WHERE o.status <> 'cancelled'
+         AND EXTRACT(YEAR FROM o.created_at) = $1
+         AND EXTRACT(MONTH FROM o.created_at) = $2
+     ),
+     order_cost_totals AS (
+       SELECT oi.order_id,
+              SUM(COALESCE(oi.cost_at_sale, 0)) AS cost,
+              BOOL_OR(oi.cost_at_sale IS NULL OR oi.cost_at_sale_incomplete) AS missing_cost
+       FROM order_items oi
+       JOIN qualifying_orders qo ON qo.id = oi.order_id
+       GROUP BY oi.order_id
+     )
+     SELECT qo.branch_id,
+            COALESCE(b.name, 'غير مرتبط بفرع') AS branch_name,
+            COUNT(*) AS orders_count,
+            SUM(qo.total) AS revenue,
+            COALESCE(SUM(oct.cost), 0) AS cogs,
+            COUNT(*) FILTER (WHERE oct.missing_cost) AS orders_missing_cost_data
+     FROM qualifying_orders qo
+     LEFT JOIN branches b ON b.id = qo.branch_id
+     LEFT JOIN order_cost_totals oct ON oct.order_id = qo.id
+     GROUP BY qo.branch_id, b.name
+     ORDER BY b.name`,
+    [year, month]
+  );
+  return result.rows.map((r) => ({
+    branchId: r.branch_id,
+    branchName: r.branch_name,
+    ordersCount: Number(r.orders_count),
+    revenue: Number(r.revenue),
+    cogs: Number(r.cogs),
+    ordersMissingCostData: Number(r.orders_missing_cost_data),
+  }));
+}
+
+// GET /api/reports/income-statement?year=&month=&branchId= - قائمة الدخل (إيرادات - تكلفة البضاعة - مصروفات)
+// لفرع واحد لو اتحدد branchId، أو مجمّع لكل الفروع لو مفيش
+router.get("/income-statement", requireAuth, canSeeReports, async (req, res) => {
+  const year = Number(req.query.year);
+  const month = Number(req.query.month);
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+
+  try {
+    const byBranch = await computeRevenueAndCogsByBranch(year, month);
+    const scoped = branchId ? byBranch.filter((r) => r.branchId === branchId) : byBranch;
+
+    const revenue = scoped.reduce((s, r) => s + r.revenue, 0);
+    const cogs = scoped.reduce((s, r) => s + r.cogs, 0);
+    const ordersMissingCostData = scoped.reduce((s, r) => s + r.ordersMissingCostData, 0);
+    const grossProfit = revenue - cogs;
+
+    const expensesResult = await pool.query(
+      `SELECT category, SUM(amount) AS total
+       FROM expenses
+       WHERE EXTRACT(YEAR FROM business_date) = $1
+         AND EXTRACT(MONTH FROM business_date) = $2
+         AND ($3::int IS NULL OR branch_id = $3)
+       GROUP BY category
+       ORDER BY total DESC`,
+      [year, month, branchId]
+    );
+    const expenseLines = expensesResult.rows.map((r) => ({
+      category: r.category,
+      amount: Number(r.total),
+    }));
+    const totalOpex = expenseLines.reduce((s, r) => s + r.amount, 0);
+    const netProfitBeforePayroll = grossProfit - totalOpex;
+
+    res.json({
+      year,
+      month,
+      branchId,
+      revenue,
+      cogs,
+      grossProfit,
+      grossMarginPercent: revenue > 0 ? grossProfit / revenue : null,
+      ordersMissingCostData,
+      expenseLines,
+      totalOpex,
+      netProfitBeforePayroll,
+      note: "الرقم النهائي قبل خصم تكلفة الرواتب - نظام الرواتب لسه هيتضاف في مرحلة تانية",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/income-statement/by-branch?year=&month= - مقارنة أداء الفروع (أدمن/محاسب بس)
+router.get(
+  "/income-statement/by-branch",
+  requireAuth,
+  requireRole("admin", "accountant"),
+  async (req, res) => {
+    const year = Number(req.query.year);
+    const month = Number(req.query.month);
+    if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+
+    try {
+      const byBranch = await computeRevenueAndCogsByBranch(year, month);
+      const expensesResult = await pool.query(
+        `SELECT branch_id, SUM(amount) AS total
+         FROM expenses
+         WHERE EXTRACT(YEAR FROM business_date) = $1 AND EXTRACT(MONTH FROM business_date) = $2
+         GROUP BY branch_id`,
+        [year, month]
+      );
+      const opexByBranch = {};
+      expensesResult.rows.forEach((r) => { opexByBranch[r.branch_id] = Number(r.total); });
+
+      const rows = byBranch.map((r) => {
+        const opex = opexByBranch[r.branchId] || 0;
+        const grossProfit = r.revenue - r.cogs;
+        return {
+          ...r,
+          grossProfit,
+          grossMarginPercent: r.revenue > 0 ? grossProfit / r.revenue : null,
+          opex,
+          netProfitBeforePayroll: grossProfit - opex,
+        };
+      });
+
+      const consolidated = rows.reduce(
+        (acc, r) => ({
+          revenue: acc.revenue + r.revenue,
+          cogs: acc.cogs + r.cogs,
+          opex: acc.opex + r.opex,
+          ordersCount: acc.ordersCount + r.ordersCount,
+        }),
+        { revenue: 0, cogs: 0, opex: 0, ordersCount: 0 }
+      );
+      const consolidatedGrossProfit = consolidated.revenue - consolidated.cogs;
+
+      res.json({
+        year,
+        month,
+        branches: rows,
+        consolidated: {
+          ...consolidated,
+          grossProfit: consolidatedGrossProfit,
+          grossMarginPercent: consolidated.revenue > 0 ? consolidatedGrossProfit / consolidated.revenue : null,
+          netProfitBeforePayroll: consolidatedGrossProfit - consolidated.opex,
+        },
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
 module.exports = router;

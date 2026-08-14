@@ -112,14 +112,16 @@ CREATE TABLE orders (
 );
 
 CREATE TABLE order_items (
-  id            SERIAL PRIMARY KEY,
-  order_id      INTEGER REFERENCES orders(id) ON DELETE CASCADE,
-  item_id       INTEGER REFERENCES menu_items(id),
-  variant_id    INTEGER REFERENCES menu_item_variants(id),
-  combo_id      INTEGER REFERENCES combos(id), -- لو السطر ده عرض/كومبو مش صنف مفرد (item_id/variant_id بيبقوا NULL)
-  quantity      INTEGER NOT NULL DEFAULT 1,
-  unit_price    NUMERIC NOT NULL,
-  line_total    NUMERIC NOT NULL
+  id                       SERIAL PRIMARY KEY,
+  order_id                 INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+  item_id                  INTEGER REFERENCES menu_items(id),
+  variant_id               INTEGER REFERENCES menu_item_variants(id),
+  combo_id                 INTEGER REFERENCES combos(id), -- لو السطر ده عرض/كومبو مش صنف مفرد (item_id/variant_id بيبقوا NULL)
+  quantity                 INTEGER NOT NULL DEFAULT 1,
+  unit_price                NUMERIC NOT NULL,
+  line_total                NUMERIC NOT NULL,
+  cost_at_sale              NUMERIC, -- تكلفة الريسبي وقت البيع فعليًا (مش محسوبة لحظيًا من الريسبي الحالي) - لدقة قائمة الدخل التاريخية
+  cost_at_sale_incomplete   BOOLEAN NOT NULL DEFAULT FALSE -- TRUE لو في مكوّن من غير unit_cost وقت البيع (التكلفة أقل من الحقيقي)
 );
 
 -- ---------------- الكاش اليومي لكل فرع (بديل شيت الفرع) ----------------

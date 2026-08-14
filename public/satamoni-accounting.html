@@ -87,6 +87,7 @@
     <div class="tabbtn" data-tab="cash">تقفيل الكاش</div>
     <div class="tabbtn" data-tab="ledger">كشف حساب المخزن</div>
     <div class="tabbtn" data-tab="costanalysis">تحليل التكلفة</div>
+    <div class="tabbtn" data-tab="income">قائمة الدخل</div>
   </div>
 
   <!-- المصروفات -->
@@ -184,6 +185,50 @@
       <tbody id="costAnalysisBody"></tbody>
     </table>
   </div>
+
+  <!-- قائمة الدخل -->
+  <div class="panel" id="panel-income">
+    <div class="formbox">
+      <div class="row">
+        <select id="incYear"></select>
+        <select id="incMonth"></select>
+        <select id="incBranchSelect"></select>
+        <button id="incRefresh">تحديث</button>
+      </div>
+      <div class="err" id="incErr"></div>
+    </div>
+
+    <table style="margin-bottom:20px">
+      <tbody>
+        <tr><td>الإيرادات (من الطلبات الفعلية)</td><td id="incRevenue" style="text-align:left"></td></tr>
+        <tr><td>تكلفة البضاعة المباعة (COGS)</td><td id="incCogs" style="text-align:left"></td></tr>
+        <tr><td><b>إجمالي الربح (Gross Profit)</b></td><td id="incGrossProfit" style="text-align:left"><b></b></td></tr>
+        <tr><td>هامش الربح الإجمالي %</td><td id="incGrossMargin" style="text-align:left"></td></tr>
+      </tbody>
+    </table>
+
+    <h1>المصروفات التشغيلية حسب النوع</h1>
+    <table style="margin-bottom:20px">
+      <thead><tr><th>النوع</th><th>المبلغ</th></tr></thead>
+      <tbody id="incExpenseBody"></tbody>
+    </table>
+
+    <table>
+      <tbody>
+        <tr><td>إجمالي المصروفات التشغيلية</td><td id="incTotalOpex" style="text-align:left"></td></tr>
+        <tr><td><b>صافي الربح (قبل الرواتب)</b></td><td id="incNetProfit" style="text-align:left"><b></b></td></tr>
+      </tbody>
+    </table>
+    <div style="font-size:11px;color:var(--faint);margin-top:8px" id="incNote"></div>
+
+    <div id="incBranchCompareWrap" style="display:none">
+      <h1>مقارنة أداء الفروع</h1>
+      <table>
+        <thead><tr><th>الفرع</th><th>عدد الطلبات</th><th>الإيرادات</th><th>COGS</th><th>إجمالي الربح</th><th>% الهامش</th><th>مصروفات</th><th>صافي الربح</th></tr></thead>
+        <tbody id="incBranchCompareBody"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
@@ -263,8 +308,9 @@ async function boot() {
     document.getElementById("ledgerSubmit").disabled = true;
     document.getElementById("ledgerSubmit").title = "الإضافة لأدمن/محاسب بس";
   }
+  populateIncPeriodSelectors();
   await loadBranches();
-  await Promise.all([loadExpenses(), loadPurchases(), loadCash(), loadLedger(), loadCostAnalysis()]);
+  await Promise.all([loadExpenses(), loadPurchases(), loadCash(), loadLedger(), loadCostAnalysis(), loadIncomeStatement()]);
 }
 
 async function loadBranches() {
@@ -276,6 +322,14 @@ async function loadBranches() {
     sel.disabled = true;
   }
   sel.onchange = () => Promise.all([loadExpenses(), loadPurchases(), loadCash(), loadLedger()]);
+
+  const incSel = document.getElementById("incBranchSelect");
+  const allBranchesOption = auth.user.role !== "branch_manager" ? `<option value="">كل الفروع</option>` : "";
+  incSel.innerHTML = allBranchesOption + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  if (auth.user.role === "branch_manager") {
+    incSel.value = auth.user.branchId;
+    incSel.disabled = true;
+  }
 }
 
 // ---------------- المصروفات ----------------
@@ -417,6 +471,60 @@ async function loadCostAnalysis() {
   } catch (e) { errBox.textContent = e.message; }
 }
 document.getElementById("costAnalysisRefresh").onclick = loadCostAnalysis;
+
+// ---------------- قائمة الدخل ----------------
+function populateIncPeriodSelectors() {
+  const yearSel = document.getElementById("incYear");
+  const monthSel = document.getElementById("incMonth");
+  const now = new Date();
+  const years = [];
+  for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) years.push(y);
+  yearSel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join("");
+  yearSel.value = now.getFullYear();
+  monthSel.innerHTML = Array.from({ length: 12 }, (_, i) => i + 1)
+    .map(m => `<option value="${m}">${m}</option>`).join("");
+  monthSel.value = now.getMonth() + 1;
+}
+
+async function loadIncomeStatement() {
+  const errBox = document.getElementById("incErr");
+  errBox.textContent = "";
+  const year = document.getElementById("incYear").value;
+  const month = document.getElementById("incMonth").value;
+  const branchId = document.getElementById("incBranchSelect").value;
+  try {
+    const params = new URLSearchParams({ year, month });
+    if (branchId) params.set("branchId", branchId);
+    const data = await api(`/api/reports/income-statement?${params}`);
+
+    document.getElementById("incRevenue").textContent = money(data.revenue);
+    document.getElementById("incCogs").textContent = money(data.cogs);
+    document.getElementById("incGrossProfit").innerHTML = `<b>${money(data.grossProfit)}</b>`;
+    document.getElementById("incGrossMargin").textContent = pct(data.grossMarginPercent);
+    document.getElementById("incExpenseBody").innerHTML = data.expenseLines.map(l => `
+      <tr><td>${l.category}</td><td>${money(l.amount)}</td></tr>
+    `).join("") || `<tr><td colspan="2">مفيش مصروفات مسجلة</td></tr>`;
+    document.getElementById("incTotalOpex").textContent = money(data.totalOpex);
+    document.getElementById("incNetProfit").innerHTML = `<b class="${data.netProfitBeforePayroll < 0 ? "diffneg" : "diffpos"}">${money(data.netProfitBeforePayroll)}</b>`;
+    document.getElementById("incNote").textContent = data.ordersMissingCostData > 0
+      ? `⚠ ${data.ordersMissingCostData} طلب فيه أصناف بدون تكلفة ريسبي كاملة - تكلفة البضاعة المباعة أقل من الحقيقي. ${data.note}`
+      : data.note;
+
+    if (auth.user.role === "admin" || auth.user.role === "accountant") {
+      const cmp = await api(`/api/reports/income-statement/by-branch?year=${year}&month=${month}`);
+      document.getElementById("incBranchCompareWrap").style.display = "block";
+      const rows = [...cmp.branches, { branchName: "الإجمالي المجمّع", ...cmp.consolidated }];
+      document.getElementById("incBranchCompareBody").innerHTML = rows.map(r => `
+        <tr>
+          <td>${r.branchName}</td><td>${r.ordersCount}</td><td>${money(r.revenue)}</td><td>${money(r.cogs)}</td>
+          <td>${money(r.grossProfit)}</td><td>${pct(r.grossMarginPercent)}</td><td>${money(r.opex)}</td>
+          <td class="${r.netProfitBeforePayroll < 0 ? "diffneg" : "diffpos"}">${money(r.netProfitBeforePayroll)}</td>
+        </tr>
+      `).join("");
+    }
+  } catch (e) { errBox.textContent = e.message; }
+}
+document.getElementById("incRefresh").onclick = loadIncomeStatement;
 
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;

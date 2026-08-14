@@ -79,6 +79,44 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       );
     }
 
+    // تسجيل تكلفة الريسبي الفعلية وقت البيع (مش لحظيًا وقت التقرير) عشان قائمة الدخل التاريخية تفضل دقيقة
+    // حتى لو الريسبي أو تركيبة العرض اتغيرت بعدين - كله بحساب ::numeric جوه SQL زي خصم المخزون بالظبط
+    if (branchId) {
+      await client.query(
+        `UPDATE order_items oi
+         SET cost_at_sale = sub.cost, cost_at_sale_incomplete = sub.incomplete
+         FROM (
+           SELECT oi2.id AS order_item_id,
+                  COALESCE(SUM(mvi.quantity_per_unit::numeric * ii.unit_cost::numeric * oi2.quantity::numeric), 0) AS cost,
+                  (COUNT(mvi.id) = 0 OR BOOL_OR(ii.unit_cost IS NULL)) AS incomplete
+           FROM order_items oi2
+           LEFT JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi2.variant_id
+           LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+           WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL
+           GROUP BY oi2.id
+         ) sub
+         WHERE oi.id = sub.order_item_id`,
+        [orderId]
+      );
+      await client.query(
+        `UPDATE order_items oi
+         SET cost_at_sale = sub.cost, cost_at_sale_incomplete = sub.incomplete
+         FROM (
+           SELECT oi2.id AS order_item_id,
+                  COALESCE(SUM(mvi.quantity_per_unit::numeric * ii.unit_cost::numeric * ci.quantity::numeric * oi2.quantity::numeric), 0) AS cost,
+                  (COUNT(mvi.id) = 0 OR BOOL_OR(ii.unit_cost IS NULL)) AS incomplete
+           FROM order_items oi2
+           JOIN combo_items ci ON ci.combo_id = oi2.combo_id
+           LEFT JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = ci.variant_id
+           LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+           WHERE oi2.order_id = $1 AND oi2.combo_id IS NOT NULL
+           GROUP BY oi2.id
+         ) sub
+         WHERE oi.id = sub.order_item_id`,
+        [orderId]
+      );
+    }
+
     // خصم المخزون تلقائيًا حسب وصفة كل صنف (BOM) - لو الطلب مربوط بفرع
     // العروض (combo) مفيهاش وصفة مباشرة - بنفكّها لأصنافها الأصلية وناخد وصفة كل صنف منهم
     if (branchId) {
