@@ -101,13 +101,23 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       );
     }
 
+    // كل صنف ممكن يبقى معاه مرفقات مختارة (إضافة موتزريلا، بدون طماطم...) - unitPrice الجاي من الواجهة
+    // شامل بالفعل سعر المرفقات، وبنسجل اسم/سعر كل مرفق وقت البيع (snapshot) في order_item_modifiers
     for (const it of items) {
-      await client.query(
+      const inserted = await client.query(
         `INSERT INTO order_items (order_id, item_id, variant_id, combo_id, quantity, unit_price, line_total)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
         [orderId, it.comboId ? null : it.itemId, it.comboId ? null : it.variantId, it.comboId || null,
          it.quantity, it.unitPrice, it.unitPrice * it.quantity]
       );
+      const orderItemId = inserted.rows[0].id;
+      for (const mod of it.modifiers || []) {
+        await client.query(
+          `INSERT INTO order_item_modifiers (order_item_id, modifier_id, name_at_sale, price_at_sale)
+           VALUES ($1,$2,$3,$4)`,
+          [orderItemId, mod.id, mod.name, mod.priceDelta || 0]
+        );
+      }
     }
 
     // تسجيل تكلفة الريسبي الفعلية وقت البيع (مش لحظيًا وقت التقرير) عشان قائمة الدخل التاريخية تفضل دقيقة
@@ -259,6 +269,12 @@ router.get(
          WHERE oi.order_id = $1`,
         [req.params.id]
       );
+      const modifiers = await pool.query(
+        `SELECT oim.* FROM order_item_modifiers oim
+         JOIN order_items oi ON oi.id = oim.order_item_id
+         WHERE oi.order_id = $1`,
+        [req.params.id]
+      );
       const statusLog = await pool.query(
         `SELECT l.*, u.name AS changed_by_name
          FROM order_status_log l
@@ -267,7 +283,12 @@ router.get(
         [req.params.id]
       );
 
-      res.json({ ...o, items: items.rows, statusLog: statusLog.rows });
+      const itemsWithModifiers = items.rows.map((it) => ({
+        ...it,
+        modifiers: modifiers.rows.filter((m) => m.order_item_id === it.id),
+      }));
+
+      res.json({ ...o, items: itemsWithModifiers, statusLog: statusLog.rows });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

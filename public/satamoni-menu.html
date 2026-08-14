@@ -105,11 +105,23 @@
 
   <!-- المنيو -->
   <div class="panel active" id="panel-menu">
-    <h1>إضافة قسم</h1>
+    <h1>الأقسام وترتيبها</h1>
     <div class="formbox">
-      <div class="row"><input id="catName" placeholder="اسم القسم (بيتزا / برجر ...)" /><button id="catSubmit">إضافة</button></div>
+      <div class="row">
+        <input id="catName" placeholder="اسم القسم (بيتزا / برجر ...)" />
+        <input id="catOrder" type="number" placeholder="ترتيب الظهور (رقم أصغر = أول)" value="0" style="max-width:220px" />
+        <select id="catGroup" style="max-width:160px">
+          <option value="regular">منيو عادي</option>
+          <option value="fasting">منيو صيامي</option>
+        </select>
+        <button id="catSubmit">إضافة</button>
+      </div>
       <div class="err" id="catErr"></div>
     </div>
+    <table style="margin-bottom:16px">
+      <thead><tr><th>القسم</th><th>الترتيب</th><th>المجموعة</th><th></th></tr></thead>
+      <tbody id="categoriesBody"></tbody>
+    </table>
 
     <h1>إضافة صنف</h1>
     <div class="formbox">
@@ -260,17 +272,48 @@ async function boot() {
 }
 
 // ---------------- الأقسام ----------------
+const groupLabels = { regular: "منيو عادي", fasting: "منيو صيامي" };
 async function loadCategories() {
   const cats = await api("/api/menu/categories");
   document.getElementById("itemCategory").innerHTML = cats.map(c => `<option value="${c.id}">${c.name}</option>`).join("")
     || `<option value="">لسه مفيش أقسام</option>`;
+  document.getElementById("categoriesBody").innerHTML = cats.map(c => `
+    <tr>
+      <td>${c.name}</td>
+      <td><input type="number" style="width:60px" data-catorder="${c.id}" value="${c.display_order}" /></td>
+      <td>
+        <select data-catgroup="${c.id}">
+          <option value="regular" ${c.menu_group === "regular" ? "selected" : ""}>منيو عادي</option>
+          <option value="fasting" ${c.menu_group === "fasting" ? "selected" : ""}>منيو صيامي</option>
+        </select>
+      </td>
+      <td><button class="linkbtn" data-savecat="${c.id}">حفظ</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="4">لسه مفيش أقسام</td></tr>`;
+  document.querySelectorAll("[data-savecat]").forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.savecat;
+      const displayOrder = Number(document.querySelector(`[data-catorder="${id}"]`).value || 0);
+      const menuGroup = document.querySelector(`[data-catgroup="${id}"]`).value;
+      await api(`/api/menu/categories/${id}`, { method: "PATCH", body: JSON.stringify({ displayOrder, menuGroup }) });
+      await loadCategories();
+    };
+  });
 }
 document.getElementById("catSubmit").onclick = async () => {
   const errBox = document.getElementById("catErr");
   errBox.textContent = "";
   try {
-    await api("/api/menu/categories", { method: "POST", body: JSON.stringify({ name: document.getElementById("catName").value.trim() }) });
+    await api("/api/menu/categories", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("catName").value.trim(),
+        displayOrder: Number(document.getElementById("catOrder").value || 0),
+        menuGroup: document.getElementById("catGroup").value,
+      }),
+    });
     document.getElementById("catName").value = "";
+    document.getElementById("catOrder").value = "0";
     await loadCategories();
   } catch (e) { errBox.textContent = e.message; }
 };
@@ -290,15 +333,29 @@ async function loadItems() {
           <span class="lbl">${v.label}</span><span>${money(v.price)}</span>
           <span style="color:var(--faint)">طلبات: ${v.talabatPrice != null ? money(v.talabatPrice) : "—"}</span>
           <button class="linkbtn" data-edittalabat="${v.id}" data-current="${v.talabatPrice ?? ""}">تعديل سعر طلبات</button>
+          <button class="linkbtn" data-recipe="${v.id}" data-varlabel2="${v.label}">كارتة الصنف (الريسبي)</button>
           <button class="linkbtn danger" data-delvariant="${v.id}" data-item="${it.id}">حذف</button>
-        </div>`).join("")}
+        </div>
+        <div class="formbox" style="display:none;margin:6px 0" data-recipebox="${v.id}"></div>`).join("")}
       <div class="addvariant">
         <input class="lbl" placeholder="حجم (وسط/كبير)" data-varlabel="${it.id}" />
         <input class="price" type="number" placeholder="سعر" data-varprice="${it.id}" />
         <button data-addvariant="${it.id}">+ حجم</button>
       </div>
+
+      <div style="margin-top:10px;border-top:1px dashed var(--line);padding-top:8px">
+        <div style="font-size:12px;color:var(--faint);margin-bottom:6px">المرفقات (إضافة موتزريلا / بدون طماطم ...)</div>
+        <div data-modifierslist="${it.id}"></div>
+        <div class="addvariant">
+          <input class="lbl" placeholder="اسم المرفق" data-modname="${it.id}" />
+          <input class="price" type="number" placeholder="سعر إضافي (0 لو مجاني)" data-modprice="${it.id}" value="0" />
+          <button data-addmodifier="${it.id}">+ مرفق</button>
+        </div>
+      </div>
     </div>
   `).join("") : `<div style="color:var(--faint);font-size:13px">لسه مفيش أصناف — ضيف قسم وصنف الأول</div>`;
+
+  items.forEach(it => loadModifiers(it.id));
 
   document.querySelectorAll("[data-toggle]").forEach(btn => {
     btn.onclick = async () => {
@@ -332,6 +389,103 @@ async function loadItems() {
       loadItems();
     };
   });
+  document.querySelectorAll("[data-addmodifier]").forEach(btn => {
+    btn.onclick = async () => {
+      const itemId = btn.dataset.addmodifier;
+      const name = document.querySelector(`[data-modname="${itemId}"]`).value.trim();
+      const priceDelta = Number(document.querySelector(`[data-modprice="${itemId}"]`).value || 0);
+      if (!name) return alert("لازم اسم المرفق");
+      try {
+        await api(`/api/menu/items/${itemId}/modifiers`, { method: "POST", body: JSON.stringify({ name, priceDelta }) });
+        await loadModifiers(itemId);
+        document.querySelector(`[data-modname="${itemId}"]`).value = "";
+        document.querySelector(`[data-modprice="${itemId}"]`).value = "0";
+      } catch (e) { alert(e.message); }
+    };
+  });
+  document.querySelectorAll("[data-recipe]").forEach(btn => {
+    btn.onclick = () => toggleRecipe(btn.dataset.recipe, btn.dataset.varlabel2);
+  });
+}
+
+// ---------------- مرفقات الصنف ----------------
+async function loadModifiers(itemId) {
+  const wrap = document.querySelector(`[data-modifierslist="${itemId}"]`);
+  if (!wrap) return;
+  const mods = await api(`/api/menu/items/${itemId}/modifiers`);
+  wrap.innerHTML = mods.length ? mods.map(m => `
+    <div class="variant-row">
+      <span class="lbl">${m.name}${m.is_active ? "" : " (معطّل)"}</span>
+      <span>${Number(m.price_delta) > 0 ? "+" + money(m.price_delta) : "مجاني"}</span>
+      <button class="linkbtn" data-togglemod="${m.id}" data-item2="${itemId}" data-active="${m.is_active}">${m.is_active ? "تعطيل" : "تفعيل"}</button>
+      <button class="linkbtn danger" data-delmod="${m.id}" data-item3="${itemId}">حذف</button>
+    </div>
+  `).join("") : `<div style="font-size:11px;color:var(--faint)">لسه مفيش مرفقات للصنف ده</div>`;
+  wrap.querySelectorAll("[data-togglemod]").forEach(btn => {
+    btn.onclick = async () => {
+      const isActive = btn.dataset.active === "true";
+      await api(`/api/menu/modifiers/${btn.dataset.togglemod}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
+      loadModifiers(btn.dataset.item2);
+    };
+  });
+  wrap.querySelectorAll("[data-delmod]").forEach(btn => {
+    btn.onclick = async () => {
+      await api(`/api/menu/modifiers/${btn.dataset.delmod}`, { method: "DELETE" });
+      loadModifiers(btn.dataset.item3);
+    };
+  });
+}
+
+// ---------------- كارتة الصنف (الريسبي) ----------------
+let inventoryItemsCache = [];
+function ingredientOptions() {
+  return inventoryItemsCache.map(ii => `<option value="${ii.id}">${ii.name} (${ii.unit})</option>`).join("");
+}
+async function toggleRecipe(variantId, label) {
+  const box = document.querySelector(`[data-recipebox="${variantId}"]`);
+  if (box.style.display === "block") { box.style.display = "none"; return; }
+  box.style.display = "block";
+  box.innerHTML = "...جاري التحميل";
+  try {
+    if (inventoryItemsCache.length === 0) inventoryItemsCache = await api("/api/inventory/items");
+    const recipe = await api(`/api/inventory/recipe/${variantId}`);
+    box.innerHTML = `
+      <div style="font-size:12px;color:var(--faint);margin-bottom:6px">ريسبي "${label}" — الكمية لكل وحدة مباعة</div>
+      <div class="recipe-rows"></div>
+      <button type="button" class="addrow-link" data-addingredient>+ مكوّن</button>
+      <button data-saverecipe="${variantId}">حفظ الريسبي</button>
+      <div class="err" data-recipeerr="${variantId}"></div>
+    `;
+    const rowsWrap = box.querySelector(".recipe-rows");
+    function addIngredientRow(inventoryItemId, quantityPerUnit) {
+      const row = document.createElement("div");
+      row.className = "pickrow";
+      row.innerHTML = `
+        <select class="ing-item">${ingredientOptions()}</select>
+        <input class="ing-qty" type="number" step="0.001" placeholder="الكمية" value="${quantityPerUnit || ""}" />
+        <button type="button" class="ing-remove">×</button>
+      `;
+      if (inventoryItemId) row.querySelector(".ing-item").value = inventoryItemId;
+      row.querySelector(".ing-remove").onclick = () => row.remove();
+      rowsWrap.appendChild(row);
+    }
+    if (recipe.length > 0) recipe.forEach(r => addIngredientRow(r.inventory_item_id, r.quantity_per_unit));
+    else addIngredientRow();
+    box.querySelector("[data-addingredient]").onclick = () => addIngredientRow();
+    box.querySelector(`[data-saverecipe="${variantId}"]`).onclick = async () => {
+      const errBox = box.querySelector(`[data-recipeerr="${variantId}"]`);
+      errBox.textContent = "";
+      const ingredients = [...rowsWrap.querySelectorAll(".pickrow")].map(r => ({
+        inventoryItemId: r.querySelector(".ing-item").value,
+        quantityPerUnit: Number(r.querySelector(".ing-qty").value),
+      })).filter(i => i.inventoryItemId && i.quantityPerUnit > 0);
+      try {
+        await api(`/api/inventory/recipe/${variantId}`, { method: "PUT", body: JSON.stringify({ ingredients }) });
+        errBox.style.color = "var(--green)";
+        errBox.textContent = "اتحفظ ✓";
+      } catch (e) { errBox.style.color = "#F08A83"; errBox.textContent = e.message; }
+    };
+  } catch (e) { box.innerHTML = `<div class="err">${e.message}</div>`; }
 }
 document.getElementById("itemSubmit").onclick = async () => {
   const errBox = document.getElementById("itemErr");

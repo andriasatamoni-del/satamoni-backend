@@ -38,14 +38,19 @@ router.get("/full", async (req, res) => {
     const [menu, branches, areas, payments, combos, comboItems] = await Promise.all([
       pool.query(`
         SELECT mi.id, mi.name, mi.description, mi.image_url AS image, mi.is_best AS best,
-               mc.name AS category,
-               json_agg(json_build_object('id', v.id, 'label', v.label, 'price', v.price, 'talabatPrice', v.talabat_price) ORDER BY v.id) AS variants
+               mc.name AS category, mc.display_order AS "categoryOrder", mc.menu_group AS "menuGroup",
+               json_agg(jsonb_build_object('id', v.id, 'label', v.label, 'price', v.price, 'talabatPrice', v.talabat_price) ORDER BY v.id) AS variants,
+               COALESCE(
+                 (SELECT json_agg(jsonb_build_object('id', m.id, 'name', m.name, 'priceDelta', m.price_delta) ORDER BY m.id)
+                  FROM menu_item_modifiers m WHERE m.item_id = mi.id AND m.is_active = TRUE),
+                 '[]'
+               ) AS modifiers
         FROM menu_items mi
         JOIN menu_categories mc ON mc.id = mi.category_id
         JOIN menu_item_variants v ON v.item_id = mi.id
         WHERE mi.is_active = TRUE
-        GROUP BY mi.id, mc.name
-        ORDER BY mc.name, mi.id
+        GROUP BY mi.id, mc.name, mc.display_order, mc.menu_group
+        ORDER BY mc.display_order, mc.name, mi.id
       `),
       pool.query("SELECT * FROM branches WHERE is_central_kitchen = FALSE ORDER BY id"),
       pool.query("SELECT * FROM delivery_areas ORDER BY id"),

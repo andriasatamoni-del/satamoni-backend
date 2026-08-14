@@ -44,6 +44,9 @@
 
   /* ===== Menu column ===== */
   #menuPane { flex: 1; overflow-y: auto; padding: 16px; }
+  #menuGroupRow { display: flex; gap: 8px; margin-bottom: 12px; }
+  .menugroup-btn { padding: 8px 18px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-size: 13px; font-weight: 800; }
+  .menugroup-btn.active { background: var(--gold); border-color: var(--gold); color: #1A1508; }
   #tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
   .tab { white-space: nowrap; padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
   .tab.active { background: var(--red); color: #fff; border-color: var(--red); }
@@ -87,6 +90,18 @@
   #confirmBox button { margin-top: 20px; width: 100%; padding: 12px; background: transparent; color: var(--gold-bright); border: 1px solid var(--gold); border-radius: 8px; font-weight: 700; cursor: pointer; }
 
   #loadingState { padding: 60px 20px; text-align: center; color: var(--faint); }
+
+  /* ===== Item modal (variant + modifiers) ===== */
+  #itemModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 55; }
+  #itemModalOverlay.show { display: flex; }
+  #itemModalBox { background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 20px; width: 340px; max-height: 82vh; overflow-y: auto; }
+  #itemModalBox h3 { color: var(--gold-bright); margin: 0 0 12px; font-size: 16px; }
+  #itemModalBox .section-label { font-size: 12px; color: var(--faint); margin: 10px 0 6px; }
+  .modal-opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); cursor: pointer; font-size: 13px; margin-bottom: 6px; }
+  .modal-opt.active { border-color: var(--gold); background: rgba(203,161,53,.08); }
+  .modal-opt .price { font-family: 'Courier New', monospace; color: var(--faint); font-size: 12px; }
+  #itemModalAdd { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; margin-top: 12px; }
+  #itemModalCancel { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 13px; margin-top: 6px; }
 
   #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
   #loginOverlay.hidden { display: none; }
@@ -149,6 +164,7 @@
 
   <div id="menuPane">
     <div id="loadingState">جاري تحميل المنيو...</div>
+    <div id="menuGroupRow" style="display:none"></div>
     <div id="tabs" style="display:none"></div>
     <div id="grid" style="display:none"></div>
   </div>
@@ -184,6 +200,19 @@
   </div>
 </div>
 
+<div id="itemModalOverlay">
+  <div id="itemModalBox">
+    <h3 id="itemModalName"></h3>
+    <div id="itemModalVariants"></div>
+    <div id="itemModalModifiersWrap" style="display:none">
+      <div class="section-label">مرفقات (اختياري)</div>
+      <div id="itemModalModifiers"></div>
+    </div>
+    <button id="itemModalAdd"></button>
+    <button id="itemModalCancel">إلغاء</button>
+  </div>
+</div>
+
 <script>
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
 
@@ -194,9 +223,13 @@ const auth = {
 
 const state = {
   menu: [], branches: [], deliveryAreas: [], paymentMethods: [],
-  cart: {}, activeCategory: null, orderType: "delivery",
+  cart: {}, activeCategory: null, orderType: "delivery", menuGroup: "regular",
   selectedBranchId: "", selectedAreaId: "", selectedPaymentId: "",
 };
+
+function menuForGroup() {
+  return state.menu.filter(m => (m.menuGroup || "regular") === state.menuGroup);
+}
 
 const money = (n) => `${n} ج.م`;
 
@@ -255,10 +288,11 @@ async function loadConfig() {
     state.selectedBranchId = data.branches[0]?.id || "";
     state.selectedAreaId = data.deliveryAreas[0]?.id || "";
     state.selectedPaymentId = data.paymentMethods.find(p => p.enabled)?.id || "";
-    state.activeCategory = [...new Set(data.menu.map(m => m.category))][0];
+    state.activeCategory = [...new Set(menuForGroup().map(m => m.category))][0];
 
     renderBranchSelect();
     renderAreaSelect();
+    renderMenuGroupToggle();
     renderTabs();
     renderGrid();
     renderPayments();
@@ -283,14 +317,35 @@ function renderAreaSelect() {
   sel.onchange = () => { state.selectedAreaId = sel.value; renderCart(); };
 }
 
+// "منيو عادي"/"منيو صيامي" بيظهر بس لو فيه أقسام فعلًا في المجموعتين
+function renderMenuGroupToggle() {
+  const groups = new Set(state.menu.map(m => m.menuGroup || "regular"));
+  const wrap = document.getElementById("menuGroupRow");
+  if (groups.size <= 1) { wrap.style.display = "none"; return; }
+  wrap.style.display = "flex";
+  wrap.innerHTML = `
+    <div class="menugroup-btn ${state.menuGroup === "regular" ? "active" : ""}" data-group="regular">المنيو العادي</div>
+    <div class="menugroup-btn ${state.menuGroup === "fasting" ? "active" : ""}" data-group="fasting">المنيو الصيامي</div>
+  `;
+  wrap.querySelectorAll("[data-group]").forEach(el => {
+    el.onclick = () => {
+      state.menuGroup = el.dataset.group;
+      state.activeCategory = [...new Set(menuForGroup().map(m => m.category))][0];
+      renderMenuGroupToggle();
+      renderTabs();
+      renderGrid();
+    };
+  });
+}
+
 function renderTabs() {
-  const categories = [...new Set(state.menu.map(m => m.category))];
+  const categories = [...new Set(menuForGroup().map(m => m.category))];
   const tabs = document.getElementById("tabs");
   tabs.innerHTML = categories.map(c => `<div class="tab ${c === state.activeCategory ? "active" : ""}" data-cat="${c}">${c}</div>`).join("");
   tabs.querySelectorAll(".tab").forEach(el => { el.onclick = () => { state.activeCategory = el.dataset.cat; renderTabs(); renderGrid(); }; });
 }
 function renderGrid() {
-  const items = state.menu.filter(m => m.category === state.activeCategory);
+  const items = menuForGroup().filter(m => m.category === state.activeCategory);
   const grid = document.getElementById("grid");
   grid.innerHTML = items.map(item => {
     const variants = item.variants;
@@ -301,21 +356,79 @@ function renderGrid() {
   grid.querySelectorAll(".item-card").forEach(el => {
     el.onclick = () => {
       const item = JSON.parse(el.dataset.item.replace(/&apos;/g, "'"));
-      if (item.variants.length > 1) pickVariant(item);
-      else addToCart(item, item.variants[0]);
+      const hasModifiers = (item.modifiers || []).length > 0;
+      if (item.variants.length > 1 || hasModifiers) openItemModal(item);
+      else addToCart(item, item.variants[0], []);
     };
   });
 }
-function pickVariant(item) {
-  const choice = item.variants.map((v, i) => `${i + 1}) ${v.label} — ${money(v.price)}`).join("\n");
-  const answer = prompt(`اختار الحجم لـ "${item.name}":\n${choice}`, "1");
-  const idx = parseInt(answer, 10) - 1;
-  if (item.variants[idx]) addToCart(item, item.variants[idx]);
+
+// ---------------- مودال اختيار الحجم والمرفقات ----------------
+const modalState = { item: null, variant: null, modifierIds: new Set() };
+
+function openItemModal(item) {
+  modalState.item = item;
+  modalState.variant = item.variants[0];
+  modalState.modifierIds = new Set();
+  renderItemModal();
+  document.getElementById("itemModalOverlay").classList.add("show");
 }
-function addToCart(item, variant) {
-  const key = `${item.id}__${variant.id}`;
+function closeItemModal() {
+  document.getElementById("itemModalOverlay").classList.remove("show");
+}
+function renderItemModal() {
+  const item = modalState.item;
+  document.getElementById("itemModalName").textContent = item.name;
+
+  const variantsWrap = document.getElementById("itemModalVariants");
+  variantsWrap.innerHTML = item.variants.map(v => `
+    <div class="modal-opt ${v.id === modalState.variant.id ? "active" : ""}" data-variant="${v.id}">
+      <span>${v.label}</span><span class="price">${money(v.price)}</span>
+    </div>`).join("");
+  variantsWrap.querySelectorAll("[data-variant]").forEach(el => {
+    el.onclick = () => {
+      modalState.variant = item.variants.find(v => String(v.id) === el.dataset.variant);
+      renderItemModal();
+    };
+  });
+
+  const modsWrap = document.getElementById("itemModalModifiersWrap");
+  const mods = item.modifiers || [];
+  modsWrap.style.display = mods.length ? "block" : "none";
+  document.getElementById("itemModalModifiers").innerHTML = mods.map(m => `
+    <div class="modal-opt ${modalState.modifierIds.has(m.id) ? "active" : ""}" data-modifier="${m.id}">
+      <span>${m.name}</span><span class="price">${Number(m.priceDelta) > 0 ? "+" + money(m.priceDelta) : "مجاني"}</span>
+    </div>`).join("");
+  document.getElementById("itemModalModifiers").querySelectorAll("[data-modifier]").forEach(el => {
+    el.onclick = () => {
+      const id = Number(el.dataset.modifier);
+      if (modalState.modifierIds.has(id)) modalState.modifierIds.delete(id);
+      else modalState.modifierIds.add(id);
+      renderItemModal();
+    };
+  });
+
+  const selectedMods = mods.filter(m => modalState.modifierIds.has(m.id));
+  const total = Number(modalState.variant.price) + selectedMods.reduce((s, m) => s + Number(m.priceDelta), 0);
+  document.getElementById("itemModalAdd").textContent = `إضافة للسلة (${money(total)})`;
+}
+document.getElementById("itemModalCancel").onclick = closeItemModal;
+document.getElementById("itemModalAdd").onclick = () => {
+  const item = modalState.item;
+  const selectedMods = (item.modifiers || []).filter(m => modalState.modifierIds.has(m.id));
+  addToCart(item, modalState.variant, selectedMods);
+  closeItemModal();
+};
+
+function addToCart(item, variant, modifiers = []) {
+  const modKey = modifiers.map(m => m.id).sort().join("-");
+  const key = `${item.id}__${variant.id}__${modKey}`;
   const existing = state.cart[key];
-  state.cart[key] = { itemId: item.id, variantId: variant.id, name: item.name, label: variant.label, price: Number(variant.price), qty: (existing?.qty || 0) + 1 };
+  const modifierTotal = modifiers.reduce((s, m) => s + Number(m.priceDelta), 0);
+  state.cart[key] = {
+    itemId: item.id, variantId: variant.id, name: item.name, label: variant.label,
+    price: Number(variant.price) + modifierTotal, modifiers, qty: (existing?.qty || 0) + 1,
+  };
   renderCart();
 }
 function changeQty(key, delta) {
@@ -346,7 +459,7 @@ function renderCart() {
   } else {
     list.innerHTML = rows.map(([key, v]) => `
       <div class="cart-row">
-        <div class="info"><div class="n">${v.name}</div><div class="l">${v.label} × ${money(v.price)}</div></div>
+        <div class="info"><div class="n">${v.name}</div><div class="l">${v.label} × ${money(v.price)}${(v.modifiers || []).length ? "<br/>" + v.modifiers.map(m => m.name).join("، ") : ""}</div></div>
         <div class="qty-ctrl"><button data-key="${key}" data-d="-1">−</button><span>${v.qty}</span><button data-key="${key}" data-d="1">+</button></div>
       </div>`).join("");
     list.querySelectorAll("button[data-key]").forEach(btn => { btn.onclick = () => changeQty(btn.dataset.key, parseInt(btn.dataset.d, 10)); });
@@ -403,7 +516,7 @@ document.getElementById("submitBtn").onclick = async () => {
       customerPhone2: state.orderType === "delivery" ? document.getElementById("phone2Input").value.trim() || null : null,
       paymentMethodId: state.selectedPaymentId,
       deliveryFee: currentDeliveryFee(),
-      items: Object.values(state.cart).map(v => ({ itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty })),
+      items: Object.values(state.cart).map(v => ({ itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty, modifiers: v.modifiers || [] })),
     };
     const result = await api("/api/orders", { method: "POST", body: JSON.stringify(payload) });
     document.getElementById("confirmOrderId").textContent = `#${result.orderId}`;

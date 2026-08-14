@@ -31,8 +31,10 @@ CREATE TABLE users (
 
 -- ---------------- المنيو ----------------
 CREATE TABLE menu_categories (
-  id    SERIAL PRIMARY KEY,
-  name  TEXT NOT NULL UNIQUE             -- بيتزا / الفطير الحادق / البرجر ...
+  id             SERIAL PRIMARY KEY,
+  name           TEXT NOT NULL UNIQUE,             -- بيتزا / الفطير الحادق / البرجر ...
+  display_order  INTEGER NOT NULL DEFAULT 0,        -- ترتيب ظهور القسم في شاشة البيع (تصاعديًا)
+  menu_group     TEXT NOT NULL DEFAULT 'regular' CHECK (menu_group IN ('regular', 'fasting')) -- منيو عادي أو منيو صيامي منفصل
 );
 
 CREATE TABLE menu_items (
@@ -54,6 +56,17 @@ CREATE TABLE menu_item_variants (
   price         NUMERIC NOT NULL,           -- سعر الفرع (كاشير/موقع/كول سنتر)
   talabat_price NUMERIC,                    -- سعر تطبيق طلبات (NULL = الصنف مش مباع على طلبات حاليًا)
   UNIQUE(item_id, label)
+);
+
+-- مرفقات/توصيفات اختيارية للصنف (إضافة موتزريلا، بدون طماطم...) - بتتضاف كسطر إضافي في الطلب
+-- بسعر زيادة (موجب) أو مجانًا (صفر)، وبيختارها الكاشير/الكول سنتر وقت إضافة الصنف للسلة
+CREATE TABLE menu_item_modifiers (
+  id            SERIAL PRIMARY KEY,
+  item_id       INTEGER REFERENCES menu_items(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,              -- إضافة موتزريلا / بدون طماطم / بدون خضار ...
+  price_delta   NUMERIC NOT NULL DEFAULT 0, -- زيادة على السعر (أو 0 لو مجرد توصيف زي "بدون")
+  is_active     BOOLEAN DEFAULT TRUE,
+  UNIQUE(item_id, name)
 );
 
 -- ---------------- العروض/الكومبوهات (أكتر من صنف بسعر واحد) ----------------
@@ -141,6 +154,16 @@ CREATE TABLE order_items (
   line_total                NUMERIC NOT NULL,
   cost_at_sale              NUMERIC, -- تكلفة الريسبي وقت البيع فعليًا (مش محسوبة لحظيًا من الريسبي الحالي) - لدقة قائمة الدخل التاريخية
   cost_at_sale_incomplete   BOOLEAN NOT NULL DEFAULT FALSE -- TRUE لو في مكوّن من غير unit_cost وقت البيع (التكلفة أقل من الحقيقي)
+);
+
+-- المرفقات المختارة فعليًا في سطر الطلب - بتتسجل بسعرها واسمها وقت البيع (snapshot) عشان لو اتغير
+-- سعر المرفق بعدين، الطلبات القديمة تفضل دقيقة زي ما هي بالظبط
+CREATE TABLE order_item_modifiers (
+  id             SERIAL PRIMARY KEY,
+  order_item_id  INTEGER REFERENCES order_items(id) ON DELETE CASCADE,
+  modifier_id    INTEGER REFERENCES menu_item_modifiers(id),
+  name_at_sale   TEXT NOT NULL,
+  price_at_sale  NUMERIC NOT NULL DEFAULT 0
 );
 
 -- ---------------- الكاش اليومي لكل فرع (بديل شيت الفرع) ----------------
