@@ -198,13 +198,13 @@
     </div>
 
     <div id="orderTypeRow">
-      <div class="otype-btn active" data-type="dinein">صالة</div>
-      <div class="otype-btn" data-type="takeaway">تيك أواي</div>
+      <div class="otype-btn" data-type="dinein" id="dineInBtn" style="display:none">صالة</div>
+      <div class="otype-btn active" data-type="takeaway">تيك أواي</div>
       <div class="otype-btn" data-type="delivery">دليفري</div>
     </div>
 
     <div id="extraFields">
-      <input id="tableInput" placeholder="رقم الطاولة" />
+      <input id="tableInput" placeholder="رقم الطاولة" style="display:none" />
       <input id="phoneInput" placeholder="رقم موبايل العميل (اختياري)" />
     </div>
 
@@ -247,7 +247,7 @@ const state = {
   cart: {},
   activeCategory: null,
   channel: "branch", // "branch" (سعر الفرع العادي) | "talabat" (سعر تطبيق طلبات)
-  orderType: "dinein",
+  orderType: "takeaway",
   selectedBranchId: "",
   selectedPaymentId: "",
 };
@@ -358,7 +358,21 @@ function renderBranchSelect() {
   sel.value = state.selectedBranchId;
   const isLockedToOwnBranch = auth.user && auth.user.role !== "admin";
   sel.disabled = isLockedToOwnBranch;
-  sel.onchange = () => { state.selectedBranchId = sel.value; };
+  sel.onchange = () => { state.selectedBranchId = sel.value; applyDineInVisibility(); };
+  applyDineInVisibility();
+}
+
+// "صالة" بتظهر بس للفروع اللي فيها صالة تناول داخلي فعلًا (زي الإبراهيمية) - غيرها تيك أواي/دليفري بس
+function applyDineInVisibility() {
+  const branch = state.branches.find(b => String(b.id) === String(state.selectedBranchId));
+  const supportsDineIn = !!(branch && branch.supportsDineIn);
+  document.getElementById("dineInBtn").style.display = supportsDineIn ? "block" : "none";
+  if (!supportsDineIn && state.orderType === "dinein") {
+    state.orderType = "takeaway";
+    document.querySelectorAll(".otype-btn").forEach(b => b.classList.toggle("active", b.dataset.type === "takeaway"));
+    document.getElementById("tableInput").style.display = "none";
+    updateSubmitState();
+  }
 }
 
 function menuForChannel() {

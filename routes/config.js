@@ -23,6 +23,7 @@ router.get("/", async (req, res) => {
         id: p.id,
         name: p.name,
         note: p.note,
+        kind: p.kind,
         enabled: p.enabled,
       })),
     });
@@ -62,14 +63,14 @@ router.get("/full", async (req, res) => {
       menu: menu.rows,
       branches: branches.rows.map((b) => ({
         id: b.id, name: b.name, address: b.address, phone: b.phone,
-        hours: b.hours, lat: b.lat, lng: b.lng,
+        hours: b.hours, lat: b.lat, lng: b.lng, supportsDineIn: b.supports_dine_in,
       })),
       deliveryAreas: areas.rows.map((a) => ({
         id: a.id, name: a.name, fee: Number(a.fee),
         etaMinutes: a.eta_minutes, minOrder: Number(a.min_order),
       })),
       paymentMethods: payments.rows.map((p) => ({
-        id: p.id, name: p.name, note: p.note, enabled: p.enabled,
+        id: p.id, name: p.name, note: p.note, kind: p.kind, enabled: p.enabled,
       })),
       combos: combos.rows.map((c) => ({
         id: c.id, name: c.name, price: Number(c.price),
@@ -146,13 +147,17 @@ router.get("/payment-methods", requireAuth, requireRole("admin"), async (req, re
 });
 
 // POST /api/config/payment-methods - إضافة طريقة دفع جديدة
+// kind: 'cash' (بيتحصّل لحظيًا) | 'card_or_wallet' (فيزا/محفظة/إنستاباي، بيفضل تحت التحصيل) | 'credit' (آجل، تسوية شهرية)
 router.post("/payment-methods", requireAuth, requireRole("admin"), async (req, res) => {
-  const { name, note, enabled = true } = req.body;
+  const { name, note, kind = "cash", enabled = true } = req.body;
   if (!name) return res.status(400).json({ error: "لازم اسم طريقة الدفع" });
+  if (!["cash", "card_or_wallet", "credit"].includes(kind)) {
+    return res.status(400).json({ error: "نوع طريقة دفع غير معروف" });
+  }
   try {
     const result = await pool.query(
-      "INSERT INTO payment_methods (name, note, enabled) VALUES ($1, $2, $3) RETURNING *",
-      [name, note || null, enabled]
+      "INSERT INTO payment_methods (name, note, kind, enabled) VALUES ($1, $2, $3, $4) RETURNING *",
+      [name, note || null, kind, enabled]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -163,12 +168,16 @@ router.post("/payment-methods", requireAuth, requireRole("admin"), async (req, r
 // PATCH /api/config/payment-methods/:id - تعديل أو تفعيل/تعطيل طريقة دفع
 router.patch("/payment-methods/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { name, note, enabled } = req.body;
+  const { name, note, kind, enabled } = req.body;
+  if (kind !== undefined && !["cash", "card_or_wallet", "credit"].includes(kind)) {
+    return res.status(400).json({ error: "نوع طريقة دفع غير معروف" });
+  }
   const fields = [];
   const values = [];
   let i = 1;
   if (name !== undefined) { fields.push(`name = $${i++}`); values.push(name); }
   if (note !== undefined) { fields.push(`note = $${i++}`); values.push(note); }
+  if (kind !== undefined) { fields.push(`kind = $${i++}`); values.push(kind); }
   if (enabled !== undefined) { fields.push(`enabled = $${i++}`); values.push(enabled); }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
 

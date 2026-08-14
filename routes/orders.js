@@ -31,8 +31,8 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
   try {
     const {
       branchId, source, orderType, tableNumber,
-      deliveryAreaId, addressDetails, customerName, customerPhone,
-      paymentMethodId, items, deliveryFee = 0, discount = 0,
+      deliveryAreaId, addressDetails, customerName, customerPhone, customerPhone2,
+      distinguishingMark, paymentMethodId, items, deliveryFee = 0, discount = 0,
     } = req.body;
 
     if ((source === "pos" || source === "talabat") && !assertOwnBranch(req.user, branchId)) {
@@ -45,28 +45,59 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     const total = subtotal + deliveryFee - discount;
     const createdBy = source === "pos" || source === "callcenter" || source === "talabat" ? req.user.id : null;
 
+    // حالة الطلب المبدئية: طلبات الدليفري بتدخل دورة حياة (تحت التحضير -> في الطريق -> اتسلمت)،
+    // أما الصالة/تيك أواي فبتتحاسب وتتسلم فورًا عند الكاشير فمفيش داعي لدورة حياة.
+    const initialStatus = orderType === "delivery" ? "preparing" : "completed";
+
+    // حالة التحصيل المبدئية: طلبات الدليفري تفضل "تحت التحصيل" لحد ما الطيار يرجع والكاشير يأكد
+    // استلام الفلوس فعليًا، حتى لو الدفع كاش. غير كده بتتحدد حسب نوع وسيلة الدفع: كاش بيتحصّل
+    // لحظيًا، وفيزا/محفظة/آجل بتفضل تحت التحصيل لحد ما يتأكد وصول الفلوس أو تسوية آخر الشهر.
+    let paymentKind = "cash";
+    if (paymentMethodId) {
+      const pm = await client.query("SELECT kind FROM payment_methods WHERE id = $1", [paymentMethodId]);
+      if (pm.rows.length > 0) paymentKind = pm.rows[0].kind;
+    }
+    const initialPaymentStatus =
+      orderType === "delivery" ? "pending_collection" : (paymentKind === "cash" ? "collected" : "pending_collection");
+
     const orderResult = await client.query(
       `INSERT INTO orders
         (branch_id, source, order_type, table_number, delivery_area_id,
          address_details, customer_name, customer_phone, payment_method_id,
-         created_by, subtotal, delivery_fee, discount, total, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending')
+         created_by, subtotal, delivery_fee, discount, total, status, payment_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, customerName, customerPhone, paymentMethodId,
-       createdBy, subtotal, deliveryFee, discount, total]
+       createdBy, subtotal, deliveryFee, discount, total, initialStatus, initialPaymentStatus]
     );
     const orderId = orderResult.rows[0].id;
 
-    // تسجيل/تحديث العميل في سجل CRM المركزي عشان الكول سنتر يشوف تاريخه
+    await client.query(
+      `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, 'إنشاء الطلب')`,
+      [orderId, initialStatus, createdBy]
+    );
+
+    // تسجيل/تحديث العميل في سجل CRM المركزي عشان الكول سنتر يشوف تاريخه - بيانات الدليفري
+    // (رقم تليفون تاني، عنوان تفصيلي، منطقة، علامة مميزة) بتتسجل هنا لو الطلب دليفري
     if (customerPhone) {
       await client.query(
-        `INSERT INTO customers (phone, name)
-         VALUES ($1, $2)
+        `INSERT INTO customers (phone, name, phone2, address_details, delivery_area_id, distinguishing_mark)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (phone) DO UPDATE SET
            name = COALESCE(EXCLUDED.name, customers.name),
+           phone2 = COALESCE(EXCLUDED.phone2, customers.phone2),
+           address_details = COALESCE(EXCLUDED.address_details, customers.address_details),
+           delivery_area_id = COALESCE(EXCLUDED.delivery_area_id, customers.delivery_area_id),
+           distinguishing_mark = COALESCE(EXCLUDED.distinguishing_mark, customers.distinguishing_mark),
            updated_at = now()`,
-        [customerPhone, customerName || null]
+        [
+          customerPhone, customerName || null,
+          orderType === "delivery" ? customerPhone2 || null : null,
+          orderType === "delivery" ? addressDetails || null : null,
+          orderType === "delivery" ? deliveryAreaId || null : null,
+          orderType === "delivery" ? distinguishingMark || null : null,
+        ]
       );
     }
 
@@ -170,13 +201,14 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
   }
 });
 
-// GET /api/orders?branchId=&date= - عرض طلبات فرع في يوم معين (موظفين مسجلين دخول بس)
+// GET /api/orders?branchId=&date=&status=&orderType= - عرض طلبات فرع (موظفين مسجلين دخول بس)
+// status/orderType بيتفلتروا أوردرات الدليفري في شاشة متابعة دورة الحياة (تحت التحضير/في الطريق/تحصيل)
 router.get(
   "/",
   requireAuth,
   requireRole("cashier", "branch_manager", "accountant", "admin", "callcenter"),
   async (req, res) => {
-    let { branchId, date } = req.query;
+    let { branchId, date, status, orderType, paymentStatus } = req.query;
 
     if (req.user.role === "cashier" || req.user.role === "branch_manager") {
       if (branchId && !assertOwnBranch(req.user, branchId)) {
@@ -190,10 +222,131 @@ router.get(
         `SELECT * FROM orders
          WHERE ($1::int IS NULL OR branch_id = $1)
            AND ($2::date IS NULL OR created_at::date = $2)
+           AND ($3::text IS NULL OR status = $3)
+           AND ($4::text IS NULL OR order_type = $4)
+           AND ($5::text IS NULL OR payment_status = $5)
          ORDER BY created_at DESC`,
-        [branchId || null, date || null]
+        [branchId || null, date || null, status || null, orderType || null, paymentStatus || null]
       );
       res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// GET /api/orders/:id - تفاصيل طلب واحد + أصنافه + سجل تغيير حالته بالكامل
+router.get(
+  "/:id",
+  requireAuth,
+  requireRole("cashier", "branch_manager", "accountant", "admin", "callcenter"),
+  async (req, res) => {
+    try {
+      const order = await pool.query("SELECT * FROM orders WHERE id = $1", [req.params.id]);
+      if (order.rows.length === 0) return res.status(404).json({ error: "الطلب مش موجود" });
+      const o = order.rows[0];
+
+      if ((req.user.role === "cashier" || req.user.role === "branch_manager") && !assertOwnBranch(req.user, o.branch_id)) {
+        return res.status(403).json({ error: "معندكش صلاحية تشوف طلب فرع تاني" });
+      }
+
+      const items = await pool.query(
+        `SELECT oi.*, mi.name AS item_name, miv.label AS variant_label, c.name AS combo_name
+         FROM order_items oi
+         LEFT JOIN menu_item_variants miv ON miv.id = oi.variant_id
+         LEFT JOIN menu_items mi ON mi.id = miv.item_id
+         LEFT JOIN combos c ON c.id = oi.combo_id
+         WHERE oi.order_id = $1`,
+        [req.params.id]
+      );
+      const statusLog = await pool.query(
+        `SELECT l.*, u.name AS changed_by_name
+         FROM order_status_log l
+         LEFT JOIN users u ON u.id = l.changed_by
+         WHERE l.order_id = $1 ORDER BY l.changed_at ASC`,
+        [req.params.id]
+      );
+
+      res.json({ ...o, items: items.rows, statusLog: statusLog.rows });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+const ORDER_STATUSES = ["preparing", "out_for_delivery", "completed", "cancelled"];
+const TERMINAL_STATUSES = ["completed", "cancelled"];
+
+// PATCH /api/orders/:id/status - تغيير حالة الطلب (دورة حياة الدليفري: تحت التحضير -> في الطريق -> اتسلمت)
+// {status, driverName?, notes?} - لازم اسم الطيار لما ننقل الطلب "في الطريق"
+router.patch(
+  "/:id/status",
+  requireAuth,
+  requireRole("cashier", "branch_manager", "admin", "callcenter"),
+  async (req, res) => {
+    const { status, driverName, notes } = req.body;
+    if (!ORDER_STATUSES.includes(status)) {
+      return res.status(400).json({ error: "حالة غير معروفة" });
+    }
+    try {
+      const existing = await pool.query("SELECT branch_id, status FROM orders WHERE id = $1", [req.params.id]);
+      if (existing.rows.length === 0) return res.status(404).json({ error: "الطلب مش موجود" });
+      const current = existing.rows[0];
+
+      if ((req.user.role === "cashier" || req.user.role === "branch_manager") && !assertOwnBranch(req.user, current.branch_id)) {
+        return res.status(403).json({ error: "معندكش صلاحية تعدّل طلب فرع تاني" });
+      }
+      if (TERMINAL_STATUSES.includes(current.status)) {
+        return res.status(400).json({ error: "الطلب ده اتسلم أو اتلغى بالفعل، مينفعش تتعدل حالته" });
+      }
+      if (status === "out_for_delivery" && !driverName) {
+        return res.status(400).json({ error: "لازم اسم الطيار عشان تنقل الطلب لحالة (في الطريق)" });
+      }
+
+      const result = await pool.query(
+        `UPDATE orders SET status = $1, driver_name = COALESCE($2, driver_name) WHERE id = $3 RETURNING *`,
+        [status, driverName || null, req.params.id]
+      );
+      await pool.query(
+        `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, $4)`,
+        [req.params.id, status, req.user.id, notes || null]
+      );
+      res.json(result.rows[0]);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// PATCH /api/orders/:id/payment-status - تأكيد تحصيل الفلوس فعليًا (لما الطيار يرجع، أو تسوية آجل شهرية)
+// {paymentStatus: 'collected' | 'pending_collection'}
+router.patch(
+  "/:id/payment-status",
+  requireAuth,
+  requireRole("cashier", "branch_manager", "admin", "accountant"),
+  async (req, res) => {
+    const { paymentStatus } = req.body;
+    if (!["collected", "pending_collection"].includes(paymentStatus)) {
+      return res.status(400).json({ error: "حالة تحصيل غير معروفة" });
+    }
+    try {
+      const existing = await pool.query("SELECT branch_id, status FROM orders WHERE id = $1", [req.params.id]);
+      if (existing.rows.length === 0) return res.status(404).json({ error: "الطلب مش موجود" });
+      const current = existing.rows[0];
+
+      if ((req.user.role === "cashier" || req.user.role === "branch_manager") && !assertOwnBranch(req.user, current.branch_id)) {
+        return res.status(403).json({ error: "معندكش صلاحية تعدّل طلب فرع تاني" });
+      }
+
+      const result = await pool.query(
+        `UPDATE orders SET payment_status = $1 WHERE id = $2 RETURNING *`,
+        [paymentStatus, req.params.id]
+      );
+      await pool.query(
+        `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, $4)`,
+        [req.params.id, current.status, req.user.id, paymentStatus === "collected" ? "تأكيد تحصيل الفلوس" : "رجوع لحالة تحت التحصيل"]
+      );
+      res.json(result.rows[0]);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

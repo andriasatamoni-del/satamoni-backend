@@ -7,24 +7,39 @@ const canView = requireRole("admin", "callcenter", "branch_manager", "cashier", 
 const canEdit = requireRole("admin", "callcenter", "branch_manager");
 
 // GET /api/customers?q=  - بحث بالاسم أو رقم التليفون (لشاشة الكول سنتر)
-// GET /api/customers?phone=  - بروفايل عميل واحد كامل (إحصائياته + آخر طلباته)
+// GET /api/customers?phone=  - بروفايل عميل واحد كامل (إحصائياته + آخر طلباته) - بيدوّر في phone و phone2 معًا
 router.get("/", requireAuth, canView, async (req, res) => {
   const { q, phone } = req.query;
   try {
     if (phone) {
-      const customer = await pool.query("SELECT * FROM customers WHERE phone = $1", [phone]);
+      const customer = await pool.query(
+        "SELECT * FROM customers WHERE phone = $1 OR phone2 = $1", [phone]
+      );
       if (customer.rows.length === 0) {
-        return res.json({ phone, name: null, notes: null, ordersCount: 0, totalSpent: 0, lastOrderAt: null, recentOrders: [] });
+        return res.json({
+          phone, phone2: null, name: null, notes: null, addressDetails: null, deliveryAreaId: null,
+          distinguishingMark: null, loyaltyPoints: 0, ordersCount: 0, totalSpent: 0, lastOrderAt: null,
+          recentOrders: [], isRegistered: false,
+        });
       }
-      const stats = await pool.query("SELECT * FROM v_customer_order_stats WHERE phone = $1", [phone]);
+      const row = customer.rows[0];
+      const stats = await pool.query("SELECT * FROM v_customer_order_stats WHERE phone = $1", [row.phone]);
       const recentOrders = await pool.query(
-        `SELECT id, branch_id, order_type, total, status, created_at
-         FROM orders WHERE customer_phone = $1
+        `SELECT id, branch_id, order_type, total, status, payment_status, created_at
+         FROM orders WHERE customer_phone = $1 OR customer_phone = $2
          ORDER BY created_at DESC LIMIT 20`,
-        [phone]
+        [row.phone, row.phone2]
       );
       return res.json({
-        ...customer.rows[0],
+        phone: row.phone,
+        phone2: row.phone2,
+        name: row.name,
+        notes: row.notes,
+        addressDetails: row.address_details,
+        deliveryAreaId: row.delivery_area_id,
+        distinguishingMark: row.distinguishing_mark,
+        loyaltyPoints: row.loyalty_points,
+        isRegistered: true,
         ordersCount: Number(stats.rows[0]?.orders_count || 0),
         totalSpent: Number(stats.rows[0]?.total_spent || 0),
         lastOrderAt: stats.rows[0]?.last_order_at || null,
@@ -51,24 +66,30 @@ router.get("/", requireAuth, canView, async (req, res) => {
   }
 });
 
-// PATCH /api/customers/:phone - تحديث ملاحظات/نقاط ولاء العميل (بينشئ العميل لو مش موجود)
+// PATCH /api/customers/:phone - تحديث بيانات العميل (بينشئ العميل لو مش موجود) - ده اللي بيسجل بيانات
+// العميل كاملة وقت طلب الدليفري (رقمين تليفون، عنوان تفصيلي، منطقة، علامة مميزة، نقاط ولاء)
 router.patch("/:phone", requireAuth, canEdit, async (req, res) => {
   const { phone } = req.params;
-  const { notes, loyaltyPoints, name } = req.body;
-  if (notes === undefined && loyaltyPoints === undefined && name === undefined) {
+  const { notes, loyaltyPoints, name, phone2, addressDetails, deliveryAreaId, distinguishingMark } = req.body;
+  if ([notes, loyaltyPoints, name, phone2, addressDetails, deliveryAreaId, distinguishingMark].every((v) => v === undefined)) {
     return res.status(400).json({ error: "مفيش حاجة تتعدل" });
   }
   try {
     const result = await pool.query(
-      `INSERT INTO customers (phone, name, notes, loyalty_points)
-       VALUES ($1, $2, $3, COALESCE($4, 0))
+      `INSERT INTO customers (phone, name, notes, loyalty_points, phone2, address_details, delivery_area_id, distinguishing_mark)
+       VALUES ($1, $2, $3, COALESCE($4, 0), $5, $6, $7, $8)
        ON CONFLICT (phone) DO UPDATE SET
          name = COALESCE($2, customers.name),
          notes = COALESCE($3, customers.notes),
          loyalty_points = COALESCE($4, customers.loyalty_points),
+         phone2 = COALESCE($5, customers.phone2),
+         address_details = COALESCE($6, customers.address_details),
+         delivery_area_id = COALESCE($7, customers.delivery_area_id),
+         distinguishing_mark = COALESCE($8, customers.distinguishing_mark),
          updated_at = now()
        RETURNING *`,
-      [phone, name ?? null, notes ?? null, loyaltyPoints ?? null]
+      [phone, name ?? null, notes ?? null, loyaltyPoints ?? null, phone2 ?? null,
+       addressDetails ?? null, deliveryAreaId ?? null, distinguishingMark ?? null]
     );
     res.json(result.rows[0]);
   } catch (err) {

@@ -13,6 +13,7 @@ CREATE TABLE branches (
   lng           NUMERIC,
   is_central_kitchen BOOLEAN DEFAULT FALSE, -- TRUE لسجل سنتر كيتشن
   opening_debt_to_kitchen NUMERIC DEFAULT 0, -- الرصيد الافتتاحي المستحق للمخزن الرئيسي
+  supports_dine_in BOOLEAN DEFAULT TRUE, -- هل الفرع ده فيه صالة تناول داخلي (يظهر خيار "صالة" في شاشة البيع)
   created_at    TIMESTAMPTZ DEFAULT now()
 );
 
@@ -85,6 +86,9 @@ CREATE TABLE payment_methods (
   id        SERIAL PRIMARY KEY,
   name      TEXT NOT NULL,                -- نقدي / فيزا / آجل / محفظة إلكترونية
   note      TEXT,                         -- رقم فودافون كاش / رابط انستاباي ...إلخ
+  kind      TEXT NOT NULL DEFAULT 'cash' CHECK (kind IN ('cash', 'card_or_wallet', 'credit')),
+  -- cash: كاش، بيتحصّل لحظة البيع أوتوماتيك. card_or_wallet: فيزا/محفظة/إنستاباي، بيفضل "تحت التحصيل"
+  -- لحد ما يتأكد وصول الفلوس فعليًا. credit: آجل (زي طلبات آجل)، بيتحصّل في تسوية شهرية.
   enabled   BOOLEAN DEFAULT TRUE
 );
 
@@ -105,10 +109,25 @@ CREATE TABLE orders (
   delivery_fee      NUMERIC NOT NULL DEFAULT 0,
   discount          NUMERIC NOT NULL DEFAULT 0,
   total             NUMERIC NOT NULL DEFAULT 0,
-  status            TEXT NOT NULL DEFAULT 'pending', -- pending/confirmed/preparing/done/cancelled
+  -- دورة حياة الطلب: تحت التحضير -> (للدليفري بس) في الطريق -> مكتمل/تم التسليم، أو ملغي في أي وقت
+  status            TEXT NOT NULL DEFAULT 'preparing'
+                      CHECK (status IN ('preparing', 'out_for_delivery', 'completed', 'cancelled')),
+  driver_name       TEXT, -- اسم الطيار اللي معاه الأوردر (بيتسجل وقت التحويل لحالة "في الطريق")
+  -- حالة التحصيل: مستقلة عن حالة الطلب - كاش بيتسجل "محصّل" أوتوماتيك، فيزا/محفظة/آجل "تحت التحصيل" لحد ما يتأكد
+  payment_status    TEXT NOT NULL DEFAULT 'collected' CHECK (payment_status IN ('collected', 'pending_collection')),
   created_at        TIMESTAMPTZ DEFAULT now(),
   sync_uuid         UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE, -- هوية ثابتة عبر الفروع لمزامنة السيرفر المركزي
   synced_at         TIMESTAMPTZ -- NULL يعني لسه محتاج يترفع للمركزي
+);
+
+-- سجل كل تغيير في حالة الطلب (بديل "نقدر نرجع لكل سجل الأوردرات")
+CREATE TABLE order_status_log (
+  id          SERIAL PRIMARY KEY,
+  order_id    INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+  status      TEXT NOT NULL,
+  changed_by  INTEGER REFERENCES users(id),
+  notes       TEXT,
+  changed_at  TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE order_items (
@@ -288,13 +307,17 @@ CREATE TABLE inventory_movements (
 
 -- ---------------- العملاء (CRM) - لدعم كول سنتر وتاريخ الطلبات ----------------
 CREATE TABLE customers (
-  id              SERIAL PRIMARY KEY,
-  phone           TEXT NOT NULL UNIQUE,
-  name            TEXT,
-  notes           TEXT,             -- ملاحظات كول سنتر (عنوان مفضل، شكوى سابقة، ...)
-  loyalty_points  INTEGER DEFAULT 0,
-  created_at      TIMESTAMPTZ DEFAULT now(),
-  updated_at      TIMESTAMPTZ DEFAULT now()
+  id                   SERIAL PRIMARY KEY,
+  phone                TEXT NOT NULL UNIQUE,
+  phone2               TEXT,             -- رقم تليفون تاني (اختياري)
+  name                 TEXT,
+  address_details      TEXT,             -- العنوان بالتفصيل (شارع/عمارة/دور/شقة) - العنوان الافتراضي المحفوظ
+  delivery_area_id     INTEGER REFERENCES delivery_areas(id), -- المنطقة الافتراضية
+  distinguishing_mark  TEXT,             -- علامة مميزة (بجوار كذا، لون العمارة...) تساعد الطيار يوصل
+  notes                TEXT,             -- ملاحظات كول سنتر (شكوى سابقة، تفضيلات، ...)
+  loyalty_points       INTEGER DEFAULT 0,
+  created_at           TIMESTAMPTZ DEFAULT now(),
+  updated_at           TIMESTAMPTZ DEFAULT now()
 );
 
 -- ---------------- الموارد البشرية: شيفتات وحضور/انصراف ----------------

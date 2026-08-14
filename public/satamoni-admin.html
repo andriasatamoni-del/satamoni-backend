@@ -86,13 +86,14 @@
     </div>
     <div class="row">
       <label class="chk"><input type="checkbox" id="brIsKitchen" /> ده السنتر كيتشن (مش فرع بيع)</label>
+      <label class="chk"><input type="checkbox" id="brSupportsDineIn" /> فيه صالة تناول داخلي (يظهر خيار "صالة" في شاشة البيع)</label>
       <button id="branchSubmit">إضافة</button>
     </div>
     <div id="branchErr"></div>
   </div>
 
   <table style="margin-bottom:24px">
-    <thead><tr><th>الاسم</th><th>العنوان</th><th>النوع</th></tr></thead>
+    <thead><tr><th>الاسم</th><th>العنوان</th><th>النوع</th><th>صالة؟</th></tr></thead>
     <tbody id="branchesBody"></tbody>
   </table>
 
@@ -207,8 +208,18 @@ async function loadBranches() {
     `<option value="">— بدون فرع (أدمن/محاسب) —</option>` +
     branches.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
   document.getElementById("branchesBody").innerHTML = branches.map(b => `
-    <tr><td>${b.name}</td><td>${b.address || "—"}</td><td>${b.is_central_kitchen ? "سنتر كيتشن" : "فرع بيع"}</td></tr>
-  `).join("") || `<tr><td colspan="3">لسه مفيش فروع</td></tr>`;
+    <tr>
+      <td>${b.name}</td><td>${b.address || "—"}</td><td>${b.is_central_kitchen ? "سنتر كيتشن" : "فرع بيع"}</td>
+      <td>${b.is_central_kitchen ? "—" : `<button class="linkbtn" data-branch-id="${b.id}" data-supports="${b.supports_dine_in}">${b.supports_dine_in ? "فيها صالة (إلغاء)" : "مفيش صالة (تفعيل)"}</button>`}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="4">لسه مفيش فروع</td></tr>`;
+  document.querySelectorAll("button[data-branch-id]").forEach(btn => {
+    btn.onclick = async () => {
+      const supports = btn.dataset.supports === "true";
+      await api(`/api/branches/${btn.dataset.branchId}`, { method: "PATCH", body: JSON.stringify({ supportsDineIn: !supports }) });
+      loadBranches();
+    };
+  });
 }
 
 document.getElementById("branchSubmit").onclick = async () => {
@@ -222,12 +233,14 @@ document.getElementById("branchSubmit").onclick = async () => {
         address: document.getElementById("brAddress").value.trim() || null,
         phone: document.getElementById("brPhone").value.trim() || null,
         isCentralKitchen: document.getElementById("brIsKitchen").checked,
+        supportsDineIn: document.getElementById("brSupportsDineIn").checked,
       }),
     });
     document.getElementById("brName").value = "";
     document.getElementById("brAddress").value = "";
     document.getElementById("brPhone").value = "";
     document.getElementById("brIsKitchen").checked = false;
+    document.getElementById("brSupportsDineIn").checked = false;
     await loadBranches();
   } catch (e) { errBox.textContent = e.message; }
 };
@@ -244,7 +257,7 @@ async function loadUsers() {
       <td><span class="badge ${u.is_active ? "active" : "inactive"}">${u.is_active ? "شغال" : "معطّل"}</span></td>
       <td><button class="linkbtn" data-id="${u.id}" data-active="${u.is_active}">${u.is_active ? "تعطيل" : "تفعيل"}</button></td>
     </tr>`).join("");
-  document.querySelectorAll(".linkbtn").forEach(btn => {
+  document.querySelectorAll("#usersBody .linkbtn").forEach(btn => {
     btn.onclick = async () => {
       const isActive = btn.dataset.active === "true";
       await api(`/api/users/${btn.dataset.id}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });

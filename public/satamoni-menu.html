@@ -153,11 +153,16 @@
       <div class="row">
         <input id="payName" placeholder="اسم طريقة الدفع (نقدي / فيزا / فودافون كاش ...)" />
         <input id="payNote" placeholder="ملاحظة (رقم محفظة، رابط ...) اختياري" />
+        <select id="payKind">
+          <option value="cash">كاش — يتحصّل لحظيًا</option>
+          <option value="card_or_wallet">فيزا/محفظة/إنستاباي — تحت التحصيل</option>
+          <option value="credit">آجل — تسوية شهرية</option>
+        </select>
         <button id="paySubmit">إضافة</button>
       </div>
       <div class="err" id="payErr"></div>
     </div>
-    <table><thead><tr><th>الاسم</th><th>ملاحظة</th><th>الحالة</th><th></th></tr></thead><tbody id="paymentsBody"></tbody></table>
+    <table><thead><tr><th>الاسم</th><th>ملاحظة</th><th>النوع</th><th>الحالة</th><th></th></tr></thead><tbody id="paymentsBody"></tbody></table>
   </div>
 
   <!-- العروض -->
@@ -388,11 +393,12 @@ document.getElementById("areaSubmit").onclick = async () => {
 // ---------------- طرق الدفع ----------------
 async function loadPayments() {
   const payments = await api("/api/config/payment-methods");
+  const kindLabels = { cash: "كاش (لحظي)", card_or_wallet: "فيزا/محفظة (تحت التحصيل)", credit: "آجل (شهري)" };
   document.getElementById("paymentsBody").innerHTML = payments.map(p => `
-    <tr><td>${p.name}</td><td>${p.note || "—"}</td>
+    <tr><td>${p.name}</td><td>${p.note || "—"}</td><td>${kindLabels[p.kind] || p.kind}</td>
     <td><span class="badge ${p.enabled ? "active" : "inactive"}">${p.enabled ? "شغالة" : "معطّلة"}</span></td>
     <td><button class="linkbtn" data-togglepay="${p.id}" data-enabled="${p.enabled}">${p.enabled ? "تعطيل" : "تفعيل"}</button></td></tr>
-  `).join("") || `<tr><td colspan="4">لسه مفيش طرق دفع</td></tr>`;
+  `).join("") || `<tr><td colspan="5">لسه مفيش طرق دفع</td></tr>`;
   document.querySelectorAll("[data-togglepay]").forEach(btn => {
     btn.onclick = async () => {
       const enabled = btn.dataset.enabled === "true";
@@ -410,6 +416,7 @@ document.getElementById("paySubmit").onclick = async () => {
       body: JSON.stringify({
         name: document.getElementById("payName").value.trim(),
         note: document.getElementById("payNote").value.trim() || null,
+        kind: document.getElementById("payKind").value,
       }),
     });
     document.getElementById("payName").value = "";

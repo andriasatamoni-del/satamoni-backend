@@ -128,10 +128,13 @@
     <div id="extraFields">
       <select id="branchSelect"></select>
       <select id="areaSelect"></select>
-      <input id="addressInput" placeholder="تفاصيل العنوان" />
+      <input id="addressInput" placeholder="تفاصيل العنوان (شارع/عمارة/دور/شقة)" />
+      <input id="markInput" placeholder="علامة مميزة (بجوار كذا...)" />
       <input id="tableInput" placeholder="رقم الطاولة" style="display:none" />
       <input id="nameInput" placeholder="اسم العميل" />
       <input id="phoneInput" placeholder="رقم موبايل العميل" />
+      <input id="phone2Input" placeholder="رقم موبايل تاني (اختياري)" />
+      <div id="customerStatus" style="font-size:12px;min-height:14px"></div>
     </div>
     <div id="cartList"><div class="cart-empty">السلة فاضية</div></div>
     <div id="cartFooter">
@@ -394,8 +397,10 @@ document.getElementById("submitBtn").onclick = async () => {
       tableNumber: state.orderType === "dinein" ? document.getElementById("tableInput").value.trim() : null,
       deliveryAreaId: state.orderType === "delivery" ? state.selectedAreaId : null,
       addressDetails: state.orderType === "delivery" ? document.getElementById("addressInput").value.trim() : null,
+      distinguishingMark: state.orderType === "delivery" ? document.getElementById("markInput").value.trim() : null,
       customerName: document.getElementById("nameInput").value.trim(),
       customerPhone: document.getElementById("phoneInput").value.trim(),
+      customerPhone2: state.orderType === "delivery" ? document.getElementById("phone2Input").value.trim() || null : null,
       paymentMethodId: state.selectedPaymentId,
       deliveryFee: currentDeliveryFee(),
       items: Object.values(state.cart).map(v => ({ itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty })),
@@ -415,6 +420,11 @@ document.getElementById("newOrderBtn").onclick = () => {
   state.cart = {};
   document.getElementById("tableInput").value = "";
   document.getElementById("addressInput").value = "";
+  document.getElementById("markInput").value = "";
+  document.getElementById("phone2Input").value = "";
+  document.getElementById("nameInput").value = "";
+  document.getElementById("phoneInput").value = "";
+  document.getElementById("customerStatus").textContent = "";
   document.getElementById("confirmOverlay").classList.remove("show");
   renderCart();
 };
@@ -447,23 +457,64 @@ async function doSearch() {
 async function loadProfile(phone) {
   try {
     const p = await api(`/api/customers?phone=${encodeURIComponent(phone)}`);
-    selectedPhone = phone;
-    document.getElementById("pName").textContent = p.name || "—";
-    document.getElementById("pOrders").textContent = p.ordersCount;
-    document.getElementById("pSpent").textContent = money(p.totalSpent);
-    document.getElementById("profileNotes").value = p.notes || "";
+    applyCustomerLookup(phone, p);
+    document.getElementById("profileBox").style.display = "block";
     document.getElementById("historyList").innerHTML = p.recentOrders.length
       ? p.recentOrders.map(o => `<div class="order-hist"><span>#${o.id} — ${o.order_type}</span><span>${money(o.total)}</span></div>`).join("")
       : '<div class="order-hist">مفيش طلبات سابقة</div>';
-    document.getElementById("profileBox").style.display = "block";
-
-    document.getElementById("phoneInput").value = phone;
-    if (p.name) document.getElementById("nameInput").value = p.name;
     updateSubmitState();
   } catch (e) {
     document.getElementById("resultsList").innerHTML = `<div class="result-row" style="cursor:default;color:#F08A83">${e.message}</div>`;
   }
 }
+
+// بيتسجل بيانات العميل كاملة في فورم الطلب (بدون ما يمسح اللي الموظف كتبه بإيده لو موجود) وبيبيّن
+// حالة التسجيل - ده اللي بيرد على "بمجرد ما نكتب رقم التليفون يظهر ان العميل متسجل ولا لا"
+function applyCustomerLookup(phone, p) {
+  selectedPhone = phone;
+  document.getElementById("pName").textContent = p.name || "—";
+  document.getElementById("pOrders").textContent = p.ordersCount;
+  document.getElementById("pSpent").textContent = money(p.totalSpent);
+  document.getElementById("profileNotes").value = p.notes || "";
+
+  const statusEl = document.getElementById("customerStatus");
+  if (p.isRegistered) {
+    statusEl.textContent = "✅ عميل مسجل من قبل";
+    statusEl.style.color = "var(--green)";
+    if (p.name && !document.getElementById("nameInput").value.trim()) document.getElementById("nameInput").value = p.name;
+    if (p.phone2 && !document.getElementById("phone2Input").value.trim()) document.getElementById("phone2Input").value = p.phone2;
+    if (p.addressDetails && !document.getElementById("addressInput").value.trim()) document.getElementById("addressInput").value = p.addressDetails;
+    if (p.distinguishingMark && !document.getElementById("markInput").value.trim()) document.getElementById("markInput").value = p.distinguishingMark;
+    if (p.deliveryAreaId) {
+      state.selectedAreaId = p.deliveryAreaId;
+      document.getElementById("areaSelect").value = p.deliveryAreaId;
+      renderCart();
+    }
+  } else {
+    statusEl.textContent = "🆕 عميل جديد";
+    statusEl.style.color = "var(--faint)";
+  }
+}
+
+// دوّر على العميل تلقائيًا كل ما الموظف يكتب رقم موبايل كامل - عشان يعرف من أول لحظة إن العميل
+// متسجل ولا لأ وتتملى بياناته المحفوظة (عنوان/منطقة/علامة مميزة) على طول
+let phoneLookupTimer = null;
+document.getElementById("phoneInput").addEventListener("input", () => {
+  updateSubmitState();
+  clearTimeout(phoneLookupTimer);
+  const phone = document.getElementById("phoneInput").value.trim();
+  const statusEl = document.getElementById("customerStatus");
+  if (!/^\d{8,}$/.test(phone)) { statusEl.textContent = ""; return; }
+  statusEl.textContent = "...جاري البحث";
+  statusEl.style.color = "var(--faint)";
+  phoneLookupTimer = setTimeout(async () => {
+    try {
+      const p = await api(`/api/customers?phone=${encodeURIComponent(phone)}`);
+      applyCustomerLookup(phone, p);
+      updateSubmitState();
+    } catch (e) { statusEl.textContent = ""; }
+  }, 500);
+});
 
 document.getElementById("saveNoteBtn").onclick = async () => {
   if (!selectedPhone) return;
