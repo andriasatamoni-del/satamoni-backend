@@ -6,12 +6,19 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "migrate": "psql \"$DATABASE_URL\" -f db/schema.sql"
+    "migrate": "psql \"$DATABASE_URL\" -f db/schema.sql",
+    "seed:admin": "node db/seed-admin.js",
+    "ensure-schema": "node db/ensure-schema.js",
+    "import-menu": "node db/import-menu-data.js",
+    "import-talabat-prices": "node db/import-talabat-prices.js",
+    "import-kitchen-data": "node db/import-central-kitchen-data.js"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
     "pg": "^8.11.5"
   },
   "devDependencies": {

@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — إدارة المستخدمين</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar {
+    height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+  }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin-bottom: 16px; }
+
+  #userForm, #branchForm { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 24px; }
+  #userForm .row, #branchForm .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  #userForm input, #userForm select, #branchForm input, #branchForm select {
+    flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 6px; padding: 9px 10px; font-size: 13px;
+  }
+  #userForm button, #branchForm button {
+    padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff;
+    font-weight: 800; cursor: pointer; font-size: 13px;
+  }
+  #formErr { color: #F08A83; font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: right; font-size: 13px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .badge.active { background: rgba(63,163,77,.15); color: var(--green); }
+  .badge.inactive { background: rgba(194,42,36,.15); color: #F08A83; }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+  label.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); flex: 0; white-space: nowrap; }
+  label.chk input { flex: 0; width: auto; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🍕 ساتاموني — إدارة المستخدمين</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🔐 تسجيل دخول الأدمن</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <h1>إضافة فرع جديد</h1>
+  <div id="branchForm">
+    <div class="row">
+      <input id="brName" placeholder="اسم الفرع" />
+      <input id="brAddress" placeholder="العنوان (اختياري)" />
+      <input id="brPhone" placeholder="التليفون (اختياري)" />
+    </div>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="brIsKitchen" /> ده السنتر كيتشن (مش فرع بيع)</label>
+      <button id="branchSubmit">إضافة</button>
+    </div>
+    <div id="branchErr"></div>
+  </div>
+
+  <table style="margin-bottom:24px">
+    <thead><tr><th>الاسم</th><th>العنوان</th><th>النوع</th></tr></thead>
+    <tbody id="branchesBody"></tbody>
+  </table>
+
+  <h1>إضافة موظف جديد</h1>
+  <div id="userForm">
+    <div class="row">
+      <input id="fName" placeholder="الاسم" />
+      <input id="fEmail" type="email" placeholder="البريد الإلكتروني" />
+      <input id="fPassword" type="password" placeholder="كلمة المرور" />
+    </div>
+    <div class="row">
+      <select id="fRole">
+        <option value="cashier">كاشير</option>
+        <option value="branch_manager">مدير فرع</option>
+        <option value="accountant">محاسب</option>
+        <option value="callcenter">كول سنتر</option>
+        <option value="admin">أدمن</option>
+      </select>
+      <select id="fBranch"></select>
+      <button id="createBtn">إضافة</button>
+    </div>
+    <div id="formErr"></div>
+  </div>
+
+  <h1>الموظفين الحاليين</h1>
+  <table>
+    <thead><tr><th>الاسم</th><th>البريد</th><th>الدور</th><th>الفرع</th><th>الحالة</th><th></th></tr></thead>
+    <tbody id="usersBody"></tbody>
+  </table>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية أدمن على الحساب ده.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+let branches = [];
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+
+function setSession(token, user) {
+  auth.token = token;
+  auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (res.status === 401) {
+    clearSession();
+    showLogin();
+    throw new Error("انتهت الجلسة، سجل دخول تاني");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (data.user.role !== "admin") {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  await loadBranches();
+  await loadUsers();
+}
+
+async function loadBranches() {
+  const data = await api("/api/branches/all");
+  branches = data;
+  document.getElementById("fBranch").innerHTML =
+    `<option value="">— بدون فرع (أدمن/محاسب) —</option>` +
+    branches.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
+  document.getElementById("branchesBody").innerHTML = branches.map(b => `
+    <tr><td>${b.name}</td><td>${b.address || "—"}</td><td>${b.is_central_kitchen ? "سنتر كيتشن" : "فرع بيع"}</td></tr>
+  `).join("") || `<tr><td colspan="3">لسه مفيش فروع</td></tr>`;
+}
+
+document.getElementById("branchSubmit").onclick = async () => {
+  const errBox = document.getElementById("branchErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/branches", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("brName").value.trim(),
+        address: document.getElementById("brAddress").value.trim() || null,
+        phone: document.getElementById("brPhone").value.trim() || null,
+        isCentralKitchen: document.getElementById("brIsKitchen").checked,
+      }),
+    });
+    document.getElementById("brName").value = "";
+    document.getElementById("brAddress").value = "";
+    document.getElementById("brPhone").value = "";
+    document.getElementById("brIsKitchen").checked = false;
+    await loadBranches();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+async function loadUsers() {
+  const users = await api("/api/users");
+  const roleLabels = { admin: "أدمن", branch_manager: "مدير فرع", accountant: "محاسب", cashier: "كاشير", callcenter: "كول سنتر" };
+  document.getElementById("usersBody").innerHTML = users.map(u => `
+    <tr>
+      <td>${u.name}</td>
+      <td>${u.email}</td>
+      <td>${roleLabels[u.role] || u.role}</td>
+      <td>${u.branch_name || "—"}</td>
+      <td><span class="badge ${u.is_active ? "active" : "inactive"}">${u.is_active ? "شغال" : "معطّل"}</span></td>
+      <td><button class="linkbtn" data-id="${u.id}" data-active="${u.is_active}">${u.is_active ? "تعطيل" : "تفعيل"}</button></td>
+    </tr>`).join("");
+  document.querySelectorAll(".linkbtn").forEach(btn => {
+    btn.onclick = async () => {
+      const isActive = btn.dataset.active === "true";
+      await api(`/api/users/${btn.dataset.id}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
+      loadUsers();
+    };
+  });
+}
+
+document.getElementById("createBtn").onclick = async () => {
+  const errBox = document.getElementById("formErr");
+  errBox.textContent = "";
+  const name = document.getElementById("fName").value.trim();
+  const email = document.getElementById("fEmail").value.trim();
+  const password = document.getElementById("fPassword").value;
+  const role = document.getElementById("fRole").value;
+  const branchId = document.getElementById("fBranch").value || null;
+  try {
+    await api("/api/users", { method: "POST", body: JSON.stringify({ name, email, password, role, branchId }) });
+    document.getElementById("fName").value = "";
+    document.getElementById("fEmail").value = "";
+    document.getElementById("fPassword").value = "";
+    loadUsers();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (auth.user.role === "admin") boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

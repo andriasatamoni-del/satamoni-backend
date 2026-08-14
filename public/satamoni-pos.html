@@ -74,6 +74,12 @@
 
   /* ===== Cart ===== */
   #cartHeader { padding: 14px 16px; border-bottom: 1px solid var(--line); font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
+  #channelRow { display: flex; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .channel-btn {
+    flex: 1; padding: 9px 0; text-align: center; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); color: var(--faint); cursor: pointer; font-size: 13px; font-weight: 800;
+  }
+  .channel-btn.active { background: var(--gold); border-color: var(--gold); color: #1A1508; }
   #orderTypeRow { display: flex; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .otype-btn {
     flex: 1; padding: 8px 0; text-align: center; border-radius: 8px; border: 1px solid var(--line);
@@ -129,6 +135,26 @@
 
   /* ===== Loading / empty states ===== */
   #loadingState, #errorState { padding: 60px 20px; text-align: center; color: var(--faint); }
+
+  /* ===== Login overlay ===== */
+  #loginOverlay {
+    position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60;
+  }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input {
+    width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px;
+  }
+  #loginBox button {
+    width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red);
+    color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px;
+  }
+  #loginBox button:disabled { background: #3A3630; cursor: not-allowed; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -137,6 +163,20 @@
   <div class="brand">🍕 ساتاموني — كاشير</div>
   <select id="branchSelect"></select>
   <div class="status"><span class="dot" id="connDot"></span><span id="connText">جاري الاتصال بالسيرفر...</span></div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🍕 تسجيل دخول الكاشير</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
 </div>
 
 <div id="main">
@@ -150,6 +190,11 @@
     <div id="cartHeader">
       <span>الطلب الحالي</span>
       <span id="cartCount" style="font-size:12px;color:var(--faint)"></span>
+    </div>
+
+    <div id="channelRow">
+      <div class="channel-btn active" data-channel="branch">بيع الفرع</div>
+      <div class="channel-btn" data-channel="talabat">طلبات 🛵</div>
     </div>
 
     <div id="orderTypeRow">
@@ -188,20 +233,93 @@
 // ============================================================
 // إعدادات الاتصال بالـ Backend — عدّل العنوان ده لعنوان السيرفر الفعلي
 // ============================================================
-const API_BASE_URL = window.SATAMONI_API_URL || "http://localhost:4000";
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+
+const COMBO_CATEGORY = "🎁 العروض";
 
 const state = {
   menu: [],
   branches: [],
   paymentMethods: [],
-  cart: {},          // key: `${itemId}__${variantId}` -> {itemId, variantId, name, label, price, qty}
+  combos: [],
+  // key: `${itemId}__${variantId}` أو `combo__${comboId}` للعروض
+  // -> {itemId, variantId, name, label, price, qty} أو {comboId, name, label, price, qty}
+  cart: {},
   activeCategory: null,
+  channel: "branch", // "branch" (سعر الفرع العادي) | "talabat" (سعر تطبيق طلبات)
   orderType: "dinein",
   selectedBranchId: "",
   selectedPaymentId: "",
 };
 
+function priceFor(variant) {
+  return state.channel === "talabat" ? Number(variant.talabatPrice) : Number(variant.price);
+}
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
 const money = (n) => `${n} ج.م`;
+
+function showLogin() {
+  document.getElementById("loginOverlay").classList.remove("hidden");
+}
+function hideLogin() {
+  document.getElementById("loginOverlay").classList.add("hidden");
+}
+
+function setSession(token, user) {
+  auth.token = token;
+  auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+
+function clearSession() {
+  auth.token = null;
+  auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const btn = document.getElementById("loginBtn");
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  if (!email || !password) {
+    errBox.textContent = "دخّل البريد الإلكتروني وكلمة المرور";
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "جاري الدخول...";
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "تعذر تسجيل الدخول");
+    setSession(data.token, data.user);
+    hideLogin();
+    document.getElementById("loginPassword").value = "";
+    loadConfig();
+  } catch (e) {
+    errBox.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "دخول";
+  }
+};
+
+document.getElementById("logoutBtn").onclick = () => {
+  clearSession();
+  location.reload();
+};
 
 async function loadConfig() {
   try {
@@ -211,7 +329,9 @@ async function loadConfig() {
     state.menu = data.menu;
     state.branches = data.branches;
     state.paymentMethods = data.paymentMethods;
-    state.selectedBranchId = data.branches[0]?.id || "";
+    state.combos = data.combos || [];
+    const ownBranchId = auth.user && auth.user.role !== "admin" ? auth.user.branchId : null;
+    state.selectedBranchId = ownBranchId || data.branches[0]?.id || "";
     state.selectedPaymentId = data.paymentMethods.find(p => p.enabled)?.id || "";
     state.activeCategory = [...new Set(data.menu.map(m => m.category))][0];
 
@@ -236,11 +356,22 @@ function renderBranchSelect() {
   const sel = document.getElementById("branchSelect");
   sel.innerHTML = state.branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
   sel.value = state.selectedBranchId;
+  const isLockedToOwnBranch = auth.user && auth.user.role !== "admin";
+  sel.disabled = isLockedToOwnBranch;
   sel.onchange = () => { state.selectedBranchId = sel.value; };
 }
 
+function menuForChannel() {
+  if (state.channel !== "talabat") return state.menu;
+  // في قناة طلبات، بنعرض بس الأصناف اللي ليها سعر طلبات محدد لحجم واحد على الأقل
+  return state.menu
+    .map(item => ({ ...item, variants: item.variants.filter(v => v.talabatPrice != null) }))
+    .filter(item => item.variants.length > 0);
+}
+
 function renderTabs() {
-  const categories = [...new Set(state.menu.map(m => m.category))];
+  const categories = [...new Set(menuForChannel().map(m => m.category))];
+  if (state.channel === "branch" && state.combos.length > 0) categories.push(COMBO_CATEGORY);
   const tabs = document.getElementById("tabs");
   tabs.innerHTML = categories.map(c =>
     `<div class="tab ${c === state.activeCategory ? "active" : ""}" data-cat="${c}">${c}</div>`
@@ -251,11 +382,26 @@ function renderTabs() {
 }
 
 function renderGrid() {
-  const items = state.menu.filter(m => m.category === state.activeCategory);
   const grid = document.getElementById("grid");
+
+  if (state.activeCategory === COMBO_CATEGORY) {
+    grid.innerHTML = state.combos.map(combo => `
+      <div class="item-card" data-combo='${JSON.stringify(combo).replace(/'/g, "&apos;")}'>
+        <span class="best">عرض</span><br/>
+        <div class="name">${combo.name}</div>
+        <div class="price">${money(combo.price)}</div>
+      </div>`).join("");
+    grid.querySelectorAll(".item-card").forEach(el => {
+      el.onclick = () => addComboToCart(JSON.parse(el.dataset.combo.replace(/&apos;/g, "'")));
+    });
+    return;
+  }
+
+  const items = menuForChannel().filter(m => m.category === state.activeCategory);
   grid.innerHTML = items.map(item => {
     const variants = item.variants;
-    const priceLabel = variants.length === 1 ? money(variants[0].price) : `من ${money(Math.min(...variants.map(v => v.price)))}`;
+    const prices = variants.map(priceFor);
+    const priceLabel = variants.length === 1 ? money(prices[0]) : `من ${money(Math.min(...prices))}`;
     return `
       <div class="item-card" data-item='${JSON.stringify(item).replace(/'/g, "&apos;")}'>
         ${item.best ? '<span class="best">الأكثر طلبًا</span><br/>' : ""}
@@ -276,7 +422,7 @@ function renderGrid() {
 }
 
 function pickVariant(item) {
-  const choice = item.variants.map((v, i) => `${i + 1}) ${v.label} — ${money(v.price)}`).join("\n");
+  const choice = item.variants.map((v, i) => `${i + 1}) ${v.label} — ${money(priceFor(v))}`).join("\n");
   const answer = prompt(`اختار الحجم لـ "${item.name}":\n${choice}`, "1");
   const idx = parseInt(answer, 10) - 1;
   if (item.variants[idx]) addToCart(item, item.variants[idx]);
@@ -287,7 +433,17 @@ function addToCart(item, variant) {
   const existing = state.cart[key];
   state.cart[key] = {
     itemId: item.id, variantId: variant.id, name: item.name,
-    label: variant.label, price: Number(variant.price), qty: (existing?.qty || 0) + 1,
+    label: variant.label, price: priceFor(variant), qty: (existing?.qty || 0) + 1,
+  };
+  renderCart();
+}
+
+function addComboToCart(combo) {
+  const key = `combo__${combo.id}`;
+  const existing = state.cart[key];
+  state.cart[key] = {
+    comboId: combo.id, name: combo.name, label: "عرض",
+    price: Number(combo.price), qty: (existing?.qty || 0) + 1,
   };
   renderCart();
 }
@@ -343,11 +499,31 @@ function renderCart() {
 
 function updateSubmitState() {
   const rows = Object.entries(state.cart);
-  const okBranch = state.orderType !== "delivery" ? !!state.selectedBranchId : true;
-  const okTable = state.orderType !== "dinein" || document.getElementById("tableInput").value.trim();
+  const okBranch = !!state.selectedBranchId;
+  const okTable = state.channel === "talabat" || state.orderType !== "dinein" ||
+    document.getElementById("tableInput").value.trim();
   const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okTable;
   document.getElementById("submitBtn").disabled = !ok;
 }
+
+document.querySelectorAll(".channel-btn").forEach(btn => {
+  btn.onclick = () => {
+    if (btn.dataset.channel === state.channel) return;
+    if (Object.keys(state.cart).length > 0 &&
+        !confirm("تغيير القناة هيمسح السلة الحالية (الأسعار مختلفة). تكمل؟")) {
+      return;
+    }
+    state.channel = btn.dataset.channel;
+    state.cart = {};
+    document.querySelectorAll(".channel-btn").forEach(b => b.classList.toggle("active", b === btn));
+    document.getElementById("orderTypeRow").style.display = state.channel === "talabat" ? "none" : "flex";
+    document.getElementById("extraFields").style.display = state.channel === "talabat" ? "none" : "flex";
+    state.activeCategory = [...new Set(menuForChannel().map(m => m.category))][0];
+    renderTabs();
+    renderGrid();
+    renderCart();
+  };
+});
 
 document.querySelectorAll(".otype-btn").forEach(btn => {
   btn.onclick = () => {
@@ -366,27 +542,38 @@ document.getElementById("submitBtn").onclick = async () => {
   btn.textContent = "جاري الإرسال...";
   errBox.textContent = "";
   try {
+    const isTalabat = state.channel === "talabat";
     const payload = {
       branchId: state.selectedBranchId,
-      source: "pos",
-      orderType: state.orderType,
-      tableNumber: state.orderType === "dinein" ? document.getElementById("tableInput").value.trim() : null,
-      customerPhone: document.getElementById("phoneInput").value.trim() || null,
+      source: isTalabat ? "talabat" : "pos",
+      orderType: isTalabat ? "talabat" : state.orderType,
+      tableNumber: !isTalabat && state.orderType === "dinein" ? document.getElementById("tableInput").value.trim() : null,
+      customerPhone: !isTalabat ? (document.getElementById("phoneInput").value.trim() || null) : null,
       paymentMethodId: state.selectedPaymentId,
       deliveryFee: 0,
-      items: Object.values(state.cart).map(v => ({
-        itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty,
-      })),
+      items: Object.values(state.cart).map(v => v.comboId
+        ? { comboId: v.comboId, unitPrice: v.price, quantity: v.qty }
+        : { itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty }
+      ),
     };
     const res = await fetch(`${API_BASE_URL}/api/orders`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+      body: JSON.stringify(payload),
     });
+    if (res.status === 401) {
+      clearSession();
+      showLogin();
+      throw new Error("انتهت الجلسة، سجل دخول تاني");
+    }
     if (!res.ok) throw new Error("submit failed");
     const result = await res.json();
     document.getElementById("confirmOrderId").textContent = `#${result.orderId}`;
     document.getElementById("confirmOverlay").classList.add("show");
   } catch (e) {
-    errBox.textContent = "تعذر إرسال الطلب. تأكد من الاتصال وحاول تاني.";
+    errBox.textContent = e.message === "submit failed" || !e.message
+      ? "تعذر إرسال الطلب. تأكد من الاتصال وحاول تاني."
+      : e.message;
   } finally {
     btn.textContent = "أرسل الطلب";
     updateSubmitState();
@@ -401,7 +588,13 @@ document.getElementById("newOrderBtn").onclick = () => {
   renderCart();
 };
 
-loadConfig();
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  loadConfig();
+} else {
+  showLogin();
+}
 </script>
 </body>
 </html>

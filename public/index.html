@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — نظام إدارة المطعم</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; min-height: 100vh; }
+  #wrap { max-width: 640px; margin: 0 auto; padding: 40px 20px; }
+  h1 { color: var(--gold-bright); font-size: 24px; text-align: center; margin-bottom: 4px; }
+  .sub { text-align: center; color: var(--faint); font-size: 13px; margin-bottom: 32px; }
+  .card {
+    display: flex; align-items: center; gap: 14px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; text-decoration: none; color: var(--ink);
+  }
+  .card:hover { border-color: var(--gold); }
+  .card .icon { font-size: 26px; }
+  .card .title { font-weight: 800; font-size: 15px; }
+  .card .desc { font-size: 12px; color: var(--faint); margin-top: 2px; }
+  footer { text-align: center; color: var(--faint); font-size: 11px; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>🍕 ساتاموني</h1>
+  <div class="sub">نظام إدارة المطعم — اختار الشاشة اللي هتجربها</div>
+
+  <a class="card" href="satamoni-pos.html">
+    <span class="icon">🧾</span>
+    <div><div class="title">نقطة البيع (كاشير)</div><div class="desc">تسجيل طلبات الفرع مباشرة</div></div>
+  </a>
+  <a class="card" href="satamoni-callcenter.html">
+    <span class="icon">📞</span>
+    <div><div class="title">الكول سنتر</div><div class="desc">بحث عن عميل وتسجيل طلب تليفوني</div></div>
+  </a>
+  <a class="card" href="satamoni-accounting.html">
+    <span class="icon">💰</span>
+    <div><div class="title">الحسابات</div><div class="desc">مصروفات، مشتريات، تقفيل كاش، كشف حساب المخزن</div></div>
+  </a>
+  <a class="card" href="satamoni-attendance.html">
+    <span class="icon">🕒</span>
+    <div><div class="title">الحضور والانصراف</div><div class="desc">تسجيل حضورك، أو متابعة شيفتات الفرع</div></div>
+  </a>
+  <a class="card" href="satamoni-admin.html">
+    <span class="icon">🔐</span>
+    <div><div class="title">إدارة المستخدمين (أدمن)</div><div class="desc">إضافة موظفين وتحديد صلاحياتهم</div></div>
+  </a>
+  <a class="card" href="satamoni-menu.html">
+    <span class="icon">📋</span>
+    <div><div class="title">المنيو والإعدادات (أدمن)</div><div class="desc">إضافة الأصناف والأسعار، مناطق التوصيل، طرق الدفع</div></div>
+  </a>
+  <a class="card" href="satamoni-kitchen.html">
+    <span class="icon">🏭</span>
+    <div><div class="title">السنتر كيتشن</div><div class="desc">طلبيات الفروع، التحويلات، والتصنيع من خام لمواد مصنّعة</div></div>
+  </a>
+  <a class="card" href="satamoni-payroll.html">
+    <span class="icon">🧑‍🍳</span>
+    <div><div class="title">الرواتب (أدمن/محاسب)</div><div class="desc">حساب أوتوماتيكي من البصمة، سلف وجزاءات ومكافآت، ملخص شهري</div></div>
+  </a>
+
+  <footer>سجّل دخولك بالحساب اللي عملته وقت الإعداد (ADMIN_EMAIL)</footer>
+</div>
+</body>
+</html>

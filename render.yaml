@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: satamoni-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node db/ensure-schema.js && node server.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: satamoni-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_NAME
+        value: Admin
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SYNC_API_KEY
+        generateValue: true
+
+databases:
+  - name: satamoni-db
+    plan: free

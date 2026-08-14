@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>ساتاموني — كول سنتر</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --red-deep: #8F1E19;
+    --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar {
+    position: fixed; top: 0; right: 0; left: 0; height: 56px; z-index: 20;
+    background: var(--bg-alt); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+  }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { display: flex; width: 100%; margin-top: 56px; height: calc(100vh - 56px); overflow: hidden; }
+
+  /* ===== Customer column ===== */
+  #customerPane { width: 300px; min-width: 280px; background: var(--bg-alt); border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow-y: auto; padding: 14px; }
+  #customerPane h3 { font-size: 13px; color: var(--gold-bright); margin: 14px 0 8px; }
+  #customerPane h3:first-child { margin-top: 0; }
+  #searchRow { display: flex; gap: 6px; }
+  #searchInput { flex: 1; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  #searchBtn { background: var(--red); border: none; color: #fff; border-radius: 6px; padding: 0 12px; cursor: pointer; font-weight: 700; }
+  .result-row { padding: 8px; border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; cursor: pointer; font-size: 12px; }
+  .result-row:hover { border-color: var(--gold); }
+  .result-row .n { font-weight: 700; }
+  .result-row .p { color: var(--faint); }
+  #profileBox { display: none; }
+  #profileBox .field { margin-bottom: 6px; font-size: 12px; }
+  #profileBox .field b { color: var(--faint); font-weight: 400; }
+  #profileNotes { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px; font-size: 12px; min-height: 60px; resize: vertical; }
+  #saveNoteBtn { margin-top: 6px; width: 100%; padding: 8px; border: 1px solid var(--gold); background: transparent; color: var(--gold-bright); border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .order-hist { padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: 11px; color: var(--faint); display: flex; justify-content: space-between; }
+  #newCustomerBtn { margin-top: 8px; width: 100%; padding: 8px; border: 1px solid var(--line); background: var(--card); color: var(--faint); border-radius: 6px; cursor: pointer; font-size: 12px; }
+
+  /* ===== Menu column ===== */
+  #menuPane { flex: 1; overflow-y: auto; padding: 16px; }
+  #tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .tab { white-space: nowrap; padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tab.active { background: var(--red); color: #fff; border-color: var(--red); }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .item-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; cursor: pointer; }
+  .item-card:active { border-color: var(--gold); }
+  .item-card .name { font-weight: 700; font-size: 14px; margin-bottom: 6px; min-height: 36px; }
+  .item-card .price { color: var(--gold-bright); font-family: 'Courier New', monospace; font-size: 13px; }
+
+  /* ===== Cart column ===== */
+  #cartPane { width: 340px; min-width: 320px; background: var(--bg-alt); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  #cartHeader { padding: 14px 16px; border-bottom: 1px solid var(--line); font-weight: 800; }
+  #orderTypeRow { display: flex; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .otype-btn { flex: 1; padding: 8px 0; text-align: center; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-size: 12px; font-weight: 700; }
+  .otype-btn.active { background: var(--red); border-color: var(--red); color: #fff; }
+  #extraFields { padding: 10px 16px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+  #extraFields input, #extraFields select { background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%; }
+  #cartList { flex: 1; overflow-y: auto; padding: 8px 16px; min-height: 60px; }
+  .cart-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+  .cart-row .info { flex: 1; }
+  .cart-row .info .n { font-size: 13px; font-weight: 700; }
+  .cart-row .info .l { font-size: 11px; color: var(--faint); }
+  .qty-ctrl { display: flex; align-items: center; gap: 6px; }
+  .qty-ctrl button { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; font-size: 14px; }
+  .cart-empty { text-align: center; color: var(--faint); padding: 30px 10px; font-size: 13px; }
+  #cartFooter { padding: 14px 16px; border-top: 1px solid var(--line); }
+  .row { display: flex; justify-content: space-between; font-family: 'Courier New', monospace; font-size: 13px; margin-bottom: 4px; }
+  .row.total { font-weight: 800; color: var(--gold-bright); font-size: 16px; margin-top: 8px; }
+  #payRow { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+  .pay-opt { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+  .pay-opt.active { border-color: var(--gold); }
+  #submitBtn { width: 100%; padding: 14px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #submitBtn:disabled { background: #3A3630; cursor: not-allowed; }
+  #errBox { color: #F08A83; font-size: 12px; text-align: center; margin-top: 6px; }
+
+  #confirmOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #confirmOverlay.show { display: flex; }
+  #confirmBox { background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 30px; width: 320px; text-align: center; }
+  #confirmBox h2 { color: var(--gold-bright); margin: 10px 0; }
+  #confirmBox .num { font-family: 'Courier New', monospace; font-size: 22px; font-weight: 800; }
+  #confirmBox button { margin-top: 20px; width: 100%; padding: 12px; background: transparent; color: var(--gold-bright); border: 1px solid var(--gold); border-radius: 8px; font-weight: 700; cursor: pointer; }
+
+  #loadingState { padding: 60px 20px; text-align: center; color: var(--faint); }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">📞 ساتاموني — كول سنتر</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>📞 تسجيل دخول الكول سنتر</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main">
+  <div id="cartPane">
+    <div id="cartHeader">الطلب الحالي</div>
+    <div id="orderTypeRow">
+      <div class="otype-btn active" data-type="delivery">دليفري</div>
+      <div class="otype-btn" data-type="takeaway">تيك أواي</div>
+      <div class="otype-btn" data-type="dinein">صالة</div>
+    </div>
+    <div id="extraFields">
+      <select id="branchSelect"></select>
+      <select id="areaSelect"></select>
+      <input id="addressInput" placeholder="تفاصيل العنوان" />
+      <input id="tableInput" placeholder="رقم الطاولة" style="display:none" />
+      <input id="nameInput" placeholder="اسم العميل" />
+      <input id="phoneInput" placeholder="رقم موبايل العميل" />
+    </div>
+    <div id="cartList"><div class="cart-empty">السلة فاضية</div></div>
+    <div id="cartFooter">
+      <div class="row"><span>الإجمالي الفرعي</span><span id="subtotalVal">0 ج.م</span></div>
+      <div class="row"><span>التوصيل</span><span id="deliveryVal">0 ج.م</span></div>
+      <div class="row total"><span>الإجمالي</span><span id="totalVal">0 ج.م</span></div>
+      <div id="payRow"></div>
+      <button id="submitBtn" disabled>سجّل الطلب</button>
+      <div id="errBox"></div>
+    </div>
+  </div>
+
+  <div id="menuPane">
+    <div id="loadingState">جاري تحميل المنيو...</div>
+    <div id="tabs" style="display:none"></div>
+    <div id="grid" style="display:none"></div>
+  </div>
+
+  <div id="customerPane">
+    <h3>بحث عن عميل</h3>
+    <div id="searchRow">
+      <input id="searchInput" placeholder="رقم موبايل أو اسم" />
+      <button id="searchBtn">بحث</button>
+    </div>
+    <div id="resultsList"></div>
+
+    <div id="profileBox">
+      <h3>بيانات العميل</h3>
+      <div class="field"><b>الاسم:</b> <span id="pName"></span></div>
+      <div class="field"><b>عدد الطلبات:</b> <span id="pOrders"></span></div>
+      <div class="field"><b>إجمالي الإنفاق:</b> <span id="pSpent"></span></div>
+      <textarea id="profileNotes" placeholder="ملاحظات (عنوان مفضل، شكوى سابقة...)"></textarea>
+      <button id="saveNoteBtn">حفظ الملاحظة</button>
+
+      <h3>آخر الطلبات</h3>
+      <div id="historyList"></div>
+    </div>
+  </div>
+</div>
+
+<div id="confirmOverlay">
+  <div id="confirmBox">
+    <div style="font-size:36px">✅</div>
+    <h2>تم تسجيل الطلب</h2>
+    <div class="num" id="confirmOrderId">#0</div>
+    <button id="newOrderBtn">طلب جديد</button>
+  </div>
+</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+const state = {
+  menu: [], branches: [], deliveryAreas: [], paymentMethods: [],
+  cart: {}, activeCategory: null, orderType: "delivery",
+  selectedBranchId: "", selectedAreaId: "", selectedPaymentId: "",
+};
+
+const money = (n) => `${n} ج.م`;
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    if (data.user.role !== "callcenter" && data.user.role !== "admin") {
+      errBox.textContent = "الحساب ده مش موظف كول سنتر";
+      return;
+    }
+    setSession(data.token, data.user);
+    hideLogin();
+    loadConfig();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+async function loadConfig() {
+  try {
+    const data = await api("/api/config/full");
+    state.menu = data.menu;
+    state.branches = data.branches;
+    state.deliveryAreas = data.deliveryAreas;
+    state.paymentMethods = data.paymentMethods;
+    state.selectedBranchId = data.branches[0]?.id || "";
+    state.selectedAreaId = data.deliveryAreas[0]?.id || "";
+    state.selectedPaymentId = data.paymentMethods.find(p => p.enabled)?.id || "";
+    state.activeCategory = [...new Set(data.menu.map(m => m.category))][0];
+
+    renderBranchSelect();
+    renderAreaSelect();
+    renderTabs();
+    renderGrid();
+    renderPayments();
+    document.getElementById("loadingState").style.display = "none";
+    document.getElementById("tabs").style.display = "flex";
+    document.getElementById("grid").style.display = "grid";
+  } catch (e) {
+    document.getElementById("loadingState").textContent = "تعذر تحميل المنيو من السيرفر: " + e.message;
+  }
+}
+
+function renderBranchSelect() {
+  const sel = document.getElementById("branchSelect");
+  sel.innerHTML = state.branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  sel.value = state.selectedBranchId;
+  sel.onchange = () => { state.selectedBranchId = sel.value; };
+}
+function renderAreaSelect() {
+  const sel = document.getElementById("areaSelect");
+  sel.innerHTML = state.deliveryAreas.map(a => `<option value="${a.id}">${a.name} (+${money(a.fee)})</option>`).join("");
+  sel.value = state.selectedAreaId;
+  sel.onchange = () => { state.selectedAreaId = sel.value; renderCart(); };
+}
+
+function renderTabs() {
+  const categories = [...new Set(state.menu.map(m => m.category))];
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = categories.map(c => `<div class="tab ${c === state.activeCategory ? "active" : ""}" data-cat="${c}">${c}</div>`).join("");
+  tabs.querySelectorAll(".tab").forEach(el => { el.onclick = () => { state.activeCategory = el.dataset.cat; renderTabs(); renderGrid(); }; });
+}
+function renderGrid() {
+  const items = state.menu.filter(m => m.category === state.activeCategory);
+  const grid = document.getElementById("grid");
+  grid.innerHTML = items.map(item => {
+    const variants = item.variants;
+    const priceLabel = variants.length === 1 ? money(variants[0].price) : `من ${money(Math.min(...variants.map(v => v.price)))}`;
+    return `<div class="item-card" data-item='${JSON.stringify(item).replace(/'/g, "&apos;")}'>
+      <div class="name">${item.name}</div><div class="price">${priceLabel}</div></div>`;
+  }).join("");
+  grid.querySelectorAll(".item-card").forEach(el => {
+    el.onclick = () => {
+      const item = JSON.parse(el.dataset.item.replace(/&apos;/g, "'"));
+      if (item.variants.length > 1) pickVariant(item);
+      else addToCart(item, item.variants[0]);
+    };
+  });
+}
+function pickVariant(item) {
+  const choice = item.variants.map((v, i) => `${i + 1}) ${v.label} — ${money(v.price)}`).join("\n");
+  const answer = prompt(`اختار الحجم لـ "${item.name}":\n${choice}`, "1");
+  const idx = parseInt(answer, 10) - 1;
+  if (item.variants[idx]) addToCart(item, item.variants[idx]);
+}
+function addToCart(item, variant) {
+  const key = `${item.id}__${variant.id}`;
+  const existing = state.cart[key];
+  state.cart[key] = { itemId: item.id, variantId: variant.id, name: item.name, label: variant.label, price: Number(variant.price), qty: (existing?.qty || 0) + 1 };
+  renderCart();
+}
+function changeQty(key, delta) {
+  const row = state.cart[key];
+  if (!row) return;
+  row.qty += delta;
+  if (row.qty <= 0) delete state.cart[key];
+  renderCart();
+}
+function renderPayments() {
+  const wrap = document.getElementById("payRow");
+  wrap.innerHTML = state.paymentMethods.map(p => `<div class="pay-opt ${p.id === state.selectedPaymentId ? "active" : ""}" data-id="${p.id}">
+    <input type="radio" name="pay" ${p.id === state.selectedPaymentId ? "checked" : ""} /> ${p.name}</div>`).join("");
+  wrap.querySelectorAll(".pay-opt").forEach(el => { el.onclick = () => { state.selectedPaymentId = el.dataset.id; renderPayments(); updateSubmitState(); }; });
+}
+
+function currentDeliveryFee() {
+  if (state.orderType !== "delivery") return 0;
+  const area = state.deliveryAreas.find(a => String(a.id) === String(state.selectedAreaId));
+  return area ? Number(area.fee) : 0;
+}
+
+function renderCart() {
+  const rows = Object.entries(state.cart);
+  const list = document.getElementById("cartList");
+  if (rows.length === 0) {
+    list.innerHTML = '<div class="cart-empty">السلة فاضية</div>';
+  } else {
+    list.innerHTML = rows.map(([key, v]) => `
+      <div class="cart-row">
+        <div class="info"><div class="n">${v.name}</div><div class="l">${v.label} × ${money(v.price)}</div></div>
+        <div class="qty-ctrl"><button data-key="${key}" data-d="-1">−</button><span>${v.qty}</span><button data-key="${key}" data-d="1">+</button></div>
+      </div>`).join("");
+    list.querySelectorAll("button[data-key]").forEach(btn => { btn.onclick = () => changeQty(btn.dataset.key, parseInt(btn.dataset.d, 10)); });
+  }
+  const subtotal = rows.reduce((s, [, v]) => s + v.price * v.qty, 0);
+  const deliveryFee = currentDeliveryFee();
+  document.getElementById("subtotalVal").textContent = money(subtotal);
+  document.getElementById("deliveryVal").textContent = money(deliveryFee);
+  document.getElementById("totalVal").textContent = money(subtotal + deliveryFee);
+  updateSubmitState();
+}
+
+function updateSubmitState() {
+  const rows = Object.entries(state.cart);
+  const okBranch = !!state.selectedBranchId;
+  const okArea = state.orderType !== "delivery" || (state.selectedAreaId && document.getElementById("addressInput").value.trim());
+  const okTable = state.orderType !== "dinein" || document.getElementById("tableInput").value.trim();
+  const okPhone = document.getElementById("phoneInput").value.trim();
+  const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okArea && okTable && okPhone;
+  document.getElementById("submitBtn").disabled = !ok;
+}
+
+document.querySelectorAll(".otype-btn").forEach(btn => {
+  btn.onclick = () => {
+    state.orderType = btn.dataset.type;
+    document.querySelectorAll(".otype-btn").forEach(b => b.classList.toggle("active", b === btn));
+    document.getElementById("areaSelect").style.display = state.orderType === "delivery" ? "block" : "none";
+    document.getElementById("addressInput").style.display = state.orderType === "delivery" ? "block" : "none";
+    document.getElementById("tableInput").style.display = state.orderType === "dinein" ? "block" : "none";
+    renderCart();
+  };
+});
+document.getElementById("tableInput").addEventListener("input", updateSubmitState);
+document.getElementById("addressInput").addEventListener("input", updateSubmitState);
+document.getElementById("phoneInput").addEventListener("input", updateSubmitState);
+
+document.getElementById("submitBtn").onclick = async () => {
+  const btn = document.getElementById("submitBtn");
+  const errBox = document.getElementById("errBox");
+  btn.disabled = true;
+  btn.textContent = "جاري التسجيل...";
+  errBox.textContent = "";
+  try {
+    const payload = {
+      branchId: state.selectedBranchId,
+      source: "callcenter",
+      orderType: state.orderType,
+      tableNumber: state.orderType === "dinein" ? document.getElementById("tableInput").value.trim() : null,
+      deliveryAreaId: state.orderType === "delivery" ? state.selectedAreaId : null,
+      addressDetails: state.orderType === "delivery" ? document.getElementById("addressInput").value.trim() : null,
+      customerName: document.getElementById("nameInput").value.trim(),
+      customerPhone: document.getElementById("phoneInput").value.trim(),
+      paymentMethodId: state.selectedPaymentId,
+      deliveryFee: currentDeliveryFee(),
+      items: Object.values(state.cart).map(v => ({ itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty })),
+    };
+    const result = await api("/api/orders", { method: "POST", body: JSON.stringify(payload) });
+    document.getElementById("confirmOrderId").textContent = `#${result.orderId}`;
+    document.getElementById("confirmOverlay").classList.add("show");
+  } catch (e) {
+    errBox.textContent = e.message;
+  } finally {
+    btn.textContent = "سجّل الطلب";
+    updateSubmitState();
+  }
+};
+
+document.getElementById("newOrderBtn").onclick = () => {
+  state.cart = {};
+  document.getElementById("tableInput").value = "";
+  document.getElementById("addressInput").value = "";
+  document.getElementById("confirmOverlay").classList.remove("show");
+  renderCart();
+};
+
+// ---------------- بحث العملاء ----------------
+let selectedPhone = null;
+
+document.getElementById("searchBtn").onclick = doSearch;
+document.getElementById("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+
+async function doSearch() {
+  const q = document.getElementById("searchInput").value.trim();
+  if (!q) return;
+  try {
+    // لو دخل رقم كامل، شوف بروفايله على طول. غير كده دور بالاسم/جزء من الرقم.
+    const results = await api(`/api/customers?q=${encodeURIComponent(q)}`);
+    document.getElementById("resultsList").innerHTML = results.length
+      ? results.map(c => `<div class="result-row" data-phone="${c.phone}"><div class="n">${c.name || "بدون اسم"}</div><div class="p">${c.phone} — ${c.orders_count} طلب</div></div>`).join("")
+      : '<div class="result-row" style="cursor:default">مفيش نتائج، هيتسجل كعميل جديد</div>';
+    document.querySelectorAll(".result-row[data-phone]").forEach(el => {
+      el.onclick = () => loadProfile(el.dataset.phone);
+    });
+    // لو المدخل رقم موبايل (أرقام بس، 8 خانات فأكتر)، حمّل البروفايل واملى فورم الطلب على طول
+    if (/^\d{8,}$/.test(q)) loadProfile(q);
+  } catch (e) {
+    document.getElementById("resultsList").innerHTML = `<div class="result-row" style="cursor:default;color:#F08A83">${e.message}</div>`;
+  }
+}
+
+async function loadProfile(phone) {
+  try {
+    const p = await api(`/api/customers?phone=${encodeURIComponent(phone)}`);
+    selectedPhone = phone;
+    document.getElementById("pName").textContent = p.name || "—";
+    document.getElementById("pOrders").textContent = p.ordersCount;
+    document.getElementById("pSpent").textContent = money(p.totalSpent);
+    document.getElementById("profileNotes").value = p.notes || "";
+    document.getElementById("historyList").innerHTML = p.recentOrders.length
+      ? p.recentOrders.map(o => `<div class="order-hist"><span>#${o.id} — ${o.order_type}</span><span>${money(o.total)}</span></div>`).join("")
+      : '<div class="order-hist">مفيش طلبات سابقة</div>';
+    document.getElementById("profileBox").style.display = "block";
+
+    document.getElementById("phoneInput").value = phone;
+    if (p.name) document.getElementById("nameInput").value = p.name;
+    updateSubmitState();
+  } catch (e) {
+    document.getElementById("resultsList").innerHTML = `<div class="result-row" style="cursor:default;color:#F08A83">${e.message}</div>`;
+  }
+}
+
+document.getElementById("saveNoteBtn").onclick = async () => {
+  if (!selectedPhone) return;
+  try {
+    await api(`/api/customers/${encodeURIComponent(selectedPhone)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ notes: document.getElementById("profileNotes").value }),
+    });
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+if (auth.token && auth.user && (auth.user.role === "callcenter" || auth.user.role === "admin")) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  loadConfig();
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

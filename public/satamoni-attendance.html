@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — الحضور والانصراف</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 900px; margin: 0 auto; padding: 20px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  #clockBox { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 30px; text-align: center; }
+  #clockStatus { font-size: 14px; color: var(--faint); margin-bottom: 16px; }
+  #clockStatus.open { color: var(--green); }
+  .clockbtn { padding: 16px 40px; border: none; border-radius: 10px; font-weight: 800; font-size: 16px; cursor: pointer; margin: 0 6px; }
+  #clockInBtn { background: var(--green); color: #fff; }
+  #clockOutBtn { background: var(--red); color: #fff; }
+  .clockbtn:disabled { background: #3A3630; cursor: not-allowed; }
+  #clockErr { color: #F08A83; font-size: 12px; margin-top: 12px; min-height: 16px; }
+
+  #adminSection { display: none; }
+  #branchBar { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
+  #branchBar label { font-size: 12px; color: var(--faint); }
+  #branchBar select { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .formbox input, .formbox select { flex: 1; min-width: 130px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🕒 ساتاموني — الحضور والانصراف</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🕒 تسجيل الدخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <h1>تسجيل حضورك</h1>
+  <div id="clockBox">
+    <div id="clockStatus">جاري التحقق...</div>
+    <button id="clockInBtn" class="clockbtn">تسجيل حضور</button>
+    <button id="clockOutBtn" class="clockbtn">تسجيل انصراف</button>
+    <div id="clockErr"></div>
+  </div>
+
+  <div id="adminSection">
+    <h1>الفرع</h1>
+    <div id="branchBar">
+      <label>عرض بيانات فرع:</label>
+      <select id="branchSelect"></select>
+    </div>
+
+    <h1>تعيين شيفت</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="shiftUser"></select>
+        <input id="shiftDate" type="date" />
+        <input id="shiftStart" type="time" value="09:00" />
+        <input id="shiftEnd" type="time" value="17:00" />
+        <button id="shiftSubmit">تعيين</button>
+      </div>
+      <div class="err" id="shiftErr"></div>
+    </div>
+    <table><thead><tr><th>الموظف</th><th>التاريخ</th><th>من</th><th>إلى</th></tr></thead><tbody id="shiftsBody"></tbody></table>
+
+    <h1>سجل الحضور والانصراف</h1>
+    <table><thead><tr><th>الموظف</th><th>حضور</th><th>انصراف</th></tr></thead><tbody id="attendanceBody"></tbody></table>
+  </div>
+</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const managerRoles = ["admin", "branch_manager"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    hideLogin();
+    boot();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+function fmtTime(t) { return t ? new Date(t).toLocaleString("ar-EG") : "—"; }
+
+async function refreshClockStatus() {
+  // مفيش endpoint مخصص لسؤال "هل فيه حضور مفتوح؟"، فبنجرب clock-in ونستخدم رسالة الـ409 كإشارة
+  // بدل كده: نعرض الزرارين مع بعض والسيرفر هو اللي بيمنع التكرار برسالة واضحة.
+  document.getElementById("clockStatus").textContent = "دوس \"تسجيل حضور\" لو لسه هتبدأ، أو \"تسجيل انصراف\" لو خلصت.";
+}
+
+document.getElementById("clockInBtn").onclick = async () => {
+  const errBox = document.getElementById("clockErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/hr/attendance/clock-in", { method: "POST", body: JSON.stringify({}) });
+    document.getElementById("clockStatus").textContent = "تم تسجيل الحضور ✅ — متبقي تسجيل الانصراف آخر الشيفت.";
+    document.getElementById("clockStatus").classList.add("open");
+    if (managerRoles.includes(auth.user.role)) loadAttendance();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("clockOutBtn").onclick = async () => {
+  const errBox = document.getElementById("clockErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/hr/attendance/clock-out", { method: "POST", body: JSON.stringify({}) });
+    document.getElementById("clockStatus").textContent = "تم تسجيل الانصراف، يوم سعيد 👋";
+    document.getElementById("clockStatus").classList.remove("open");
+    if (managerRoles.includes(auth.user.role)) loadAttendance();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  refreshClockStatus();
+  if (managerRoles.includes(auth.user.role)) {
+    document.getElementById("adminSection").style.display = "block";
+    document.getElementById("shiftDate").value = new Date().toISOString().slice(0, 10);
+    await loadBranches();
+    await loadUsers();
+    await Promise.all([loadShifts(), loadAttendance()]);
+  }
+}
+
+function currentBranchId() { return document.getElementById("branchSelect").value; }
+
+async function loadBranches() {
+  const branches = await api("/api/branches");
+  const sel = document.getElementById("branchSelect");
+  sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  if (auth.user.role === "branch_manager") {
+    sel.value = auth.user.branchId;
+    sel.disabled = true;
+  }
+  sel.onchange = () => { loadUsers(); loadShifts(); loadAttendance(); };
+}
+
+async function loadUsers() {
+  const users = await api("/api/users");
+  const branchUsers = users.filter(u => String(u.branch_id) === String(currentBranchId()));
+  document.getElementById("shiftUser").innerHTML = branchUsers.map(u => `<option value="${u.id}">${u.name}</option>`).join("")
+    || `<option value="">مفيش موظفين على الفرع ده</option>`;
+}
+
+async function loadShifts() {
+  const rows = await api(`/api/hr/shifts?branchId=${currentBranchId()}`);
+  document.getElementById("shiftsBody").innerHTML = rows.map(r => `
+    <tr><td>${r.user_name}</td><td>${r.shift_date.slice(0, 10)}</td><td>${r.start_time}</td><td>${r.end_time}</td></tr>
+  `).join("") || `<tr><td colspan="4">مفيش شيفتات مسجلة</td></tr>`;
+}
+document.getElementById("shiftSubmit").onclick = async () => {
+  const errBox = document.getElementById("shiftErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/hr/shifts", {
+      method: "POST",
+      body: JSON.stringify({
+        userId: document.getElementById("shiftUser").value,
+        branchId: currentBranchId(),
+        shiftDate: document.getElementById("shiftDate").value,
+        startTime: document.getElementById("shiftStart").value,
+        endTime: document.getElementById("shiftEnd").value,
+      }),
+    });
+    loadShifts();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+async function loadAttendance() {
+  const rows = await api(`/api/hr/attendance?branchId=${currentBranchId()}`);
+  document.getElementById("attendanceBody").innerHTML = rows.map(r => `
+    <tr><td>${r.user_name}</td><td>${fmtTime(r.clock_in)}</td><td>${fmtTime(r.clock_out)}</td></tr>
+  `).join("") || `<tr><td colspan="3">مفيش سجلات حضور</td></tr>`;
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  boot();
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

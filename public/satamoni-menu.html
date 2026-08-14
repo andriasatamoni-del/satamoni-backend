@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — المنيو والإعدادات</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 900px; margin: 0 auto; padding: 20px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+  h2 { font-size: 14px; color: var(--faint); margin: 18px 0 8px; }
+
+  #tabs { display: flex; gap: 6px; margin: 16px 0; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 130px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; font-family: inherit; }
+  .formbox label.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); flex: 0; white-space: nowrap; }
+  .formbox label.chk input { flex: 0; width: auto; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+
+  .item-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 10px; }
+  .item-card .head { display: flex; justify-content: space-between; align-items: center; }
+  .item-card .name { font-weight: 800; font-size: 14px; }
+  .item-card .cat { font-size: 11px; color: var(--faint); }
+  .item-card.inactive { opacity: .5; }
+  .variant-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+  .variant-row .lbl { flex: 1; }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+  .linkbtn.danger { color: #F08A83; }
+  .addvariant { display: flex; gap: 6px; margin-top: 8px; }
+  .addvariant input { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+  .addvariant input.lbl { width: 90px; }
+  .addvariant input.price { width: 70px; }
+  .addvariant button { padding: 6px 10px; border: 1px solid var(--gold); background: transparent; color: var(--gold-bright); border-radius: 6px; cursor: pointer; font-size: 12px; }
+
+  .pickrow { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .pickrow select { flex: 2; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px; font-size: 12px; }
+  .pickrow input { flex: 1; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px; font-size: 12px; }
+  .pickrow button { flex: 0; padding: 8px 10px; border: 1px solid var(--line); background: transparent; color: #F08A83; border-radius: 6px; cursor: pointer; }
+  .addrow-link { background: none; border: 1px dashed var(--line); color: var(--gold-bright); cursor: pointer; font-size: 12px; padding: 8px; border-radius: 6px; width: 100%; margin-bottom: 8px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .badge.active { background: rgba(63,163,77,.15); color: var(--green); }
+  .badge.inactive { background: rgba(194,42,36,.15); color: #F08A83; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">📋 ساتاموني — المنيو والإعدادات</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>📋 تسجيل دخول الأدمن</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="menu">المنيو</div>
+    <div class="tabbtn" data-tab="areas">مناطق التوصيل</div>
+    <div class="tabbtn" data-tab="payments">طرق الدفع</div>
+    <div class="tabbtn" data-tab="combos">العروض</div>
+  </div>
+
+  <!-- المنيو -->
+  <div class="panel active" id="panel-menu">
+    <h1>إضافة قسم</h1>
+    <div class="formbox">
+      <div class="row"><input id="catName" placeholder="اسم القسم (بيتزا / برجر ...)" /><button id="catSubmit">إضافة</button></div>
+      <div class="err" id="catErr"></div>
+    </div>
+
+    <h1>إضافة صنف</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="itemCategory"></select>
+        <input id="itemName" placeholder="اسم الصنف" />
+      </div>
+      <div class="row">
+        <input id="itemDesc" placeholder="وصف مختصر (اختياري)" />
+        <label class="chk"><input type="checkbox" id="itemBest" /> الأكثر طلبًا</label>
+        <button id="itemSubmit">إضافة الصنف</button>
+      </div>
+      <div style="font-size:11px;color:var(--faint);margin-top:4px">بعد إضافة الصنف هيظهر تحت وتقدر تضيفله حجم وسعر</div>
+      <div class="err" id="itemErr"></div>
+    </div>
+
+    <h1>الأصناف الحالية</h1>
+    <div id="itemsList"></div>
+  </div>
+
+  <!-- مناطق التوصيل -->
+  <div class="panel" id="panel-areas">
+    <h1>إضافة منطقة توصيل</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="areaName" placeholder="اسم المنطقة" />
+        <input id="areaFee" type="number" placeholder="رسوم التوصيل" />
+        <input id="areaMin" type="number" placeholder="أقل قيمة طلب" />
+        <input id="areaEta" type="number" placeholder="مدة التوصيل (دقيقة)" />
+        <button id="areaSubmit">إضافة</button>
+      </div>
+      <div class="err" id="areaErr"></div>
+    </div>
+    <table><thead><tr><th>المنطقة</th><th>الرسوم</th><th>أقل طلب</th><th>المدة</th><th></th></tr></thead><tbody id="areasBody"></tbody></table>
+  </div>
+
+  <!-- طرق الدفع -->
+  <div class="panel" id="panel-payments">
+    <h1>إضافة طريقة دفع</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="payName" placeholder="اسم طريقة الدفع (نقدي / فيزا / فودافون كاش ...)" />
+        <input id="payNote" placeholder="ملاحظة (رقم محفظة، رابط ...) اختياري" />
+        <button id="paySubmit">إضافة</button>
+      </div>
+      <div class="err" id="payErr"></div>
+    </div>
+    <table><thead><tr><th>الاسم</th><th>ملاحظة</th><th>الحالة</th><th></th></tr></thead><tbody id="paymentsBody"></tbody></table>
+  </div>
+
+  <!-- العروض -->
+  <div class="panel" id="panel-combos">
+    <h1>إضافة عرض جديد</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="comboName" placeholder="اسم العرض (وجبة عيلة / كومبو ٢ بيتزا ...)" />
+        <input id="comboPrice" type="number" placeholder="سعر العرض" />
+      </div>
+      <div id="comboItemRows"></div>
+      <button class="addrow-link" id="addComboItemRow">+ صنف تاني للعرض</button>
+      <button id="comboSubmit">إضافة العرض</button>
+      <div class="err" id="comboErr"></div>
+    </div>
+
+    <h1>العروض الحالية</h1>
+    <div id="combosList"></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية أدمن على الحساب ده.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    if (data.user.role !== "admin") {
+      setSession(data.token, data.user);
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    setSession(data.token, data.user);
+    hideLogin();
+    boot();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+  };
+});
+
+function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
+
+let menuItemsCache = [];
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  await Promise.all([loadCategories(), loadItems(), loadAreas(), loadPayments()]);
+  addComboItemRow();
+  await loadCombos();
+}
+
+// ---------------- الأقسام ----------------
+async function loadCategories() {
+  const cats = await api("/api/menu/categories");
+  document.getElementById("itemCategory").innerHTML = cats.map(c => `<option value="${c.id}">${c.name}</option>`).join("")
+    || `<option value="">لسه مفيش أقسام</option>`;
+}
+document.getElementById("catSubmit").onclick = async () => {
+  const errBox = document.getElementById("catErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/menu/categories", { method: "POST", body: JSON.stringify({ name: document.getElementById("catName").value.trim() }) });
+    document.getElementById("catName").value = "";
+    await loadCategories();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- الأصناف ----------------
+async function loadItems() {
+  const items = await api("/api/menu/items");
+  menuItemsCache = items;
+  document.getElementById("itemsList").innerHTML = items.length ? items.map(it => `
+    <div class="item-card ${it.is_active ? "" : "inactive"}" data-id="${it.id}">
+      <div class="head">
+        <div><div class="name">${it.name}</div><div class="cat">${it.category}${it.is_best ? " · الأكثر طلبًا" : ""}</div></div>
+        <button class="linkbtn ${it.is_active ? "danger" : ""}" data-toggle="${it.id}" data-active="${it.is_active}">${it.is_active ? "تعطيل" : "تفعيل"}</button>
+      </div>
+      ${it.variants.map(v => `
+        <div class="variant-row">
+          <span class="lbl">${v.label}</span><span>${money(v.price)}</span>
+          <span style="color:var(--faint)">طلبات: ${v.talabatPrice != null ? money(v.talabatPrice) : "—"}</span>
+          <button class="linkbtn" data-edittalabat="${v.id}" data-current="${v.talabatPrice ?? ""}">تعديل سعر طلبات</button>
+          <button class="linkbtn danger" data-delvariant="${v.id}" data-item="${it.id}">حذف</button>
+        </div>`).join("")}
+      <div class="addvariant">
+        <input class="lbl" placeholder="حجم (وسط/كبير)" data-varlabel="${it.id}" />
+        <input class="price" type="number" placeholder="سعر" data-varprice="${it.id}" />
+        <button data-addvariant="${it.id}">+ حجم</button>
+      </div>
+    </div>
+  `).join("") : `<div style="color:var(--faint);font-size:13px">لسه مفيش أصناف — ضيف قسم وصنف الأول</div>`;
+
+  document.querySelectorAll("[data-toggle]").forEach(btn => {
+    btn.onclick = async () => {
+      const isActive = btn.dataset.active === "true";
+      await api(`/api/menu/items/${btn.dataset.toggle}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
+      loadItems();
+    };
+  });
+  document.querySelectorAll("[data-delvariant]").forEach(btn => {
+    btn.onclick = async () => {
+      await api(`/api/menu/variants/${btn.dataset.delvariant}`, { method: "DELETE" });
+      loadItems();
+    };
+  });
+  document.querySelectorAll("[data-edittalabat]").forEach(btn => {
+    btn.onclick = async () => {
+      const answer = prompt("سعر طلبات (سيبه فاضي لو الصنف مش مباع على طلبات):", btn.dataset.current);
+      if (answer === null) return;
+      const talabatPrice = answer.trim() === "" ? null : Number(answer);
+      await api(`/api/menu/variants/${btn.dataset.edittalabat}`, { method: "PATCH", body: JSON.stringify({ talabatPrice }) });
+      loadItems();
+    };
+  });
+  document.querySelectorAll("[data-addvariant]").forEach(btn => {
+    btn.onclick = async () => {
+      const itemId = btn.dataset.addvariant;
+      const label = document.querySelector(`[data-varlabel="${itemId}"]`).value.trim();
+      const price = document.querySelector(`[data-varprice="${itemId}"]`).value;
+      if (!label || !price) return alert("لازم تكتب الحجم والسعر");
+      await api(`/api/menu/items/${itemId}/variants`, { method: "POST", body: JSON.stringify({ label, price: Number(price) }) });
+      loadItems();
+    };
+  });
+}
+document.getElementById("itemSubmit").onclick = async () => {
+  const errBox = document.getElementById("itemErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/menu/items", {
+      method: "POST",
+      body: JSON.stringify({
+        categoryId: document.getElementById("itemCategory").value,
+        name: document.getElementById("itemName").value.trim(),
+        description: document.getElementById("itemDesc").value.trim() || null,
+        isBest: document.getElementById("itemBest").checked,
+      }),
+    });
+    document.getElementById("itemName").value = "";
+    document.getElementById("itemDesc").value = "";
+    document.getElementById("itemBest").checked = false;
+    await loadItems();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- مناطق التوصيل ----------------
+async function loadAreas() {
+  const areas = await api("/api/config/delivery-areas");
+  document.getElementById("areasBody").innerHTML = areas.map(a => `
+    <tr><td>${a.name}</td><td>${money(a.fee)}</td><td>${money(a.min_order)}</td><td>${a.eta_minutes} د</td>
+    <td><button class="linkbtn" data-editfee="${a.id}" data-current="${a.fee}">عدّل الرسوم</button></td></tr>
+  `).join("") || `<tr><td colspan="5">لسه مفيش مناطق توصيل</td></tr>`;
+  document.querySelectorAll("[data-editfee]").forEach(btn => {
+    btn.onclick = async () => {
+      const newFee = prompt("الرسوم الجديدة:", btn.dataset.current);
+      if (newFee === null || newFee === "") return;
+      await api(`/api/config/delivery-areas/${btn.dataset.editfee}`, { method: "PATCH", body: JSON.stringify({ fee: Number(newFee) }) });
+      loadAreas();
+    };
+  });
+}
+document.getElementById("areaSubmit").onclick = async () => {
+  const errBox = document.getElementById("areaErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/config/delivery-areas", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("areaName").value.trim(),
+        fee: Number(document.getElementById("areaFee").value || 0),
+        minOrder: Number(document.getElementById("areaMin").value || 0),
+        etaMinutes: Number(document.getElementById("areaEta").value || 30),
+      }),
+    });
+    document.getElementById("areaName").value = "";
+    document.getElementById("areaFee").value = "";
+    document.getElementById("areaMin").value = "";
+    document.getElementById("areaEta").value = "";
+    await loadAreas();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- طرق الدفع ----------------
+async function loadPayments() {
+  const payments = await api("/api/config/payment-methods");
+  document.getElementById("paymentsBody").innerHTML = payments.map(p => `
+    <tr><td>${p.name}</td><td>${p.note || "—"}</td>
+    <td><span class="badge ${p.enabled ? "active" : "inactive"}">${p.enabled ? "شغالة" : "معطّلة"}</span></td>
+    <td><button class="linkbtn" data-togglepay="${p.id}" data-enabled="${p.enabled}">${p.enabled ? "تعطيل" : "تفعيل"}</button></td></tr>
+  `).join("") || `<tr><td colspan="4">لسه مفيش طرق دفع</td></tr>`;
+  document.querySelectorAll("[data-togglepay]").forEach(btn => {
+    btn.onclick = async () => {
+      const enabled = btn.dataset.enabled === "true";
+      await api(`/api/config/payment-methods/${btn.dataset.togglepay}`, { method: "PATCH", body: JSON.stringify({ enabled: !enabled }) });
+      loadPayments();
+    };
+  });
+}
+document.getElementById("paySubmit").onclick = async () => {
+  const errBox = document.getElementById("payErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/config/payment-methods", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("payName").value.trim(),
+        note: document.getElementById("payNote").value.trim() || null,
+      }),
+    });
+    document.getElementById("payName").value = "";
+    document.getElementById("payNote").value = "";
+    await loadPayments();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- العروض ----------------
+function variantOptions() {
+  const opts = [];
+  menuItemsCache.forEach(it => it.variants.forEach(v => opts.push(`<option value="${v.id}">${it.name} - ${v.label}</option>`)));
+  return opts.join("");
+}
+function addComboItemRow(variantId, quantity) {
+  const wrap = document.getElementById("comboItemRows");
+  const row = document.createElement("div");
+  row.className = "pickrow";
+  row.innerHTML = `
+    <select class="combo-item">${variantOptions()}</select>
+    <input class="combo-qty" type="number" placeholder="الكمية" value="${quantity || 1}" />
+    <button type="button" class="combo-remove">×</button>
+  `;
+  if (variantId) row.querySelector(".combo-item").value = variantId;
+  row.querySelector(".combo-remove").onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+document.getElementById("addComboItemRow").onclick = () => addComboItemRow();
+
+function collectComboItems(container) {
+  return [...container.querySelectorAll(".pickrow")].map(r => ({
+    variantId: r.querySelector(".combo-item").value,
+    quantity: Number(r.querySelector(".combo-qty").value),
+  })).filter(it => it.variantId && it.quantity > 0);
+}
+
+document.getElementById("comboSubmit").onclick = async () => {
+  const errBox = document.getElementById("comboErr");
+  errBox.textContent = "";
+  const items = collectComboItems(document.getElementById("comboItemRows"));
+  if (items.length === 0) { errBox.textContent = "لازم تحدد صنف وكمية على الأقل"; return; }
+  try {
+    await api("/api/combos", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("comboName").value.trim(),
+        price: Number(document.getElementById("comboPrice").value),
+        items,
+      }),
+    });
+    document.getElementById("comboName").value = "";
+    document.getElementById("comboPrice").value = "";
+    document.getElementById("comboItemRows").innerHTML = "";
+    addComboItemRow();
+    await loadCombos();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+async function loadCombos() {
+  const combos = await api("/api/combos/all");
+  document.getElementById("combosList").innerHTML = combos.length ? combos.map(c => `
+    <div class="item-card ${c.is_active ? "" : "inactive"}" data-combo="${c.id}">
+      <div class="head">
+        <div><div class="name">${c.name}</div><div class="cat">${money(c.price)}</div></div>
+        <button class="linkbtn ${c.is_active ? "danger" : ""}" data-toggleCombo="${c.id}" data-active="${c.is_active}">${c.is_active ? "تعطيل" : "تفعيل"}</button>
+      </div>
+      ${c.items.map(it => `<div class="variant-row"><span class="lbl">${it.item_name} - ${it.label}</span><span>× ${it.quantity}</span></div>`).join("")}
+      <button class="linkbtn" data-editComboItems="${c.id}">تعديل الأصناف</button>
+      <div class="formbox" style="display:none;margin-top:8px" data-editbox="${c.id}"></div>
+    </div>
+  `).join("") : `<div style="color:var(--faint);font-size:13px">لسه مفيش عروض</div>`;
+
+  document.querySelectorAll("[data-toggleCombo]").forEach(btn => {
+    btn.onclick = async () => {
+      const isActive = btn.dataset.active === "true";
+      await api(`/api/combos/${btn.dataset.togglecombo}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
+      loadCombos();
+    };
+  });
+  document.querySelectorAll("[data-editComboItems]").forEach(btn => {
+    btn.onclick = () => {
+      const comboId = btn.dataset.editcomboitems;
+      const combo = combos.find(c => String(c.id) === comboId);
+      const box = document.querySelector(`[data-editbox="${comboId}"]`);
+      box.style.display = box.style.display === "none" ? "block" : "none";
+      if (box.style.display === "none") return;
+      box.innerHTML = `<div class="edit-rows"></div><button class="addrow-link" data-addeditrow>+ صنف تاني</button><button data-saveComboItems="${comboId}">حفظ الأصناف</button><div class="err" data-editerr="${comboId}"></div>`;
+      const rowsWrap = box.querySelector(".edit-rows");
+      function addEditRow(variantId, quantity) {
+        const row = document.createElement("div");
+        row.className = "pickrow";
+        row.innerHTML = `
+          <select class="combo-item">${variantOptions()}</select>
+          <input class="combo-qty" type="number" value="${quantity || 1}" />
+          <button type="button" class="combo-remove">×</button>
+        `;
+        if (variantId) row.querySelector(".combo-item").value = variantId;
+        row.querySelector(".combo-remove").onclick = () => row.remove();
+        rowsWrap.appendChild(row);
+      }
+      combo.items.forEach(it => addEditRow(it.variant_id, it.quantity));
+      box.querySelector("[data-addeditrow]").onclick = () => addEditRow();
+      box.querySelector(`[data-savecomboitems="${comboId}"]`).onclick = async () => {
+        const errBox = box.querySelector(`[data-editerr="${comboId}"]`);
+        errBox.textContent = "";
+        const items = collectComboItems(rowsWrap);
+        if (items.length === 0) { errBox.textContent = "لازم صنف واحد على الأقل"; return; }
+        try {
+          await api(`/api/combos/${comboId}/items`, { method: "PUT", body: JSON.stringify({ items }) });
+          await loadCombos();
+        } catch (e) { errBox.textContent = e.message; }
+      };
+    };
+  });
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (auth.user.role === "admin") boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>
