@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — الرواتب</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1100px; margin: 0 auto; padding: 20px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+  h2 { font-size: 14px; color: var(--faint); margin: 18px 0 8px; }
+
+  #tabs { display: flex; gap: 6px; margin: 16px 0; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 120px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; font-family: inherit; }
+  .formbox label.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); flex: 0; white-space: nowrap; }
+  .formbox label.chk input { flex: 0; width: auto; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+  .diffneg { color: #F08A83; font-weight: 700; }
+  .diffpos { color: var(--green); font-weight: 700; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+  th, td { padding: 8px 9px; text-align: right; font-size: 11.5px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .tablewrap { overflow-x: auto; }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+  .linkbtn.danger { color: #F08A83; }
+  .smallinput { width: 70px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 5px 6px; font-size: 12px; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 10.5px; font-weight: 700; }
+  .badge.warn { background: rgba(194,42,36,.15); color: #F08A83; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🧑‍🍳 ساتاموني — الرواتب</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🧑‍🍳 تسجيل دخول الرواتب</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="summary">ملخص الرواتب</div>
+    <div class="tabbtn" data-tab="employees">الموظفين</div>
+    <div class="tabbtn" data-tab="attendance">البصمة (استيراد وتصحيح)</div>
+    <div class="tabbtn" data-tab="manual">حضور المطبخ المركزي</div>
+    <div class="tabbtn" data-tab="adjustments">السلف والجزاءات والمكافآت</div>
+  </div>
+
+  <!-- ملخص الرواتب -->
+  <div class="panel active" id="panel-summary">
+    <div class="formbox">
+      <div class="row">
+        <select id="sumYear"></select>
+        <select id="sumMonth"></select>
+        <button id="sumRefresh">تحديث</button>
+      </div>
+      <div class="row" style="font-size:12px;color:var(--faint)">
+        <span id="sumTotals"></span>
+      </div>
+      <div class="err" id="sumErr"></div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>الموظف</th><th>القسم</th><th>الوظيفة</th><th>نظام الحضور</th><th>الفرع</th>
+          <th>حضور</th><th>تأخير (د)</th><th>خصم تأخير</th><th>غياب زائد</th><th>أيام إضافية</th>
+          <th>خصم هدر ساعات</th><th>أوفر تايم</th><th>المرتب بعد الحضور</th>
+          <th>سلف</th><th>جزاءات</th><th>مكافآت</th><th>الصافي</th><th>تنبيه</th>
+        </tr></thead>
+        <tbody id="summaryBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- الموظفين -->
+  <div class="panel" id="panel-employees">
+    <h1>إضافة موظف</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="empName" placeholder="الاسم بالكامل" />
+        <select id="empDepartment"></select>
+        <input id="empJobTitle" placeholder="الوظيفة" />
+        <select id="empAttendanceSystem">
+          <option value="fingerprint_auto">بصمة تلقائي</option>
+          <option value="manual">يدوي (المطبخ المركزي)</option>
+          <option value="none">بدون تتبع حضور</option>
+        </select>
+      </div>
+      <div class="row">
+        <select id="empWageType">
+          <option value="fixed_monthly">شهري ثابت</option>
+          <option value="hourly">بالساعة</option>
+        </select>
+        <input id="empBaseSalary" type="number" placeholder="الراتب الأساسي الشهري" />
+        <input id="empHourlyRate" type="number" placeholder="أجر الساعة (لو بالساعة)" />
+        <input id="empWorkingDays" type="number" placeholder="أيام العمل بالشهر" value="26" />
+      </div>
+      <div class="row">
+        <select id="empShift">
+          <option value="">بدون شيفت ثابت</option>
+          <option value="morning">صباحي</option>
+          <option value="evening">مسائي</option>
+          <option value="flexible">بيني</option>
+        </select>
+        <input id="empHireDate" type="date" placeholder="تاريخ التعيين" />
+        <input id="empPhone" placeholder="الهاتف (اختياري)" />
+        <label class="chk"><input type="checkbox" id="empCountDay31" /> يُحسب له يوم 31 كامل</label>
+      </div>
+      <div class="row"><input id="empNotes" placeholder="ملاحظات (اختياري)" /><button id="empSubmit">إضافة الموظف</button></div>
+      <div class="err" id="empErr"></div>
+    </div>
+
+    <h1>الموظفين الحاليين</h1>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>الاسم</th><th>القسم</th><th>الوظيفة</th><th>نظام الحضور</th><th>الراتب</th><th>أكواد البصمة</th><th></th></tr></thead>
+        <tbody id="employeesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- البصمة -->
+  <div class="panel" id="panel-attendance">
+    <h1>استيراد بصمة فرع</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="attBranchSelect"></select>
+        <select id="attYear"></select>
+        <select id="attMonth"></select>
+      </div>
+      <div class="row">
+        <textarea id="attPasteBox" rows="6" placeholder="الصق بيانات البصمة هنا: كود الجهاز، التاريخ (YYYY-MM-DD)، وقت الدخول (HH:MM أو فاضي)، وقت الخروج (HH:MM أو فاضي) - سطر لكل يوم، مفصولة بفاصلة أو Tab (زي النسخ من إكسل)"></textarea>
+      </div>
+      <button id="attImportBtn">استيراد</button>
+      <div class="err" id="attErr"></div>
+      <div class="ok" id="attOk"></div>
+    </div>
+
+    <h1>مراجعة وتصحيح بصمات الشهر</h1>
+    <div class="formbox"><button id="attLoadBtn">تحميل بصمات الفرع/الشهر المحدد فوق</button></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>الموظف</th><th>كود الجهاز</th><th>التاريخ</th><th>دخول</th><th>خروج</th><th>إذن تأخير؟</th><th></th></tr></thead>
+        <tbody id="attBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- حضور المطبخ المركزي -->
+  <div class="panel" id="panel-manual">
+    <h1>حضور المطبخ المركزي (يدوي)</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="mkYear"></select>
+        <select id="mkMonth"></select>
+        <button id="mkLoadBtn">تحميل</button>
+      </div>
+      <div class="err" id="mkErr"></div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>الموظف</th><th>أيام الحضور</th><th>أيام الغياب</th><th>دقائق التأخير</th><th>خصم يدوي إضافي</th><th>ملاحظات</th><th></th></tr></thead>
+        <tbody id="mkBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- السلف والجزاءات والمكافآت -->
+  <div class="panel" id="panel-adjustments">
+    <h1>تسجيل سلفة/جزاء/مكافأة</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="adjEmployee"></select>
+        <input id="adjDate" type="date" />
+        <select id="adjType">
+          <option value="advance">سلفة</option>
+          <option value="penalty">جزاء</option>
+          <option value="bonus">مكافأة</option>
+        </select>
+        <input id="adjAmount" type="number" placeholder="المبلغ" />
+      </div>
+      <div class="row"><input id="adjNotes" placeholder="ملاحظات (اختياري)" /><button id="adjSubmit">تسجيل</button></div>
+      <div class="err" id="adjErr"></div>
+    </div>
+    <div class="formbox">
+      <div class="row">
+        <select id="adjFilterYear"></select>
+        <select id="adjFilterMonth"></select>
+        <button id="adjLoadBtn">تحميل</button>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>التاريخ</th><th>الموظف</th><th>النوع</th><th>المبلغ</th><th>ملاحظات</th><th></th></tr></thead>
+        <tbody id="adjBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية أدمن/محاسب على الحساب ده.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "accountant"];
+const DEPARTMENTS = ["بيتزا", "فطير", "تشغيل الفرع", "الإدارة", "حسابات", "كول سنتر", "المطبخ المركزي"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+let employeesCache = [];
+let branchesCache = [];
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    if (!allowedRoles.includes(data.user.role)) {
+      setSession(data.token, data.user);
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    setSession(data.token, data.user);
+    hideLogin();
+    boot();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+  };
+});
+
+function money(n) { return n === null || n === undefined ? "—" : `${Number(n).toFixed(2)} ج.م`; }
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+function populatePeriodSelectors(yearId, monthId) {
+  const yearSel = document.getElementById(yearId);
+  const monthSel = document.getElementById(monthId);
+  const now = new Date();
+  const years = [];
+  for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) years.push(y);
+  yearSel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join("");
+  yearSel.value = now.getFullYear();
+  monthSel.innerHTML = Array.from({ length: 12 }, (_, i) => i + 1).map(m => `<option value="${m}">${m}</option>`).join("");
+  monthSel.value = now.getMonth() + 1;
+}
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  document.getElementById("empDepartment").innerHTML = DEPARTMENTS.map(d => `<option value="${d}">${d}</option>`).join("");
+
+  populatePeriodSelectors("sumYear", "sumMonth");
+  populatePeriodSelectors("attYear", "attMonth");
+  populatePeriodSelectors("mkYear", "mkMonth");
+  populatePeriodSelectors("adjFilterYear", "adjFilterMonth");
+  document.getElementById("adjDate").value = todayStr();
+
+  branchesCache = await api("/api/branches/all");
+  const branchOpts = branchesCache.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
+  document.getElementById("attBranchSelect").innerHTML = branchOpts;
+
+  await loadEmployees();
+  await loadSummary();
+  await loadAdjustments();
+}
+
+// ---------------- ملخص الرواتب ----------------
+async function loadSummary() {
+  const errBox = document.getElementById("sumErr");
+  errBox.textContent = "";
+  const year = document.getElementById("sumYear").value;
+  const month = document.getElementById("sumMonth").value;
+  try {
+    const data = await api(`/api/payroll/summary?year=${year}&month=${month}`);
+    const attLabels = { fingerprint_auto: "بصمة تلقائي", manual: "يدوي", none: "بدون تتبع" };
+    document.getElementById("summaryBody").innerHTML = data.employees.map(e => `
+      <tr>
+        <td>${e.name}</td><td>${e.department}</td><td>${e.jobTitle || "—"}</td>
+        <td>${attLabels[e.attendanceSystem] || e.attendanceSystem}</td><td>${e.primaryBranch || "—"}</td>
+        <td>${e.presentDays === null ? "—" : e.presentDays}</td>
+        <td>${e.totalLateMinutes}</td><td>${money(e.lateDeductionTotal)}</td>
+        <td>${e.excessAbsenceDays}${e.excessAbsenceDeduction ? ` (${money(e.excessAbsenceDeduction)})` : ""}</td>
+        <td>${e.extraWorkDays}${e.extraWorkBonus ? ` (${money(e.extraWorkBonus)})` : ""}</td>
+        <td>${money(e.shortHoursDeductionTotal)}</td><td>${money(e.overtimePayTotal)}</td>
+        <td>${money(e.payAfterAttendance)}</td>
+        <td>${money(e.advances)}</td><td>${money(e.penalties)}</td><td>${money(e.bonuses)}</td>
+        <td class="${e.netPay < 0 ? "diffneg" : "diffpos"}"><b>${money(e.netPay)}</b></td>
+        <td>${e.alert ? `<span class="badge warn">${e.alert}</span>` : ""}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="17">مفيش موظفين مسجلين</td></tr>`;
+
+    const totalNet = data.employees.reduce((s, e) => s + e.netPay, 0);
+    document.getElementById("sumTotals").textContent =
+      `عدد الموظفين: ${data.employees.length} — إجمالي صافي الرواتب: ${money(totalNet)}`;
+  } catch (e) { errBox.textContent = e.message; }
+}
+document.getElementById("sumRefresh").onclick = loadSummary;
+
+// ---------------- الموظفين ----------------
+async function loadEmployees() {
+  employeesCache = await api("/api/payroll/employees");
+  const attLabels = { fingerprint_auto: "بصمة تلقائي", manual: "يدوي", none: "بدون تتبع" };
+  document.getElementById("employeesBody").innerHTML = employeesCache.map(emp => `
+    <tr data-emprow="${emp.id}">
+      <td>${emp.name}</td><td>${emp.department}</td><td>${emp.job_title || "—"}</td>
+      <td>${attLabels[emp.attendance_system] || emp.attendance_system}</td>
+      <td>${emp.wage_type === "hourly" ? `${money(emp.hourly_rate)}/ساعة` : money(emp.base_salary)}</td>
+      <td>${emp.fingerprint_codes.map(c => `${c.branchName}:${c.deviceCode}`).join("، ") || "—"}
+        ${emp.attendance_system === "fingerprint_auto" ? `<button class="linkbtn" data-editcodes="${emp.id}">تعديل</button>` : ""}
+      </td>
+      <td><button class="linkbtn ${emp.is_active ? "danger" : ""}" data-toggleemp="${emp.id}" data-active="${emp.is_active}">${emp.is_active ? "تعطيل" : "تفعيل"}</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="7">لسه مفيش موظفين</td></tr>`;
+
+  document.querySelectorAll("[data-toggleemp]").forEach(btn => {
+    btn.onclick = async () => {
+      const isActive = btn.dataset.active === "true";
+      await api(`/api/payroll/employees/${btn.dataset.toggleemp}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
+      loadEmployees();
+    };
+  });
+  document.querySelectorAll("[data-editcodes]").forEach(btn => {
+    btn.onclick = async () => {
+      const emp = employeesCache.find(x => String(x.id) === btn.dataset.editcodes);
+      const current = emp.fingerprint_codes.map(c => `${c.branchName}:${c.deviceCode}`).join("، ") || "(مفيش)";
+      const branchList = branchesCache.map(b => b.name).join("، ");
+      const answer = prompt(
+        `أكواد البصمة الحالية: ${current}\nاكتب الأكواد الجديدة بالصيغة اسم الفرع:الكود، مفصولة بفاصلة (الفروع المتاحة: ${branchList})`,
+        emp.fingerprint_codes.map(c => `${c.branchName}:${c.deviceCode}`).join(", ")
+      );
+      if (answer === null) return;
+      const codes = answer.split(",").map(s => s.trim()).filter(Boolean).map(pair => {
+        const [branchName, deviceCode] = pair.split(":").map(x => x && x.trim());
+        const branch = branchesCache.find(b => b.name === branchName);
+        return branch && deviceCode ? { branchId: branch.id, deviceCode } : null;
+      }).filter(Boolean);
+      try {
+        await api(`/api/payroll/employees/${emp.id}/fingerprint-codes`, { method: "PUT", body: JSON.stringify({ codes }) });
+        await loadEmployees();
+      } catch (e) { alert(e.message); }
+    };
+  });
+  populateAdjEmployeeSelect();
+}
+
+document.getElementById("empSubmit").onclick = async () => {
+  const errBox = document.getElementById("empErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/payroll/employees", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("empName").value.trim(),
+        department: document.getElementById("empDepartment").value,
+        jobTitle: document.getElementById("empJobTitle").value.trim() || null,
+        attendanceSystem: document.getElementById("empAttendanceSystem").value,
+        wageType: document.getElementById("empWageType").value,
+        baseSalary: Number(document.getElementById("empBaseSalary").value || 0),
+        hourlyRate: Number(document.getElementById("empHourlyRate").value || 0),
+        workingDaysPerMonth: Number(document.getElementById("empWorkingDays").value || 26),
+        shift: document.getElementById("empShift").value || null,
+        hireDate: document.getElementById("empHireDate").value || null,
+        phone: document.getElementById("empPhone").value.trim() || null,
+        countDay31: document.getElementById("empCountDay31").checked,
+        notes: document.getElementById("empNotes").value.trim() || null,
+      }),
+    });
+    ["empName", "empJobTitle", "empBaseSalary", "empHourlyRate", "empPhone", "empNotes"].forEach(id => document.getElementById(id).value = "");
+    document.getElementById("empHireDate").value = "";
+    document.getElementById("empCountDay31").checked = false;
+    document.getElementById("empWorkingDays").value = 26;
+    await loadEmployees();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- البصمة ----------------
+function parsePasteRows(text) {
+  return text.split("\n").map(line => line.trim()).filter(Boolean).map(line => {
+    const parts = line.split(/\t|,/).map(p => p.trim());
+    const [deviceCode, date, clockIn, clockOut] = parts;
+    return { deviceCode, date, clockIn: clockIn || null, clockOut: clockOut || null };
+  }).filter(r => r.deviceCode && r.date);
+}
+
+document.getElementById("attImportBtn").onclick = async () => {
+  const errBox = document.getElementById("attErr");
+  const okBox = document.getElementById("attOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const rows = parsePasteRows(document.getElementById("attPasteBox").value);
+  if (rows.length === 0) { errBox.textContent = "الصق صفوف بصمة الأول"; return; }
+  try {
+    const result = await api("/api/payroll/attendance-punches/import", {
+      method: "POST",
+      body: JSON.stringify({ branchId: document.getElementById("attBranchSelect").value, rows }),
+    });
+    okBox.textContent = `تم استيراد ${result.imported} صف`;
+    document.getElementById("attPasteBox").value = "";
+    await loadAttendanceTable();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+document.getElementById("attLoadBtn").onclick = loadAttendanceTable;
+async function loadAttendanceTable() {
+  const branchId = document.getElementById("attBranchSelect").value;
+  const year = document.getElementById("attYear").value;
+  const month = document.getElementById("attMonth").value;
+  const rows = await api(`/api/payroll/attendance-punches?branchId=${branchId}&year=${year}&month=${month}`);
+  document.getElementById("attBody").innerHTML = rows.map(r => `
+    <tr data-punchrow="${r.id}">
+      <td>${r.employee_name || `<span style="color:var(--faint)">غير مربوط</span>`}</td>
+      <td>${r.device_code}</td><td>${r.punch_date.slice(0, 10)}</td>
+      <td><input class="smallinput punch-in" type="time" value="${r.clock_in ? r.clock_in.slice(0, 5) : ""}" /></td>
+      <td><input class="smallinput punch-out" type="time" value="${r.clock_out ? r.clock_out.slice(0, 5) : ""}" /></td>
+      <td><input type="checkbox" class="punch-exempt" ${r.exempted ? "checked" : ""} /></td>
+      <td><button class="linkbtn" data-savepunch="${r.id}">حفظ</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="7">مفيش بصمات مستوردة للفرع/الشهر ده</td></tr>`;
+
+  document.querySelectorAll("[data-savepunch]").forEach(btn => {
+    btn.onclick = async () => {
+      const row = btn.closest("tr");
+      try {
+        await api(`/api/payroll/attendance-punches/${btn.dataset.savepunch}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            clockIn: row.querySelector(".punch-in").value || null,
+            clockOut: row.querySelector(".punch-out").value || null,
+            exempted: row.querySelector(".punch-exempt").checked,
+          }),
+        });
+        btn.textContent = "✓ اتحفظ";
+        setTimeout(() => { btn.textContent = "حفظ"; }, 1500);
+      } catch (e) { alert(e.message); }
+    };
+  });
+}
+
+// ---------------- حضور المطبخ المركزي ----------------
+document.getElementById("mkLoadBtn").onclick = loadManualAttendance;
+async function loadManualAttendance() {
+  const errBox = document.getElementById("mkErr");
+  errBox.textContent = "";
+  const year = document.getElementById("mkYear").value;
+  const month = document.getElementById("mkMonth").value;
+  const manualEmployees = employeesCache.filter(e => e.attendance_system === "manual");
+  let existing = [];
+  try { existing = await api(`/api/payroll/central-kitchen-attendance?year=${year}&month=${month}`); }
+  catch (e) { errBox.textContent = e.message; }
+
+  document.getElementById("mkBody").innerHTML = manualEmployees.map(emp => {
+    const cur = existing.find(x => x.employee_id === emp.id) || {};
+    return `
+      <tr data-mkrow="${emp.id}">
+        <td>${emp.name}</td>
+        <td><input class="smallinput mk-present" type="number" value="${cur.present_days || 0}" /></td>
+        <td><input class="smallinput mk-absent" type="number" value="${cur.absent_days || 0}" /></td>
+        <td><input class="smallinput mk-late" type="number" value="${cur.total_late_minutes || 0}" /></td>
+        <td><input class="smallinput mk-ded" type="number" value="${cur.manual_deduction || 0}" /></td>
+        <td><input class="smallinput mk-notes" style="width:140px" value="${cur.notes || ""}" /></td>
+        <td><button class="linkbtn" data-savemk="${emp.id}">حفظ</button></td>
+      </tr>
+    `;
+  }).join("") || `<tr><td colspan="7">مفيش موظفين بنظام حضور "يدوي" مسجلين</td></tr>`;
+
+  document.querySelectorAll("[data-savemk]").forEach(btn => {
+    btn.onclick = async () => {
+      const row = btn.closest("tr");
+      try {
+        await api("/api/payroll/central-kitchen-attendance", {
+          method: "POST",
+          body: JSON.stringify({
+            employeeId: btn.dataset.savemk, year, month,
+            presentDays: Number(row.querySelector(".mk-present").value || 0),
+            absentDays: Number(row.querySelector(".mk-absent").value || 0),
+            totalLateMinutes: Number(row.querySelector(".mk-late").value || 0),
+            manualDeduction: Number(row.querySelector(".mk-ded").value || 0),
+            notes: row.querySelector(".mk-notes").value.trim() || null,
+          }),
+        });
+        btn.textContent = "✓ اتحفظ";
+        setTimeout(() => { btn.textContent = "حفظ"; }, 1500);
+      } catch (e) { alert(e.message); }
+    };
+  });
+}
+
+// ---------------- السلف والجزاءات والمكافآت ----------------
+function populateAdjEmployeeSelect() {
+  document.getElementById("adjEmployee").innerHTML = employeesCache
+    .map(e => `<option value="${e.id}">${e.name} (${e.department})</option>`).join("");
+}
+
+document.getElementById("adjSubmit").onclick = async () => {
+  const errBox = document.getElementById("adjErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/payroll/adjustments", {
+      method: "POST",
+      body: JSON.stringify({
+        employeeId: document.getElementById("adjEmployee").value,
+        entryDate: document.getElementById("adjDate").value,
+        adjustmentType: document.getElementById("adjType").value,
+        amount: Number(document.getElementById("adjAmount").value),
+        notes: document.getElementById("adjNotes").value.trim() || null,
+      }),
+    });
+    document.getElementById("adjAmount").value = "";
+    document.getElementById("adjNotes").value = "";
+    await loadAdjustments();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+document.getElementById("adjLoadBtn").onclick = loadAdjustments;
+async function loadAdjustments() {
+  const typeLabels = { advance: "سلفة", penalty: "جزاء", bonus: "مكافأة" };
+  const year = document.getElementById("adjFilterYear").value;
+  const month = document.getElementById("adjFilterMonth").value;
+  const rows = await api(`/api/payroll/adjustments?year=${year}&month=${month}`);
+  document.getElementById("adjBody").innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.entry_date.slice(0, 10)}</td><td>${r.employee_name}</td><td>${typeLabels[r.adjustment_type]}</td>
+      <td>${money(r.amount)}</td><td>${r.notes || "—"}</td>
+      <td><button class="linkbtn danger" data-deladj="${r.id}">حذف</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">مفيش سلف/جزاءات/مكافآت مسجلة في الشهر ده</td></tr>`;
+
+  document.querySelectorAll("[data-deladj]").forEach(btn => {
+    btn.onclick = async () => {
+      await api(`/api/payroll/adjustments/${btn.dataset.deladj}`, { method: "DELETE" });
+      loadAdjustments();
+    };
+  });
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

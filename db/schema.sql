@@ -329,6 +329,117 @@ CREATE TABLE inventory_snapshots (
   UNIQUE(branch_id, period_year, period_month)
 );
 
+-- ---------------- نظام الرواتب (يحسب أوتوماتيك من شيت البصمة) ----------------
+-- ملحوظة: ده منفصل عن users/shifts/attendance_records اللي فوق (خاصة بحسابات الدخول والشيفتات
+-- المجدولة للموظفين اللي بيستخدموا شاشات النظام). "employees" هنا هي قاعدة بيانات الرواتب الكاملة
+-- (كل الموظفين الفعليين، أغلبهم من غير حساب دخول - شيفات وسائقين وعمال مطبخ...) واللي منها بيتحسب
+-- المرتب الفعلي من بيانات البصمة.
+
+CREATE TABLE payroll_settings (
+  id                               INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1), -- صف واحد بس
+  default_working_days            INTEGER NOT NULL DEFAULT 26,
+  paid_leave_days_per_month       INTEGER NOT NULL DEFAULT 4,
+  payroll_to_sales_warn_ratio     NUMERIC NOT NULL DEFAULT 0.3,
+  standard_shift_hours            NUMERIC NOT NULL DEFAULT 10,
+  overtime_multiplier             NUMERIC NOT NULL DEFAULT 1.5,
+  min_overtime_hours              NUMERIC NOT NULL DEFAULT 1,
+  allowed_late_exemptions         INTEGER NOT NULL DEFAULT 3,
+  missed_punch_deduction_fraction NUMERIC NOT NULL DEFAULT 0.5,
+  morning_shift_start              TIME NOT NULL DEFAULT '10:00',
+  evening_shift_start              TIME NOT NULL DEFAULT '20:00'
+);
+INSERT INTO payroll_settings (id) VALUES (1);
+
+-- سلم خصم التأخير: من دقيقة (شامل) لغاية دقيقة (غير شامل) -> نسبة الخصم من يوم العمل
+CREATE TABLE late_deduction_tiers (
+  id                 SERIAL PRIMARY KEY,
+  from_minute        INTEGER NOT NULL,
+  to_minute          INTEGER NOT NULL,
+  deduction_fraction NUMERIC NOT NULL
+);
+INSERT INTO late_deduction_tiers (from_minute, to_minute, deduction_fraction) VALUES
+  (0, 16, 0), (16, 31, 0.25), (31, 61, 0.5), (61, 999999, 1);
+
+CREATE TABLE employees (
+  id                     SERIAL PRIMARY KEY,
+  name                   TEXT NOT NULL,
+  department             TEXT NOT NULL, -- بيتزا/فطير/تشغيل الفرع/الإدارة/حسابات/كول سنتر/المطبخ المركزي
+  job_title              TEXT,
+  attendance_system      TEXT NOT NULL CHECK (attendance_system IN ('fingerprint_auto', 'manual', 'none')),
+  hire_date              DATE,
+  base_salary            NUMERIC NOT NULL DEFAULT 0,
+  working_days_per_month INTEGER NOT NULL DEFAULT 26,
+  shift                  TEXT CHECK (shift IN ('morning', 'evening', 'flexible')), -- بيني = flexible
+  wage_type              TEXT NOT NULL DEFAULT 'fixed_monthly' CHECK (wage_type IN ('fixed_monthly', 'hourly')),
+  hourly_rate            NUMERIC NOT NULL DEFAULT 0,
+  phone                  TEXT,
+  notes                  TEXT,
+  is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+  count_day_31           BOOLEAN NOT NULL DEFAULT FALSE,
+  restricted_branch_id   INTEGER REFERENCES branches(id), -- "احسب الراتب من فرع واحد بس" (اختياري)
+  created_at             TIMESTAMPTZ DEFAULT now()
+);
+
+-- كود بصمة الموظف عند كل فرع (موظف ممكن يكون ليه كود في أكتر من فرع لو بيتنقل زي الطيار)
+CREATE TABLE employee_fingerprint_codes (
+  id          SERIAL PRIMARY KEY,
+  employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+  branch_id   INTEGER REFERENCES branches(id),
+  device_code TEXT NOT NULL,
+  UNIQUE(branch_id, device_code),
+  UNIQUE(employee_id, branch_id)
+);
+
+-- بصمات الدخول/الخروج الخام المستوردة من تصدير جهاز البصمة (يوم بدون سطر هنا = إجازة تلقائيًا)
+CREATE TABLE attendance_punches (
+  id          SERIAL PRIMARY KEY,
+  branch_id   INTEGER REFERENCES branches(id),
+  device_code TEXT NOT NULL,
+  punch_date  DATE NOT NULL,
+  clock_in    TIME,
+  clock_out   TIME,
+  exempted    BOOLEAN NOT NULL DEFAULT FALSE, -- "إذن تأخير؟" - يشيل خصم التأخير ليوم بعينه يدويًا
+  imported_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(branch_id, device_code, punch_date)
+);
+
+-- حضور المطبخ المركزي (بدون جهاز بصمة) - إدخال شهري يدوي لكل موظف
+CREATE TABLE central_kitchen_manual_attendance (
+  id                  SERIAL PRIMARY KEY,
+  employee_id         INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+  year                INTEGER NOT NULL,
+  month               INTEGER NOT NULL,
+  present_days        NUMERIC NOT NULL DEFAULT 0,
+  absent_days         NUMERIC NOT NULL DEFAULT 0,
+  total_late_minutes  NUMERIC NOT NULL DEFAULT 0,
+  manual_deduction    NUMERIC NOT NULL DEFAULT 0,
+  notes               TEXT,
+  UNIQUE(employee_id, year, month)
+);
+
+-- السلف والجزاءات والمكافآت
+CREATE TABLE payroll_adjustments (
+  id              SERIAL PRIMARY KEY,
+  employee_id     INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+  entry_date      DATE NOT NULL,
+  adjustment_type TEXT NOT NULL CHECK (adjustment_type IN ('advance', 'penalty', 'bonus')), -- سلفة/جزاء/مكافأة
+  amount          NUMERIC NOT NULL,
+  notes           TEXT,
+  created_by      INTEGER REFERENCES users(id),
+  created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+-- مبيعات كل قسم في كل فرع شهريًا (لمقارنة تكلفة الرواتب بالمبيعات في لوحة التحكم)
+CREATE TABLE department_sales (
+  id           SERIAL PRIMARY KEY,
+  branch_id    INTEGER REFERENCES branches(id),
+  department   TEXT NOT NULL,
+  year         INTEGER NOT NULL,
+  month        INTEGER NOT NULL,
+  sales_amount NUMERIC NOT NULL DEFAULT 0,
+  UNIQUE(branch_id, department, year, month)
+);
+
 -- ============================================================
 -- Views مفيدة للداشبورد (بديل شيت "لوحة التحكم")
 -- ============================================================
