@@ -213,10 +213,17 @@
       <tbody id="incExpenseBody"></tbody>
     </table>
 
-    <table>
+    <table style="margin-bottom:20px">
       <tbody>
         <tr><td>إجمالي المصروفات التشغيلية</td><td id="incTotalOpex" style="text-align:left"></td></tr>
-        <tr><td><b>صافي الربح (قبل الرواتب)</b></td><td id="incNetProfit" style="text-align:left"><b></b></td></tr>
+        <tr><td>صافي الربح (قبل الرواتب)</td><td id="incNetProfit" style="text-align:left"></td></tr>
+      </tbody>
+    </table>
+
+    <table>
+      <tbody>
+        <tr><td>تكلفة الرواتب</td><td id="incPayrollCost" style="text-align:left"></td></tr>
+        <tr><td><b>صافي الربح النهائي</b></td><td id="incNetProfitFinal" style="text-align:left"><b></b></td></tr>
       </tbody>
     </table>
     <div style="font-size:11px;color:var(--faint);margin-top:8px" id="incNote"></div>
@@ -224,9 +231,10 @@
     <div id="incBranchCompareWrap" style="display:none">
       <h1>مقارنة أداء الفروع</h1>
       <table>
-        <thead><tr><th>الفرع</th><th>عدد الطلبات</th><th>الإيرادات</th><th>COGS</th><th>إجمالي الربح</th><th>% الهامش</th><th>مصروفات</th><th>صافي الربح</th></tr></thead>
+        <thead><tr><th>الفرع</th><th>عدد الطلبات</th><th>الإيرادات</th><th>COGS</th><th>إجمالي الربح</th><th>% الهامش</th><th>مصروفات</th><th>رواتب</th><th>صافي الربح النهائي</th></tr></thead>
         <tbody id="incBranchCompareBody"></tbody>
       </table>
+      <div style="font-size:11px;color:var(--faint);margin-top:8px" id="incOverheadNote"></div>
     </div>
   </div>
 </div>
@@ -505,7 +513,9 @@ async function loadIncomeStatement() {
       <tr><td>${l.category}</td><td>${money(l.amount)}</td></tr>
     `).join("") || `<tr><td colspan="2">مفيش مصروفات مسجلة</td></tr>`;
     document.getElementById("incTotalOpex").textContent = money(data.totalOpex);
-    document.getElementById("incNetProfit").innerHTML = `<b class="${data.netProfitBeforePayroll < 0 ? "diffneg" : "diffpos"}">${money(data.netProfitBeforePayroll)}</b>`;
+    document.getElementById("incNetProfit").textContent = money(data.netProfitBeforePayroll);
+    document.getElementById("incPayrollCost").textContent = money(data.payrollCost);
+    document.getElementById("incNetProfitFinal").innerHTML = `<b class="${data.netProfitAfterPayroll < 0 ? "diffneg" : "diffpos"}">${money(data.netProfitAfterPayroll)}</b>`;
     document.getElementById("incNote").textContent = data.ordersMissingCostData > 0
       ? `⚠ ${data.ordersMissingCostData} طلب فيه أصناف بدون تكلفة ريسبي كاملة - تكلفة البضاعة المباعة أقل من الحقيقي. ${data.note}`
       : data.note;
@@ -518,9 +528,12 @@ async function loadIncomeStatement() {
         <tr>
           <td>${r.branchName}</td><td>${r.ordersCount}</td><td>${money(r.revenue)}</td><td>${money(r.cogs)}</td>
           <td>${money(r.grossProfit)}</td><td>${pct(r.grossMarginPercent)}</td><td>${money(r.opex)}</td>
-          <td class="${r.netProfitBeforePayroll < 0 ? "diffneg" : "diffpos"}">${money(r.netProfitBeforePayroll)}</td>
+          <td>${money(r.payrollCost)}</td>
+          <td class="${r.netProfitAfterPayroll < 0 ? "diffneg" : "diffpos"}">${money(r.netProfitAfterPayroll)}</td>
         </tr>
       `).join("");
+      document.getElementById("incOverheadNote").textContent =
+        `تكلفة رواتب الإدارة والمطبخ المركزي (${money(cmp.payrollOverhead)}) متضمّنة في الإجمالي المجمّع بس، مش متحمّلة على فرع بيع بعينه.`;
     }
   } catch (e) { errBox.textContent = e.message; }
 }

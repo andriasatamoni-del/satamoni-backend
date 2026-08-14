@@ -2,8 +2,67 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const {
+  computeFingerprintPayroll,
+  computeManualPayroll,
+  computeNoTrackingPayroll,
+} = require("../services/payroll-engine");
 
 const canSeeReports = requireRole("admin", "accountant", "branch_manager");
+
+function toCents(n) {
+  return Math.round(n * 100);
+}
+
+// إجمالي تكلفة الرواتب (الصافي المستحق للصرف بعد السلف/الجزاءات/المكافآت) مقسّمة على الفروع.
+// موظفي البصمة بيتحسبوا على فرعهم الأساسي الفعلي؛ موظفي المطبخ المركزي والإدارة (بدون فرع بيع محدد)
+// بيتحسبوا كـ "تكاليف عامة" منفصلة عن أي فرع بيع بعينه - عشان قائمة الدخل متبقاش مضلِّلة بتحميل
+// تكلفة موظف إداري على فرع معين وهو أصلًا بيخدم كل الفروع.
+async function computePayrollCostByBranch(year, month) {
+  const [fingerprintRows, manualRows, noTrackingRows, adjustments] = await Promise.all([
+    computeFingerprintPayroll(pool, year, month),
+    computeManualPayroll(pool, year, month),
+    computeNoTrackingPayroll(pool),
+    pool.query(
+      `SELECT employee_id,
+              SUM(amount) FILTER (WHERE adjustment_type = 'advance') AS advances,
+              SUM(amount) FILTER (WHERE adjustment_type = 'penalty') AS penalties,
+              SUM(amount) FILTER (WHERE adjustment_type = 'bonus') AS bonuses
+       FROM payroll_adjustments
+       WHERE EXTRACT(YEAR FROM entry_date) = $1 AND EXTRACT(MONTH FROM entry_date) = $2
+       GROUP BY employee_id`,
+      [year, month]
+    ),
+  ]);
+
+  const adjByEmployee = {};
+  adjustments.rows.forEach((r) => {
+    adjByEmployee[r.employee_id] = {
+      advances: Number(r.advances || 0),
+      penalties: Number(r.penalties || 0),
+      bonuses: Number(r.bonuses || 0),
+    };
+  });
+
+  const byBranchCents = {};
+  let overheadCents = 0;
+  let totalCents = 0;
+
+  [...fingerprintRows, ...manualRows, ...noTrackingRows].forEach((r) => {
+    const adj = adjByEmployee[r.employeeId] || { advances: 0, penalties: 0, bonuses: 0 };
+    const netPayCents = toCents(r.payAfterAttendance) - toCents(adj.advances) - toCents(adj.penalties) + toCents(adj.bonuses);
+    totalCents += netPayCents;
+    if (r.attendanceSystem === "fingerprint_auto" && r.primaryBranchId) {
+      byBranchCents[r.primaryBranchId] = (byBranchCents[r.primaryBranchId] || 0) + netPayCents;
+    } else {
+      overheadCents += netPayCents;
+    }
+  });
+
+  const byBranch = {};
+  Object.entries(byBranchCents).forEach(([branchId, cents]) => { byBranch[branchId] = cents / 100; });
+  return { byBranch, overhead: overheadCents / 100, total: totalCents / 100 };
+}
 
 // GET /api/reports/daily?year=2026&month=7 - بديل شيت "لوحة التحكم"
 router.get("/daily", requireAuth, canSeeReports, async (req, res) => {
@@ -172,6 +231,11 @@ router.get("/income-statement", requireAuth, canSeeReports, async (req, res) => 
     const totalOpex = expenseLines.reduce((s, r) => s + r.amount, 0);
     const netProfitBeforePayroll = grossProfit - totalOpex;
 
+    // تكلفة الرواتب هنا إجمالي بس (صافي مستحق الصرف) - مش تفصيل رواتب الموظفين، فمأمون إن مدير الفرع يشوفه لفرعه
+    const payroll = await computePayrollCostByBranch(year, month);
+    const payrollCost = branchId ? (payroll.byBranch[branchId] || 0) : payroll.total;
+    const netProfitAfterPayroll = netProfitBeforePayroll - payrollCost;
+
     res.json({
       year,
       month,
@@ -184,7 +248,11 @@ router.get("/income-statement", requireAuth, canSeeReports, async (req, res) => 
       expenseLines,
       totalOpex,
       netProfitBeforePayroll,
-      note: "الرقم النهائي قبل خصم تكلفة الرواتب - نظام الرواتب لسه هيتضاف في مرحلة تانية",
+      payrollCost,
+      netProfitAfterPayroll,
+      note: branchId
+        ? "تكلفة الرواتب هنا لفريق الفرع ده بس (موظفي البصمة اللي فرعهم الأساسي ده) - تكاليف الإدارة والمطبخ المركزي مش متحمّلة على فرع بعينه"
+        : "تكلفة الرواتب هنا شاملة كل الموظفين (فروع + مطبخ مركزي + إدارة)",
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -213,15 +281,21 @@ router.get(
       const opexByBranch = {};
       expensesResult.rows.forEach((r) => { opexByBranch[r.branch_id] = Number(r.total); });
 
+      const payroll = await computePayrollCostByBranch(year, month);
+
       const rows = byBranch.map((r) => {
         const opex = opexByBranch[r.branchId] || 0;
         const grossProfit = r.revenue - r.cogs;
+        const payrollCost = r.branchId ? (payroll.byBranch[r.branchId] || 0) : 0;
+        const netProfitBeforePayroll = grossProfit - opex;
         return {
           ...r,
           grossProfit,
           grossMarginPercent: r.revenue > 0 ? grossProfit / r.revenue : null,
           opex,
-          netProfitBeforePayroll: grossProfit - opex,
+          netProfitBeforePayroll,
+          payrollCost,
+          netProfitAfterPayroll: netProfitBeforePayroll - payrollCost,
         };
       });
 
@@ -235,16 +309,20 @@ router.get(
         { revenue: 0, cogs: 0, opex: 0, ordersCount: 0 }
       );
       const consolidatedGrossProfit = consolidated.revenue - consolidated.cogs;
+      const consolidatedNetBeforePayroll = consolidatedGrossProfit - consolidated.opex;
 
       res.json({
         year,
         month,
         branches: rows,
+        payrollOverhead: payroll.overhead, // تكلفة رواتب الإدارة والمطبخ المركزي - مش متحمّلة على فرع بعينه
         consolidated: {
           ...consolidated,
           grossProfit: consolidatedGrossProfit,
           grossMarginPercent: consolidated.revenue > 0 ? consolidatedGrossProfit / consolidated.revenue : null,
-          netProfitBeforePayroll: consolidatedGrossProfit - consolidated.opex,
+          netProfitBeforePayroll: consolidatedNetBeforePayroll,
+          payrollCost: payroll.total,
+          netProfitAfterPayroll: consolidatedNetBeforePayroll - payroll.total,
         },
       });
     } catch (err) {

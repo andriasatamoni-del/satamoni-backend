@@ -145,7 +145,7 @@ async function computeFingerprintPayroll(pool, year, month) {
                  - ROUND(we.excess_absence_days * we.day_rate, 2) + ROUND(we.extra_work_days * we.day_rate, 2)
                  - we.short_hours_deduction_total + we.overtime_pay_total
        END AS pay_after_attendance,
-       b.name AS branch_name
+       b.id AS branch_id, b.name AS branch_name
      FROM with_excess we
      LEFT JOIN branch_mode bm ON bm.employee_id = we.employee_id
      LEFT JOIN branches b ON b.id = bm.branch_id
@@ -177,6 +177,7 @@ async function computeFingerprintPayroll(pool, year, month) {
     totalWorkHours: r.total_work_hours !== null ? Number(r.total_work_hours) : null,
     payAfterAttendance: Number(r.pay_after_attendance),
     primaryBranch: r.branch_name || null,
+    primaryBranchId: r.branch_id || null,
   }));
 }
 
@@ -224,6 +225,7 @@ async function computeManualPayroll(pool, year, month) {
     totalWorkHours: null,
     payAfterAttendance: Number(r.pay_after_attendance),
     primaryBranch: null,
+    primaryBranchId: null,
   }));
 }
 
@@ -256,6 +258,7 @@ async function computeNoTrackingPayroll(pool) {
     totalWorkHours: null,
     payAfterAttendance: Number(r.base_salary),
     primaryBranch: null,
+    primaryBranchId: null,
   }));
 }
 
