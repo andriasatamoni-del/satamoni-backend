@@ -182,6 +182,44 @@ router.post("/reconcile", requireAuth, stockManagers, async (req, res) => {
   }
 });
 
+// POST /api/inventory/waste - تسجيل هالك (تلف/انتهاء صلاحية/كسر) - بيخصم من المخزون فورًا زي البيع
+// بالظبط، بس بحركة مخزون منفصلة (movement_type='waste') عشان تقارير الهالك تفرّقه عن خصم المبيعات
+// {branchId, inventoryItemId, quantity, reason, businessDate?}
+router.post("/waste", requireAuth, stockManagers, async (req, res) => {
+  const { branchId, inventoryItemId, quantity, reason, businessDate } = req.body;
+  if (!branchId || !inventoryItemId || !quantity || quantity <= 0) {
+    return res.status(400).json({ error: "بيانات ناقصة أو الكمية لازم تكون أكبر من صفر" });
+  }
+  if (!assertOwnBranch(req.user, branchId)) {
+    return res.status(403).json({ error: "معندكش صلاحية تسجل هالك على فرع تاني" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
+       VALUES ($1, $2, -$3::numeric)
+       ON CONFLICT (branch_id, inventory_item_id) DO UPDATE SET quantity = branch_inventory_stock.quantity - $3::numeric`,
+      [branchId, inventoryItemId, quantity]
+    );
+    const result = await client.query(
+      `INSERT INTO inventory_movements
+        (branch_id, inventory_item_id, movement_type, quantity, business_date, notes, created_by)
+       VALUES ($1, $2, 'waste', -$3::numeric, COALESCE($4, CURRENT_DATE), $5, $6)
+       RETURNING *`,
+      [branchId, inventoryItemId, quantity, businessDate || null, reason || null, req.user.id]
+    );
+    await client.query("COMMIT");
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // GET /api/inventory/recipe/:variantId - وصفة صنف (المكونات وكمياتها)
 router.get("/recipe/:variantId", requireAuth, staffRoles, async (req, res) => {
   try {

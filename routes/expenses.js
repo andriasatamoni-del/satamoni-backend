@@ -33,15 +33,17 @@ router.post("/categories", requireAuth, requireRole("admin"), async (req, res) =
   }
 });
 
-// PATCH /api/expenses/categories/:id - تعطيل/تفعيل أو تعديل اسم بند (أدمن بس)
+// PATCH /api/expenses/categories/:id - تعطيل/تفعيل، تعديل اسم بند، أو حد التنبيه (أدمن بس)
+// alertThreshold: لو مصروف من البند ده تجاوز المبلغ ده، يتعلّم "غريب" في تقرير المصروفات - ابعت null لإلغائه
 router.patch("/categories/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { name, isActive } = req.body;
+  const { name, isActive, alertThreshold } = req.body;
   const fields = [];
   const values = [];
   let i = 1;
   if (name !== undefined) { fields.push(`name = $${i++}`); values.push(name); }
   if (isActive !== undefined) { fields.push(`is_active = $${i++}`); values.push(isActive); }
+  if (alertThreshold !== undefined) { fields.push(`alert_threshold = $${i++}`); values.push(alertThreshold); }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
 
   values.push(id);

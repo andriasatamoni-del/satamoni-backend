@@ -14,6 +14,21 @@ function toCents(n) {
   return Math.round(n * 100);
 }
 
+// كل تقارير مركز التقارير الجديدة بتقبل مدى تاريخ مرن (from/to) بدل ما تتقفل على شهر كامل بس -
+// وبتقبل كمان year/month كاختصار (بديل عن from/to) عشان تفضل متوافقة مع باقي الشاشات اللي بتبعت year/month
+function resolveDateRange(query) {
+  if (query.from && query.to) return { from: query.from, to: query.to };
+  if (query.year && query.month) {
+    const year = Number(query.year);
+    const month = Number(query.month);
+    const from = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    return { from, to };
+  }
+  return null;
+}
+
 // إجمالي تكلفة الرواتب (الصافي المستحق للصرف بعد السلف/الجزاءات/المكافآت) مقسّمة على الفروع.
 // موظفي البصمة بيتحسبوا على فرعهم الأساسي الفعلي؛ موظفي المطبخ المركزي والإدارة (بدون فرع بيع محدد)
 // بيتحسبوا كـ "تكاليف عامة" منفصلة عن أي فرع بيع بعينه - عشان قائمة الدخل متبقاش مضلِّلة بتحميل
@@ -448,6 +463,583 @@ router.get("/dashboard", requireAuth, canSeeReports, async (req, res) => {
       })),
       expenseLines: expensesResult.rows.map((r) => ({
         category: r.category, amount: Number(r.total),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/sales-detail?from=&to=&branchId= - تفصيل المبيعات: طرق الدفع، مصدر الطلب،
+// نوع الطلب، والاتجاه اليومي - في نداء واحد
+router.get("/sales-detail", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const [summary, byPaymentMethod, bySource, byOrderType, dailyTrend] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS orders_count, COALESCE(SUM(total), 0) AS revenue
+         FROM orders o
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT COALESCE(pm.name, 'بدون طريقة دفع') AS name, pm.kind, SUM(o.total) AS amount, COUNT(*) AS count
+         FROM orders o LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY pm.name, pm.kind ORDER BY amount DESC`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT o.source, SUM(o.total) AS amount, COUNT(*) AS count
+         FROM orders o
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY o.source ORDER BY amount DESC`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT o.order_type, SUM(o.total) AS amount, COUNT(*) AS count
+         FROM orders o
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY o.order_type ORDER BY amount DESC`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT o.created_at::date AS date, SUM(o.total) AS revenue, COUNT(*) AS orders_count
+         FROM orders o
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY o.created_at::date ORDER BY date`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+
+    const ordersCount = Number(summary.rows[0].orders_count);
+    const revenue = Number(summary.rows[0].revenue);
+    res.json({
+      from: range.from, to: range.to, branchId,
+      summary: { revenue, ordersCount, avgOrderValue: ordersCount > 0 ? revenue / ordersCount : 0 },
+      byPaymentMethod: byPaymentMethod.rows.map((r) => ({ name: r.name, kind: r.kind, amount: Number(r.amount), count: Number(r.count) })),
+      bySource: bySource.rows.map((r) => ({ source: r.source, amount: Number(r.amount), count: Number(r.count) })),
+      byOrderType: byOrderType.rows.map((r) => ({ orderType: r.order_type, amount: Number(r.amount), count: Number(r.count) })),
+      dailyTrend: dailyTrend.rows.map((r) => ({ date: r.date, revenue: Number(r.revenue), ordersCount: Number(r.orders_count) })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/cancelled-orders?from=&to=&branchId= - الطلبات الملغاة (قبل التنفيذ) والمسترجعة
+// (Void بعد الاكتمال) منفصلين، مع أسباب الاسترجاع
+router.get("/cancelled-orders", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const rows = await pool.query(
+      `SELECT o.id, o.branch_id, b.name AS branch_name, o.order_type, o.total, o.voided,
+              o.void_reason, o.customer_name, o.customer_phone, o.created_at, o.voided_at
+       FROM orders o LEFT JOIN branches b ON b.id = o.branch_id
+       WHERE o.status = 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR o.branch_id = $3)
+       ORDER BY o.created_at DESC`,
+      [range.from, range.to, branchId]
+    );
+    const preFulfillment = rows.rows.filter((r) => !r.voided);
+    const voided = rows.rows.filter((r) => r.voided);
+    const reasonCounts = {};
+    voided.forEach((r) => {
+      const reason = r.void_reason || "(بدون سبب)";
+      reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+    });
+
+    res.json({
+      from: range.from, to: range.to, branchId,
+      summary: {
+        totalCount: rows.rows.length,
+        totalValue: rows.rows.reduce((s, r) => s + Number(r.total), 0),
+        preFulfillmentCount: preFulfillment.length,
+        preFulfillmentValue: preFulfillment.reduce((s, r) => s + Number(r.total), 0),
+        voidedCount: voided.length,
+        voidedValue: voided.reduce((s, r) => s + Number(r.total), 0),
+        topVoidReasons: Object.entries(reasonCounts).map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
+      },
+      orders: rows.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/delays?from=&to=&branchId=&thresholdMinutes=45 - أي أوردر فضل "تحت التحضير" أكتر
+// من الحد المسموح (افتراضيًا 45 دقيقة) قبل ما يتحول لأي حالة تانية (في الطريق/مكتمل/ملغي)
+router.get("/delays", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  const thresholdMinutes = Number(req.query.thresholdMinutes) || 45;
+
+  try {
+    const result = await pool.query(
+      `WITH transitions AS (
+         SELECT DISTINCT ON (l.order_id) l.order_id, l.changed_at, l.status
+         FROM order_status_log l
+         WHERE l.status <> 'preparing'
+         ORDER BY l.order_id, l.changed_at ASC
+       )
+       SELECT o.id, o.branch_id, b.name AS branch_name, o.order_type, o.status, o.customer_name,
+              o.created_at, t.changed_at AS resolved_at, t.status AS resolved_to_status,
+              EXTRACT(EPOCH FROM (COALESCE(t.changed_at, now()) - o.created_at)) / 60 AS prep_minutes
+       FROM orders o
+       LEFT JOIN branches b ON b.id = o.branch_id
+       LEFT JOIN transitions t ON t.order_id = o.id
+       WHERE o.created_at::date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR o.branch_id = $3)
+       ORDER BY prep_minutes DESC`,
+      [range.from, range.to, branchId]
+    );
+    const rows = result.rows.map((r) => ({ ...r, prep_minutes: Number(r.prep_minutes) }));
+    const delayed = rows.filter((r) => r.prep_minutes > thresholdMinutes);
+
+    res.json({
+      from: range.from, to: range.to, branchId, thresholdMinutes,
+      summary: {
+        totalOrders: rows.length,
+        delayedCount: delayed.length,
+        delayedPercent: rows.length > 0 ? delayed.length / rows.length : 0,
+        avgPrepMinutes: rows.length > 0 ? rows.reduce((s, r) => s + r.prep_minutes, 0) / rows.length : 0,
+      },
+      delayedOrders: delayed,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/item-performance?from=&to=&branchId=&limit=15 - الأصناف الأكثر/الأقل مبيعًا،
+// والأقل ربحًا (بمساهمة الربح الفعلية، مش نسبة هامش نظرية) - في نداء واحد
+router.get("/item-performance", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  const limit = Number(req.query.limit) || 15;
+
+  try {
+    const result = await pool.query(
+      `SELECT COALESCE(mi.name || ' - ' || mv.label, c.name) AS name,
+              SUM(oi.quantity) AS quantity, SUM(oi.line_total) AS revenue,
+              SUM(COALESCE(oi.cost_at_sale, 0)) AS cost,
+              BOOL_OR(oi.cost_at_sale IS NULL OR oi.cost_at_sale_incomplete) AS cost_incomplete
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       LEFT JOIN menu_item_variants mv ON mv.id = oi.variant_id
+       LEFT JOIN menu_items mi ON mi.id = mv.item_id
+       LEFT JOIN combos c ON c.id = oi.combo_id
+       WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR o.branch_id = $3)
+       GROUP BY COALESCE(mi.name || ' - ' || mv.label, c.name)`,
+      [range.from, range.to, branchId]
+    );
+
+    const items = result.rows.map((r) => {
+      const revenue = Number(r.revenue);
+      const cost = Number(r.cost);
+      return {
+        name: r.name, quantity: Number(r.quantity), revenue, cost,
+        profit: revenue - cost, costIncomplete: r.cost_incomplete,
+      };
+    });
+
+    const sortedBy = (fn, dir) => [...items].sort((a, b) => dir * (fn(a) - fn(b))).slice(0, limit);
+
+    res.json({
+      from: range.from, to: range.to, branchId,
+      topByRevenue: sortedBy((i) => i.revenue, -1),
+      topByQuantity: sortedBy((i) => i.quantity, -1),
+      leastByQuantity: sortedBy((i) => i.quantity, 1),
+      leastProfitable: sortedBy((i) => i.profit, 1),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/catalog?from=&to=&branchId= - كل الأصناف والأحجام (حتى اللي مبيعتش خالص في
+// الفترة دي)، مع إجمالي المبيعات لكل واحد - عشان تعرف مين محتاج يتشال من المنيو
+router.get("/catalog", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query) || { from: "1900-01-01", to: "2999-12-31" };
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const result = await pool.query(
+      `SELECT mi.id AS item_id, mi.name AS item_name, mc.name AS category, mi.is_active,
+              mv.id AS variant_id, mv.label, mv.price, mv.talabat_price,
+              COALESCE(sales.quantity, 0) AS quantity_sold, COALESCE(sales.revenue, 0) AS revenue
+       FROM menu_items mi
+       JOIN menu_categories mc ON mc.id = mi.category_id
+       JOIN menu_item_variants mv ON mv.item_id = mi.id
+       LEFT JOIN (
+         SELECT oi.variant_id, SUM(oi.quantity) AS quantity, SUM(oi.line_total) AS revenue
+         FROM order_items oi JOIN orders o ON o.id = oi.order_id
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY oi.variant_id
+       ) sales ON sales.variant_id = mv.id
+       ORDER BY mc.name, mi.name, mv.id`,
+      [range.from, range.to, branchId]
+    );
+    res.json({
+      from: range.from, to: range.to, branchId,
+      items: result.rows.map((r) => ({
+        itemId: r.item_id, itemName: r.item_name, category: r.category, isActive: r.is_active,
+        variantId: r.variant_id, label: r.label, price: Number(r.price),
+        talabatPrice: r.talabat_price != null ? Number(r.talabat_price) : null,
+        quantitySold: Number(r.quantity_sold), revenue: Number(r.revenue),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/recipes - كل الريسبيهات (المكونات وكمياتها وتكلفتها لكل حجم) - بيوضح كمان أي حجم
+// مفيهوش ريسبي خالص أو فيه مكوّن من غير تكلفة وحدة، عشان مراجعة جودة البيانات
+router.get("/recipes", requireAuth, canSeeReports, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT mi.name AS item_name, mv.id AS variant_id, mv.label, mv.price,
+              COALESCE(
+                json_agg(jsonb_build_object('ingredient', ii.name, 'unit', ii.unit,
+                  'quantityPerUnit', mvi.quantity_per_unit, 'unitCost', ii.unit_cost) ORDER BY ii.name)
+                FILTER (WHERE mvi.id IS NOT NULL), '[]'
+              ) AS ingredients,
+              COUNT(mvi.id) AS ingredient_count,
+              COALESCE(SUM(mvi.quantity_per_unit * ii.unit_cost), 0) AS recipe_cost,
+              (COUNT(mvi.id) = 0) AS has_no_recipe,
+              BOOL_OR(ii.unit_cost IS NULL) AS has_missing_cost
+       FROM menu_item_variants mv
+       JOIN menu_items mi ON mi.id = mv.item_id
+       LEFT JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = mv.id
+       LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+       GROUP BY mi.name, mv.id, mv.label, mv.price
+       ORDER BY mi.name, mv.label`
+    );
+    res.json(result.rows.map((r) => ({
+      itemName: r.item_name, variantId: r.variant_id, label: r.label, price: Number(r.price),
+      ingredients: r.ingredients, ingredientCount: Number(r.ingredient_count),
+      recipeCost: Number(r.recipe_cost), hasNoRecipe: r.has_no_recipe, hasMissingCost: r.has_missing_cost,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/expenses-report?from=&to=&branchId=&groupBy=day|month - المصروفات مجمّعة حسب
+// البند والفترة، مع تنبيه على أي مصروف تجاوز حد التنبيه بتاع بنده (expense_categories.alert_threshold)
+router.get("/expenses-report", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  const groupBy = req.query.groupBy === "month" ? "month" : "day";
+  const truncExpr = groupBy === "month" ? "date_trunc('month', e.business_date)" : "e.business_date";
+
+  try {
+    const [byCategory, trend, anomalies] = await Promise.all([
+      pool.query(
+        `SELECT ec.name AS category, SUM(e.amount) AS total, COUNT(*) AS count
+         FROM expenses e JOIN expense_categories ec ON ec.id = e.category_id
+         WHERE e.business_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR e.branch_id = $3)
+         GROUP BY ec.name ORDER BY total DESC`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT ${truncExpr} AS period, SUM(e.amount) AS total
+         FROM expenses e
+         WHERE e.business_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR e.branch_id = $3)
+         GROUP BY period ORDER BY period`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT e.id, e.business_date, e.branch_id, b.name AS branch_name, ec.name AS category,
+                e.amount, ec.alert_threshold, e.notes
+         FROM expenses e
+         JOIN expense_categories ec ON ec.id = e.category_id
+         LEFT JOIN branches b ON b.id = e.branch_id
+         WHERE e.business_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR e.branch_id = $3)
+           AND ec.alert_threshold IS NOT NULL AND e.amount > ec.alert_threshold
+         ORDER BY e.amount DESC`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+
+    res.json({
+      from: range.from, to: range.to, branchId, groupBy,
+      total: byCategory.rows.reduce((s, r) => s + Number(r.total), 0),
+      byCategory: byCategory.rows.map((r) => ({ category: r.category, total: Number(r.total), count: Number(r.count) })),
+      trend: trend.rows.map((r) => ({ period: r.period, total: Number(r.total) })),
+      anomalies: anomalies.rows.map((r) => ({
+        id: r.id, businessDate: r.business_date, branchId: r.branch_id, branchName: r.branch_name,
+        category: r.category, amount: Number(r.amount), alertThreshold: Number(r.alert_threshold), notes: r.notes,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/purchases-report?from=&to=&branchId=&groupBy=day|month - المشتريات مجمّعة حسب
+// النوع والفترة، وموضّح فيها اللي من السنتر كيتشن (بالتكلفة) واللي من مورد خارجي
+router.get("/purchases-report", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  const groupBy = req.query.groupBy === "month" ? "month" : "day";
+  const truncExpr = groupBy === "month" ? "date_trunc('month', business_date)" : "business_date";
+
+  try {
+    const [byCategory, trend, byKitchen] = await Promise.all([
+      pool.query(
+        `SELECT COALESCE(category, 'غير محدد') AS category, SUM(amount) AS total, COUNT(*) AS count
+         FROM purchases
+         WHERE business_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR branch_id = $3)
+         GROUP BY category ORDER BY total DESC`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT ${truncExpr} AS period, SUM(amount) AS total
+         FROM purchases
+         WHERE business_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR branch_id = $3)
+         GROUP BY period ORDER BY period`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT from_kitchen, SUM(amount) AS total, COUNT(*) AS count
+         FROM purchases
+         WHERE business_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR branch_id = $3)
+         GROUP BY from_kitchen`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+
+    res.json({
+      from: range.from, to: range.to, branchId, groupBy,
+      total: byCategory.rows.reduce((s, r) => s + Number(r.total), 0),
+      byCategory: byCategory.rows.map((r) => ({ category: r.category, total: Number(r.total), count: Number(r.count) })),
+      trend: trend.rows.map((r) => ({ period: r.period, total: Number(r.total) })),
+      byKitchen: byKitchen.rows.map((r) => ({ fromKitchen: r.from_kitchen, total: Number(r.total), count: Number(r.count) })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/areas-performance?from=&to=&branchId= - مناطق التوصيل الأكثر مبيعًا، لكل فرع
+// على حدة وكمان مجمّعة على مستوى كل الفروع
+router.get("/areas-performance", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const [byBranchAndArea, combinedByArea] = await Promise.all([
+      pool.query(
+        `SELECT o.branch_id, b.name AS branch_name, da.id AS area_id, da.name AS area_name,
+                COUNT(*) AS orders_count, SUM(o.total) AS revenue
+         FROM orders o
+         JOIN delivery_areas da ON da.id = o.delivery_area_id
+         LEFT JOIN branches b ON b.id = o.branch_id
+         WHERE o.status <> 'cancelled' AND o.order_type = 'delivery'
+           AND o.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY o.branch_id, b.name, da.id, da.name
+         ORDER BY revenue DESC`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT da.id AS area_id, da.name AS area_name, COUNT(*) AS orders_count, SUM(o.total) AS revenue
+         FROM orders o
+         JOIN delivery_areas da ON da.id = o.delivery_area_id
+         WHERE o.status <> 'cancelled' AND o.order_type = 'delivery'
+           AND o.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY da.id, da.name
+         ORDER BY revenue DESC`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+
+    res.json({
+      from: range.from, to: range.to, branchId,
+      byBranchAndArea: byBranchAndArea.rows.map((r) => ({
+        branchId: r.branch_id, branchName: r.branch_name, areaId: r.area_id, areaName: r.area_name,
+        ordersCount: Number(r.orders_count), revenue: Number(r.revenue),
+      })),
+      combinedByArea: combinedByArea.rows.map((r) => ({
+        areaId: r.area_id, areaName: r.area_name, ordersCount: Number(r.orders_count), revenue: Number(r.revenue),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/drivers?from=&to=&branchId= - أداء كل طيار: عدد الأوردرات، الإيرادات اللي وصّلها،
+// متوسط وقت التوصيل الفعلي (من "خرج مع الطيار" لحد "اتسلم")، وعدد الإلغاءات
+router.get("/drivers", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const result = await pool.query(
+      `WITH dispatch_times AS (
+         SELECT DISTINCT ON (order_id) order_id, changed_at AS dispatched_at
+         FROM order_status_log WHERE status = 'out_for_delivery' ORDER BY order_id, changed_at ASC
+       ), complete_times AS (
+         SELECT DISTINCT ON (order_id) order_id, changed_at AS completed_at
+         FROM order_status_log WHERE status = 'completed' ORDER BY order_id, changed_at ASC
+       )
+       SELECT o.driver_name,
+              COUNT(*) FILTER (WHERE o.status <> 'cancelled') AS orders_count,
+              COALESCE(SUM(o.total) FILTER (WHERE o.status <> 'cancelled'), 0) AS revenue,
+              COUNT(*) FILTER (WHERE o.status = 'cancelled') AS cancelled_count,
+              AVG(EXTRACT(EPOCH FROM (ct.completed_at - dt.dispatched_at)) / 60)
+                FILTER (WHERE o.status <> 'cancelled') AS avg_delivery_minutes
+       FROM orders o
+       LEFT JOIN dispatch_times dt ON dt.order_id = o.id
+       LEFT JOIN complete_times ct ON ct.order_id = o.id
+       WHERE o.driver_name IS NOT NULL AND o.created_at::date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR o.branch_id = $3)
+       GROUP BY o.driver_name
+       ORDER BY orders_count DESC`,
+      [range.from, range.to, branchId]
+    );
+    res.json({
+      from: range.from, to: range.to, branchId,
+      drivers: result.rows.map((r) => ({
+        driverName: r.driver_name, ordersCount: Number(r.orders_count), revenue: Number(r.revenue),
+        cancelledCount: Number(r.cancelled_count),
+        avgDeliveryMinutes: r.avg_delivery_minutes != null ? Number(r.avg_delivery_minutes) : null,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/delivery-service?from=&to=&branchId=&thresholdMinutes=45 - مؤشرات خدمة الدليفري
+// الإجمالية: متوسط وقت التحضير، متوسط وقت التوصيل الفعلي، نسبة الالتزام بالوقت، ونسبة الإلغاء
+router.get("/delivery-service", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  const thresholdMinutes = Number(req.query.thresholdMinutes) || 45;
+
+  try {
+    const result = await pool.query(
+      `WITH dispatch_times AS (
+         SELECT DISTINCT ON (order_id) order_id, changed_at AS dispatched_at
+         FROM order_status_log WHERE status = 'out_for_delivery' ORDER BY order_id, changed_at ASC
+       ), complete_times AS (
+         SELECT DISTINCT ON (order_id) order_id, changed_at AS completed_at
+         FROM order_status_log WHERE status = 'completed' ORDER BY order_id, changed_at ASC
+       )
+       SELECT
+         COUNT(*) AS total_orders,
+         COUNT(*) FILTER (WHERE o.status = 'cancelled') AS cancelled_count,
+         AVG(EXTRACT(EPOCH FROM (dt.dispatched_at - o.created_at)) / 60) AS avg_prep_minutes,
+         AVG(EXTRACT(EPOCH FROM (ct.completed_at - dt.dispatched_at)) / 60) AS avg_delivery_minutes,
+         AVG(EXTRACT(EPOCH FROM (ct.completed_at - o.created_at)) / 60) AS avg_total_minutes,
+         COUNT(*) FILTER (WHERE dt.dispatched_at IS NOT NULL
+           AND EXTRACT(EPOCH FROM (dt.dispatched_at - o.created_at)) / 60 <= $4) AS on_time_count,
+         COUNT(*) FILTER (WHERE dt.dispatched_at IS NOT NULL) AS dispatched_count
+       FROM orders o
+       LEFT JOIN dispatch_times dt ON dt.order_id = o.id
+       LEFT JOIN complete_times ct ON ct.order_id = o.id
+       WHERE o.order_type = 'delivery' AND o.created_at::date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR o.branch_id = $3)`,
+      [range.from, range.to, branchId, thresholdMinutes]
+    );
+    const r = result.rows[0];
+    const totalOrders = Number(r.total_orders);
+    const dispatchedCount = Number(r.dispatched_count);
+    res.json({
+      from: range.from, to: range.to, branchId, thresholdMinutes,
+      totalOrders,
+      cancelledCount: Number(r.cancelled_count),
+      cancellationRate: totalOrders > 0 ? Number(r.cancelled_count) / totalOrders : 0,
+      avgPrepMinutes: r.avg_prep_minutes != null ? Number(r.avg_prep_minutes) : null,
+      avgDeliveryMinutes: r.avg_delivery_minutes != null ? Number(r.avg_delivery_minutes) : null,
+      avgTotalMinutes: r.avg_total_minutes != null ? Number(r.avg_total_minutes) : null,
+      onTimeRate: dispatchedCount > 0 ? Number(r.on_time_count) / dispatchedCount : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/waste?from=&to=&branchId= - الهالك (تلف/انتهاء صلاحية/كسر): الكمية والقيمة
+// المفقودة لكل مكوّن، من inventory_movements (movement_type='waste')
+router.get("/waste", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const [byItem, entries] = await Promise.all([
+      pool.query(
+        `SELECT ii.id AS inventory_item_id, ii.name, ii.unit,
+                SUM(-im.quantity) AS quantity_wasted,
+                SUM(-im.quantity * COALESCE(ii.unit_cost, 0)) AS value_wasted,
+                BOOL_OR(ii.unit_cost IS NULL) AS cost_incomplete
+         FROM inventory_movements im
+         JOIN inventory_items ii ON ii.id = im.inventory_item_id
+         WHERE im.movement_type = 'waste' AND im.business_date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR im.branch_id = $3)
+         GROUP BY ii.id, ii.name, ii.unit
+         ORDER BY value_wasted DESC`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT im.id, im.branch_id, b.name AS branch_name, ii.name AS item_name, ii.unit,
+                -im.quantity AS quantity, im.business_date, im.notes, u.name AS recorded_by
+         FROM inventory_movements im
+         JOIN inventory_items ii ON ii.id = im.inventory_item_id
+         LEFT JOIN branches b ON b.id = im.branch_id
+         LEFT JOIN users u ON u.id = im.created_by
+         WHERE im.movement_type = 'waste' AND im.business_date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR im.branch_id = $3)
+         ORDER BY im.business_date DESC, im.id DESC`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+
+    res.json({
+      from: range.from, to: range.to, branchId,
+      totalValueWasted: byItem.rows.reduce((s, r) => s + Number(r.value_wasted), 0),
+      byItem: byItem.rows.map((r) => ({
+        inventoryItemId: r.inventory_item_id, name: r.name, unit: r.unit,
+        quantityWasted: Number(r.quantity_wasted), valueWasted: Number(r.value_wasted), costIncomplete: r.cost_incomplete,
+      })),
+      entries: entries.rows.map((r) => ({
+        id: r.id, branchId: r.branch_id, branchName: r.branch_name, itemName: r.item_name, unit: r.unit,
+        quantity: Number(r.quantity), businessDate: r.business_date, notes: r.notes, recordedBy: r.recorded_by,
       })),
     });
   } catch (err) {

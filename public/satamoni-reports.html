@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — مركز التقارير</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+    --c1: #CBA135; --c2: #3FA34D; --c3: #4A90D9; --c4: #C22A24; --c5: #9C6ADE; --c6: #D98E2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+
+  #filterBar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
+  #filterBar label { font-size: 12px; color: var(--faint); }
+  #filterBar input, #filterBar select { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 7px 9px; font-size: 13px; }
+  #applyBtn { background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 12px; font-weight: 700; }
+
+  #tabs { display: flex; gap: 6px; margin: 0 0 16px; flex-wrap: wrap; }
+  .tabbtn { padding: 7px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 12px; white-space: nowrap; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  #kpiRow { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .kpi .label { font-size: 11px; color: var(--faint); margin-bottom: 6px; }
+  .kpi .value { font-size: 19px; font-weight: 800; font-family: 'Courier New', monospace; color: var(--ink); }
+  .kpi .value.gold { color: var(--gold-bright); }
+  .kpi .value.green { color: var(--green); }
+  .kpi .value.red { color: #F08A83; }
+  .kpi .sub { font-size: 11px; color: var(--faint); margin-top: 4px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  .box { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .box.wide { grid-column: 1 / -1; }
+  .box h3 { margin: 0 0 12px; font-size: 14px; color: var(--gold-bright); }
+  .empty { color: var(--faint); font-size: 12px; text-align: center; padding: 20px 0; }
+
+  .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar label { font-size: 12px; color: var(--faint); }
+  .toolbar input, .toolbar select { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 9px; font-size: 12px; }
+  .toolbar button { background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-weight: 700; }
+
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+  .bar-row .bl { flex: 0 0 150px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-row .bt { flex: 1; background: var(--bg-alt); border-radius: 4px; height: 18px; position: relative; overflow: hidden; }
+  .bar-row .bt .fill { height: 100%; border-radius: 4px; background: var(--gold); }
+  .bar-row .bt .fill.red { background: var(--red); }
+  .bar-row .bv { flex: 0 0 110px; text-align: left; font-family: 'Courier New', monospace; color: var(--ink); font-size: 11px; }
+
+  .trendSvg { width: 100%; height: 200px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 8px 9px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .badge.active { background: rgba(63,163,77,.15); color: var(--green); }
+  .badge.inactive { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.warn { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .badge.void { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.cancel { background: rgba(156,148,138,.15); color: var(--faint); }
+  .warnrow td { background: rgba(194,42,36,.08); }
+  .tablewrap { overflow-x: auto; }
+
+  #loadingState { padding: 40px 20px; text-align: center; color: var(--faint); }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">📈 ساتاموني — مركز التقارير</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>📈 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="filterBar">
+    <label>من</label><input id="fromDate" type="date" />
+    <label>إلى</label><input id="toDate" type="date" />
+    <label>الفرع</label><select id="branchSelect"><option value="">كل الفروع</option></select>
+    <button id="applyBtn">تطبيق</button>
+  </div>
+
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="sales">المبيعات وطرق الدفع</div>
+    <div class="tabbtn" data-tab="items">أداء الأصناف</div>
+    <div class="tabbtn" data-tab="catalog">كل الأصناف</div>
+    <div class="tabbtn" data-tab="recipes">الريسبي</div>
+    <div class="tabbtn" data-tab="cost">تحليل التكلفة</div>
+    <div class="tabbtn" data-tab="cancelled">الملغي والمسترجع</div>
+    <div class="tabbtn" data-tab="delays">تأخيرات التحضير</div>
+    <div class="tabbtn" data-tab="waste">الهالك</div>
+    <div class="tabbtn" data-tab="expenses">المصروفات</div>
+    <div class="tabbtn" data-tab="purchases">المشتريات</div>
+    <div class="tabbtn" data-tab="areas">مناطق التوصيل</div>
+    <div class="tabbtn" data-tab="drivers">الطيارين</div>
+    <div class="tabbtn" data-tab="delivery">خدمة الدليفري</div>
+  </div>
+
+  <div id="loadingState" style="display:none">...جاري التحميل</div>
+
+  <!-- المبيعات وطرق الدفع -->
+  <div class="panel active" id="panel-sales">
+    <div id="salesKpi" class="kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px"></div>
+    <div class="box wide" style="margin-bottom:14px">
+      <h3>المبيعات اليومية</h3>
+      <div id="salesTrendWrap"></div>
+    </div>
+    <div class="grid2">
+      <div class="box"><h3>حسب طريقة الدفع (كاش / فيزا / أجل...)</h3><div id="salesByPaymentWrap"></div></div>
+      <div class="box"><h3>حسب مصدر الطلب</h3><div id="salesBySourceWrap"></div></div>
+      <div class="box"><h3>حسب نوع الطلب</h3><div id="salesByOrderTypeWrap"></div></div>
+    </div>
+  </div>
+
+  <!-- أداء الأصناف -->
+  <div class="panel" id="panel-items">
+    <div class="toolbar">
+      <label>عدد الأصناف في كل قائمة</label>
+      <input id="itemsLimit" type="number" value="15" style="width:70px" />
+      <button id="itemsRefresh">تحديث</button>
+    </div>
+    <div class="grid2">
+      <div class="box"><h3>الأكثر مبيعًا (قيمة)</h3><div id="itemsTopRevenueWrap"></div></div>
+      <div class="box"><h3>الأكثر مبيعًا (كمية)</h3><div id="itemsTopQtyWrap"></div></div>
+      <div class="box"><h3>الأقل مبيعًا — محتاجة دعاية أو تتشال من المنيو</h3><div id="itemsLeastQtyWrap"></div></div>
+      <div class="box"><h3>الأقل ربحًا</h3><div id="itemsLeastProfitWrap"></div></div>
+    </div>
+  </div>
+
+  <!-- كل الأصناف -->
+  <div class="panel" id="panel-catalog">
+    <div class="toolbar">
+      <label>ترتيب</label>
+      <select id="catalogSort">
+        <option value="qtyAsc">الأقل مبيعًا أولًا</option>
+        <option value="qtyDesc">الأكثر مبيعًا أولًا</option>
+        <option value="name">أبجديًا</option>
+      </select>
+      <button id="catalogRefresh">تحديث</button>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>القسم</th><th>الصنف</th><th>الحجم</th><th>الحالة</th><th>السعر</th><th>سعر طلبات</th><th>الكمية المباعة</th><th>الإيراد</th></tr></thead>
+      <tbody id="catalogBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- الريسبي -->
+  <div class="panel" id="panel-recipes">
+    <div class="tablewrap"><table>
+      <thead><tr><th>الصنف</th><th>الحجم</th><th>السعر</th><th>عدد المكونات</th><th>تكلفة الريسبي</th><th>المكونات</th><th>ملاحظات</th></tr></thead>
+      <tbody id="recipesBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- تحليل التكلفة -->
+  <div class="panel" id="panel-cost">
+    <div class="toolbar">
+      <label>النسبة المستهدفة لتكلفة الطعام %</label>
+      <input id="costTargetPercent" type="number" step="1" value="37.5" style="width:80px" />
+      <button id="costRefresh">تحديث</button>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>القسم</th><th>الصنف</th><th>الحجم</th><th>سعر البيع</th><th>سعر طلبات</th><th>تكلفة الريسبي</th><th>% تكلفة الطعام</th><th>الربح</th><th>% الهامش</th><th>السعر العادل</th></tr></thead>
+      <tbody id="costBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- الملغي والمسترجع -->
+  <div class="panel" id="panel-cancelled">
+    <div id="cancelledKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px"></div>
+    <div class="box" style="margin-bottom:14px"><h3>أكثر أسباب الاسترجاع (Void)</h3><div id="cancelledReasonsWrap"></div></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>#</th><th>الفرع</th><th>النوع</th><th>القيمة</th><th>النوع</th><th>السبب</th><th>العميل</th><th>التاريخ</th></tr></thead>
+      <tbody id="cancelledBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- تأخيرات التحضير -->
+  <div class="panel" id="panel-delays">
+    <div class="toolbar">
+      <label>الحد المسموح (دقيقة)</label>
+      <input id="delaysThreshold" type="number" value="45" style="width:70px" />
+      <button id="delaysRefresh">تحديث</button>
+    </div>
+    <div id="delaysKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>#</th><th>الفرع</th><th>النوع</th><th>الحالة</th><th>العميل</th><th>وقت الطلب</th><th>مدة التحضير (دقيقة)</th></tr></thead>
+      <tbody id="delaysBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- الهالك -->
+  <div class="panel" id="panel-waste">
+    <div id="wasteKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px"></div>
+    <div class="box" style="margin-bottom:14px"><h3>قيمة الهالك حسب الصنف</h3><div id="wasteByItemWrap"></div></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الفرع</th><th>الصنف</th><th>الكمية</th><th>التاريخ</th><th>سجّله</th><th>ملاحظات</th></tr></thead>
+      <tbody id="wasteBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- المصروفات -->
+  <div class="panel" id="panel-expenses">
+    <div class="toolbar">
+      <label>التجميع</label>
+      <select id="expensesGroupBy"><option value="day">يومي</option><option value="month">شهري</option></select>
+      <button id="expensesRefresh">تحديث</button>
+    </div>
+    <div id="expensesKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px"></div>
+    <div class="grid2">
+      <div class="box"><h3>حسب البند</h3><div id="expensesByCategoryWrap"></div></div>
+      <div class="box"><h3>الاتجاه</h3><div id="expensesTrendWrap"></div></div>
+    </div>
+    <div class="box" style="margin-bottom:14px">
+      <h3>⚠️ مصروفات غريبة (تجاوزت حد التنبيه)</h3>
+      <div class="tablewrap"><table>
+        <thead><tr><th>التاريخ</th><th>الفرع</th><th>البند</th><th>المبلغ</th><th>الحد</th><th>ملاحظات</th></tr></thead>
+        <tbody id="expensesAnomaliesBody"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- المشتريات -->
+  <div class="panel" id="panel-purchases">
+    <div class="toolbar">
+      <label>التجميع</label>
+      <select id="purchasesGroupBy"><option value="day">يومي</option><option value="month">شهري</option></select>
+      <button id="purchasesRefresh">تحديث</button>
+    </div>
+    <div id="purchasesKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px"></div>
+    <div class="grid2">
+      <div class="box"><h3>حسب النوع</h3><div id="purchasesByCategoryWrap"></div></div>
+      <div class="box"><h3>الاتجاه</h3><div id="purchasesTrendWrap"></div></div>
+      <div class="box"><h3>سنتر كيتشن مقابل مورد خارجي</h3><div id="purchasesByKitchenWrap"></div></div>
+    </div>
+  </div>
+
+  <!-- مناطق التوصيل -->
+  <div class="panel" id="panel-areas">
+    <div class="box" style="margin-bottom:14px"><h3>المناطق الأكثر مبيعًا (كل الفروع)</h3><div id="areasCombinedWrap"></div></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الفرع</th><th>المنطقة</th><th>عدد الطلبات</th><th>الإيراد</th></tr></thead>
+      <tbody id="areasByBranchBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- الطيارين -->
+  <div class="panel" id="panel-drivers">
+    <div class="tablewrap"><table>
+      <thead><tr><th>الطيار</th><th>عدد الطلبات</th><th>الإيراد</th><th>الطلبات الملغاة</th><th>متوسط وقت التوصيل (دقيقة)</th></tr></thead>
+      <tbody id="driversBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- خدمة الدليفري -->
+  <div class="panel" id="panel-delivery">
+    <div class="toolbar">
+      <label>الحد المسموح للخروج (دقيقة)</label>
+      <input id="deliveryThreshold" type="number" value="45" style="width:70px" />
+      <button id="deliveryRefresh">تحديث</button>
+    </div>
+    <div id="deliveryKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px"></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على مركز التقارير ده.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "accountant", "branch_manager"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+// ---------------- أدوات عرض عامة ----------------
+const money = (n) => `${Number(n || 0).toLocaleString("ar-EG", { maximumFractionDigits: 0 })} ج.م`;
+const pct = (n) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;
+const num = (n) => Number(n || 0).toLocaleString("ar-EG", { maximumFractionDigits: 1 });
+const dt = (s) => s ? new Date(s).toLocaleString("ar-EG", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+
+function renderKpis(elId, tiles) {
+  document.getElementById(elId).innerHTML = tiles.map(t => `
+    <div class="kpi"><div class="label">${t.label}</div><div class="value ${t.cls || ""}">${t.value}</div></div>
+  `).join("");
+}
+
+function renderBarChart(elId, rows, labelFn, valueFn, valueLabelFn, redIf) {
+  const wrap = document.getElementById(elId);
+  if (!rows || rows.length === 0) { wrap.innerHTML = `<div class="empty">مفيش بيانات في الفترة دي</div>`; return; }
+  const max = Math.max(...rows.map(valueFn).map(v => Math.abs(v)), 1);
+  wrap.innerHTML = rows.map(r => `
+    <div class="bar-row">
+      <div class="bl">${labelFn(r)}</div>
+      <div class="bt"><div class="fill ${redIf && redIf(r) ? "red" : ""}" style="width:${Math.max((Math.abs(valueFn(r)) / max) * 100, 2)}%"></div></div>
+      <div class="bv">${valueLabelFn(r)}</div>
+    </div>
+  `).join("");
+}
+
+function renderLineChart(elId, rows, dateFn, valueFn, tooltipFn) {
+  const wrap = document.getElementById(elId);
+  if (!rows || rows.length === 0) { wrap.innerHTML = `<div class="empty">مفيش بيانات في الفترة دي</div>`; return; }
+  const w = 1000, h = 200, padX = 40, padY = 20;
+  const maxVal = Math.max(...rows.map(valueFn), 1);
+  const stepX = rows.length > 1 ? (w - padX * 2) / (rows.length - 1) : 0;
+  const points = rows.map((r, i) => {
+    const x = padX + i * stepX;
+    const y = h - padY - (valueFn(r) / maxVal) * (h - padY * 2);
+    return { x, y, r };
+  });
+  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+  const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(1)} ${h - padY} L ${points[0].x.toFixed(1)} ${h - padY} Z`;
+  const dayLabels = points.filter((_, i) => i % Math.ceil(points.length / 8 || 1) === 0);
+  wrap.innerHTML = `
+    <svg class="trendSvg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <path d="${areaPath}" fill="rgba(203,161,53,.12)" stroke="none"></path>
+      <path d="${linePath}" fill="none" stroke="var(--gold)" stroke-width="2"></path>
+      ${points.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="var(--gold-bright)"><title>${tooltipFn(p.r)}</title></circle>`).join("")}
+      ${dayLabels.map(p => `<text x="${p.x.toFixed(1)}" y="${h - 4}" font-size="10" fill="var(--faint)" text-anchor="middle">${String(dateFn(p.r)).slice(5, 10)}</text>`).join("")}
+    </svg>`;
+}
+
+// ---------------- فلاتر عامة ----------------
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function monthStartStr() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; }
+function currentFilters() {
+  return {
+    from: document.getElementById("fromDate").value,
+    to: document.getElementById("toDate").value,
+    branchId: document.getElementById("branchSelect").value,
+  };
+}
+function qsFromFilters(extra) {
+  const f = currentFilters();
+  const qs = new URLSearchParams({ from: f.from, to: f.to });
+  if (f.branchId) qs.set("branchId", f.branchId);
+  if (extra) Object.entries(extra).forEach(([k, v]) => qs.set(k, v));
+  return qs.toString();
+}
+
+const dirty = {}; // كل تاب لازم يتحمّل تاني لما الفلاتر تتغيّر
+const tabIds = ["sales", "items", "catalog", "recipes", "cost", "cancelled", "delays", "waste", "expenses", "purchases", "areas", "drivers", "delivery"];
+function markAllDirty() { tabIds.forEach(t => dirty[t] = true); }
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = async () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    await loadTab(btn.dataset.tab);
+  };
+});
+document.getElementById("applyBtn").onclick = async () => {
+  markAllDirty();
+  const active = document.querySelector(".tabbtn.active").dataset.tab;
+  await loadTab(active);
+};
+
+async function loadTab(tab) {
+  if (!dirty[tab] && dirty[tab] !== undefined) return;
+  const loading = document.getElementById("loadingState");
+  loading.style.display = "block";
+  try {
+    await loaders[tab]();
+    dirty[tab] = false;
+  } catch (e) {
+    document.getElementById(`panel-${tab}`).insertAdjacentHTML("afterbegin", `<div class="empty" style="color:#F08A83">${e.message}</div>`);
+  } finally {
+    loading.style.display = "none";
+  }
+}
+
+// ---------------- كل تاب ----------------
+const loaders = {
+  async sales() {
+    const data = await api(`/api/reports/sales-detail?${qsFromFilters()}`);
+    renderKpis("salesKpi", [
+      { label: "الإيرادات", value: money(data.summary.revenue), cls: "gold" },
+      { label: "عدد الطلبات", value: data.summary.ordersCount },
+      { label: "متوسط قيمة الطلب", value: money(data.summary.avgOrderValue) },
+    ]);
+    renderLineChart("salesTrendWrap", data.dailyTrend, r => r.date, r => r.revenue, r => `${String(r.date).slice(0,10)}: ${money(r.revenue)} (${r.ordersCount} طلب)`);
+    renderBarChart("salesByPaymentWrap", data.byPaymentMethod, r => `${r.name}${r.kind ? " (" + r.kind + ")" : ""}`, r => r.amount, r => `${money(r.amount)} · ${r.count}`);
+    const sourceLabels = { pos: "كاشير", callcenter: "كول سنتر", talabat: "طلبات" };
+    renderBarChart("salesBySourceWrap", data.bySource, r => sourceLabels[r.source] || r.source, r => r.amount, r => `${money(r.amount)} · ${r.count}`);
+    const typeLabels = { dine_in: "صالة", takeaway: "تيك أواي", delivery: "دليفري" };
+    renderBarChart("salesByOrderTypeWrap", data.byOrderType, r => typeLabels[r.orderType] || r.orderType, r => r.amount, r => `${money(r.amount)} · ${r.count}`);
+  },
+
+  async items() {
+    const limit = document.getElementById("itemsLimit").value || 15;
+    const data = await api(`/api/reports/item-performance?${qsFromFilters({ limit })}`);
+    const lbl = r => `${r.name}${r.costIncomplete ? " ⚠" : ""}`;
+    renderBarChart("itemsTopRevenueWrap", data.topByRevenue, lbl, r => r.revenue, r => `${money(r.revenue)} · ${num(r.quantity)}`);
+    renderBarChart("itemsTopQtyWrap", data.topByQuantity, lbl, r => r.quantity, r => `${num(r.quantity)} قطعة`);
+    renderBarChart("itemsLeastQtyWrap", data.leastByQuantity, lbl, r => r.quantity, r => `${num(r.quantity)} قطعة`);
+    renderBarChart("itemsLeastProfitWrap", data.leastProfitable, lbl, r => r.profit, r => money(r.profit), r => r.profit < 0);
+  },
+
+  async catalog() {
+    const data = await api(`/api/reports/catalog?${qsFromFilters()}`);
+    let items = [...data.items];
+    const sort = document.getElementById("catalogSort").value;
+    if (sort === "qtyAsc") items.sort((a, b) => a.quantitySold - b.quantitySold);
+    else if (sort === "qtyDesc") items.sort((a, b) => b.quantitySold - a.quantitySold);
+    else items.sort((a, b) => a.itemName.localeCompare(b.itemName, "ar"));
+    document.getElementById("catalogBody").innerHTML = items.map(r => `
+      <tr class="${r.quantitySold === 0 ? "warnrow" : ""}">
+        <td>${r.category}</td><td>${r.itemName}</td><td>${r.label}</td>
+        <td><span class="badge ${r.isActive ? "active" : "inactive"}">${r.isActive ? "نشط" : "معطّل"}</span></td>
+        <td>${money(r.price)}</td><td>${r.talabatPrice != null ? money(r.talabatPrice) : "—"}</td>
+        <td>${num(r.quantitySold)}</td><td>${money(r.revenue)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="8" class="empty">مفيش أصناف</td></tr>`;
+  },
+
+  async recipes() {
+    const data = await api("/api/reports/recipes");
+    document.getElementById("recipesBody").innerHTML = data.map(r => `
+      <tr class="${r.hasNoRecipe || r.hasMissingCost ? "warnrow" : ""}">
+        <td>${r.itemName}</td><td>${r.label}</td><td>${money(r.price)}</td>
+        <td>${r.ingredientCount}</td><td>${money(r.recipeCost)}</td>
+        <td>${r.ingredients.map(i => `${i.ingredient} (${num(i.quantityPerUnit)} ${i.unit})`).join("، ") || "—"}</td>
+        <td>${r.hasNoRecipe ? "⚠ من غير ريسبي" : (r.hasMissingCost ? "⚠ مكوّن من غير تكلفة" : "")}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="7" class="empty">مفيش أصناف</td></tr>`;
+  },
+
+  async cost() {
+    const target = (Number(document.getElementById("costTargetPercent").value) || 37.5) / 100;
+    const data = await api(`/api/reports/menu-cost-analysis?targetFoodCostPercent=${target}`);
+    document.getElementById("costBody").innerHTML = data.items.map(r => `
+      <tr class="${!r.hasRecipe ? "warnrow" : ""}">
+        <td>${r.category}</td><td>${r.itemName}</td><td>${r.label}</td>
+        <td>${money(r.price)}</td><td>${r.talabatPrice != null ? money(r.talabatPrice) : "—"}</td>
+        <td>${r.hasRecipe ? money(r.recipeCost) : "بدون ريسبي"}</td>
+        <td>${pct(r.foodCostPercent)}</td><td>${r.profit != null ? money(r.profit) : "—"}</td>
+        <td>${pct(r.marginPercent)}</td><td>${r.fairPrice != null ? money(r.fairPrice) : "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="10" class="empty">مفيش أصناف</td></tr>`;
+  },
+
+  async cancelled() {
+    const data = await api(`/api/reports/cancelled-orders?${qsFromFilters()}`);
+    renderKpis("cancelledKpi", [
+      { label: "إجمالي الملغي/المسترجع", value: data.summary.totalCount },
+      { label: "قيمة الإجمالي", value: money(data.summary.totalValue), cls: "red" },
+      { label: "إلغاء قبل التنفيذ", value: `${data.summary.preFulfillmentCount} (${money(data.summary.preFulfillmentValue)})` },
+      { label: "استرجاع (Void) بعد الاكتمال", value: `${data.summary.voidedCount} (${money(data.summary.voidedValue)})`, cls: "red" },
+    ]);
+    renderBarChart("cancelledReasonsWrap", data.summary.topVoidReasons, r => r.reason, r => r.count, r => `${r.count} مرة`);
+    document.getElementById("cancelledBody").innerHTML = data.orders.map(o => `
+      <tr>
+        <td>#${o.id}</td><td>${o.branch_name || "—"}</td><td>${o.order_type}</td><td>${money(o.total)}</td>
+        <td><span class="badge ${o.voided ? "void" : "cancel"}">${o.voided ? "استرجاع (Void)" : "إلغاء قبل التنفيذ"}</span></td>
+        <td>${o.void_reason || "—"}</td><td>${o.customer_name || o.customer_phone || "—"}</td><td>${dt(o.created_at)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="8" class="empty">مفيش طلبات ملغاة في الفترة دي</td></tr>`;
+  },
+
+  async delays() {
+    const thresholdMinutes = document.getElementById("delaysThreshold").value || 45;
+    const data = await api(`/api/reports/delays?${qsFromFilters({ thresholdMinutes })}`);
+    renderKpis("delaysKpi", [
+      { label: "إجمالي الطلبات", value: data.summary.totalOrders },
+      { label: `متأخرة أكتر من ${data.thresholdMinutes} دقيقة`, value: data.summary.delayedCount, cls: "red" },
+      { label: "نسبة التأخير", value: pct(data.summary.delayedPercent), cls: "red" },
+      { label: "متوسط وقت التحضير", value: `${num(data.summary.avgPrepMinutes)} دقيقة` },
+    ]);
+    const statusLabels = { preparing: "تحت التحضير", out_for_delivery: "في الطريق", completed: "مكتملة", cancelled: "ملغاة" };
+    document.getElementById("delaysBody").innerHTML = data.delayedOrders.map(o => `
+      <tr class="warnrow">
+        <td>#${o.id}</td><td>${o.branch_name || "—"}</td><td>${o.order_type}</td>
+        <td>${statusLabels[o.status] || o.status}</td><td>${o.customer_name || "—"}</td>
+        <td>${dt(o.created_at)}</td><td>${num(o.prep_minutes)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="7" class="empty">مفيش تأخيرات في الفترة دي 🎉</td></tr>`;
+  },
+
+  async waste() {
+    const data = await api(`/api/reports/waste?${qsFromFilters()}`);
+    renderKpis("wasteKpi", [
+      { label: "إجمالي قيمة الهالك", value: money(data.totalValueWasted), cls: "red" },
+    ]);
+    renderBarChart("wasteByItemWrap", data.byItem, r => `${r.name}${r.costIncomplete ? " ⚠" : ""}`, r => r.valueWasted, r => `${money(r.valueWasted)} · ${num(r.quantityWasted)} ${r.unit}`);
+    document.getElementById("wasteBody").innerHTML = data.entries.map(e => `
+      <tr>
+        <td>${e.branchName || "—"}</td><td>${e.itemName}</td><td>${num(e.quantity)} ${e.unit}</td>
+        <td>${String(e.businessDate).slice(0, 10)}</td><td>${e.recordedBy || "—"}</td><td>${e.notes || "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6" class="empty">مفيش هالك مسجّل في الفترة دي</td></tr>`;
+  },
+
+  async expenses() {
+    const groupBy = document.getElementById("expensesGroupBy").value;
+    const data = await api(`/api/reports/expenses-report?${qsFromFilters({ groupBy })}`);
+    renderKpis("expensesKpi", [
+      { label: "إجمالي المصروفات", value: money(data.total), cls: "red" },
+      { label: "عدد المصروفات الغريبة", value: data.anomalies.length, cls: data.anomalies.length > 0 ? "red" : "" },
+    ]);
+    renderBarChart("expensesByCategoryWrap", data.byCategory, r => r.category, r => r.total, r => `${money(r.total)} · ${r.count}`);
+    renderLineChart("expensesTrendWrap", data.trend, r => r.period, r => r.total, r => `${String(r.period).slice(0,10)}: ${money(r.total)}`);
+    document.getElementById("expensesAnomaliesBody").innerHTML = data.anomalies.map(a => `
+      <tr class="warnrow">
+        <td>${String(a.businessDate).slice(0,10)}</td><td>${a.branchName || "—"}</td><td>${a.category}</td>
+        <td>${money(a.amount)}</td><td>${money(a.alertThreshold)}</td><td>${a.notes || "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6" class="empty">مفيش مصروفات غريبة في الفترة دي</td></tr>`;
+  },
+
+  async purchases() {
+    const groupBy = document.getElementById("purchasesGroupBy").value;
+    const data = await api(`/api/reports/purchases-report?${qsFromFilters({ groupBy })}`);
+    renderKpis("purchasesKpi", [
+      { label: "إجمالي المشتريات", value: money(data.total) },
+    ]);
+    renderBarChart("purchasesByCategoryWrap", data.byCategory, r => r.category, r => r.total, r => `${money(r.total)} · ${r.count}`);
+    renderLineChart("purchasesTrendWrap", data.trend, r => r.period, r => r.total, r => `${String(r.period).slice(0,10)}: ${money(r.total)}`);
+    renderBarChart("purchasesByKitchenWrap", data.byKitchen, r => r.fromKitchen ? "سنتر كيتشن" : "مورد خارجي", r => r.total, r => `${money(r.total)} · ${r.count}`);
+  },
+
+  async areas() {
+    const data = await api(`/api/reports/areas-performance?${qsFromFilters()}`);
+    renderBarChart("areasCombinedWrap", data.combinedByArea, r => r.areaName, r => r.revenue, r => `${money(r.revenue)} · ${r.ordersCount} طلب`);
+    document.getElementById("areasByBranchBody").innerHTML = data.byBranchAndArea.map(r => `
+      <tr><td>${r.branchName || "—"}</td><td>${r.areaName}</td><td>${r.ordersCount}</td><td>${money(r.revenue)}</td></tr>
+    `).join("") || `<tr><td colspan="4" class="empty">مفيش طلبات دليفري في الفترة دي</td></tr>`;
+  },
+
+  async drivers() {
+    const data = await api(`/api/reports/drivers?${qsFromFilters()}`);
+    document.getElementById("driversBody").innerHTML = data.drivers.map(d => `
+      <tr>
+        <td>${d.driverName}</td><td>${d.ordersCount}</td><td>${money(d.revenue)}</td>
+        <td>${d.cancelledCount}</td><td>${d.avgDeliveryMinutes != null ? num(d.avgDeliveryMinutes) : "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="5" class="empty">مفيش طيارين سجّلوا طلبات في الفترة دي</td></tr>`;
+  },
+
+  async delivery() {
+    const thresholdMinutes = document.getElementById("deliveryThreshold").value || 45;
+    const data = await api(`/api/reports/delivery-service?${qsFromFilters({ thresholdMinutes })}`);
+    renderKpis("deliveryKpi", [
+      { label: "إجمالي طلبات الدليفري", value: data.totalOrders },
+      { label: "الملغاة", value: data.cancelledCount, cls: "red" },
+      { label: "نسبة الإلغاء", value: pct(data.cancellationRate), cls: "red" },
+      { label: "متوسط وقت التحضير", value: data.avgPrepMinutes != null ? `${num(data.avgPrepMinutes)} دقيقة` : "—" },
+      { label: "متوسط وقت التوصيل", value: data.avgDeliveryMinutes != null ? `${num(data.avgDeliveryMinutes)} دقيقة` : "—" },
+      { label: "متوسط الوقت الكلي", value: data.avgTotalMinutes != null ? `${num(data.avgTotalMinutes)} دقيقة` : "—" },
+      { label: `نسبة الالتزام بالخروج قبل ${data.thresholdMinutes} دقيقة`, value: pct(data.onTimeRate), cls: "green" },
+    ]);
+  },
+};
+
+const refreshButtonsByTab = {
+  items: "itemsRefresh", catalog: "catalogRefresh", cost: "costRefresh",
+  expenses: "expensesRefresh", purchases: "purchasesRefresh",
+  delays: "delaysRefresh", delivery: "deliveryRefresh",
+};
+Object.entries(refreshButtonsByTab).forEach(([tab, btnId]) => {
+  const el = document.getElementById(btnId);
+  if (el) el.onclick = () => { dirty[tab] = true; loadTab(tab); };
+});
+document.getElementById("catalogSort").onchange = () => { dirty.catalog = true; loadTab("catalog"); };
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  document.getElementById("fromDate").value = monthStartStr();
+  document.getElementById("toDate").value = todayStr();
+  try {
+    const branches = await api("/api/branches");
+    const sel = document.getElementById("branchSelect");
+    sel.innerHTML = `<option value="">كل الفروع</option>` + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    if (auth.user.role === "branch_manager") { sel.value = auth.user.branchId; sel.disabled = true; }
+  } catch (e) { /* الفلتر هيفضل "كل الفروع" بس */ }
+  markAllDirty();
+  await loadTab("sales");
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

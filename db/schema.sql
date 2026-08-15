@@ -209,9 +209,10 @@ CREATE TABLE daily_cash_sessions (
 -- بنود مصروفات ثابتة (تكويد) - الأدمن بس بيضيف/يعطّل بند، وأي حد بيسجل مصروف لازم يختار من الليستة
 -- دي بدل ما يكتب نص حر (عشان التقارير تتجمع صح ومحدش يكتب نفس البند بصياغات مختلفة)
 CREATE TABLE expense_categories (
-  id          SERIAL PRIMARY KEY,
-  name        TEXT NOT NULL UNIQUE,   -- رواتب / إيجار / مرافق / صيانة / أخرى ...
-  is_active   BOOLEAN DEFAULT TRUE
+  id              SERIAL PRIMARY KEY,
+  name            TEXT NOT NULL UNIQUE,   -- رواتب / إيجار / مرافق / صيانة / أخرى ...
+  is_active       BOOLEAN DEFAULT TRUE,
+  alert_threshold NUMERIC -- لو مصروف من البند ده تجاوز المبلغ ده، يتعلّم كـ"غريب" في تقرير المصروفات (اختياري)
 );
 
 INSERT INTO expense_categories (name) VALUES
@@ -349,7 +350,7 @@ CREATE TABLE inventory_movements (
   id                SERIAL PRIMARY KEY,
   branch_id         INTEGER REFERENCES branches(id),
   inventory_item_id INTEGER REFERENCES inventory_items(id),
-  movement_type     TEXT NOT NULL CHECK (movement_type IN ('purchase', 'sale_deduction', 'transfer_in', 'transfer_out', 'adjustment', 'production_in', 'production_out')),
+  movement_type     TEXT NOT NULL CHECK (movement_type IN ('purchase', 'sale_deduction', 'transfer_in', 'transfer_out', 'adjustment', 'production_in', 'production_out', 'waste')),
   quantity          NUMERIC NOT NULL,        -- موجب = زيادة، سالب = نقصان
   order_id          INTEGER REFERENCES orders(id),
   business_date     DATE NOT NULL DEFAULT CURRENT_DATE,
