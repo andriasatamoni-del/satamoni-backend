@@ -8,9 +8,25 @@ const canEdit = requireRole("admin", "callcenter", "branch_manager");
 
 // GET /api/customers?q=  - بحث بالاسم أو رقم التليفون (لشاشة الكول سنتر)
 // GET /api/customers?phone=  - بروفايل عميل واحد كامل (إحصائياته + آخر طلباته) - بيدوّر في phone و phone2 معًا
+// GET /api/customers  (من غير q ولا phone) - دليل كل العملاء، الأحدث نشاطًا الأول (لشاشة بيانات العملاء)
 router.get("/", requireAuth, canView, async (req, res) => {
   const { q, phone } = req.query;
   try {
+    if (!q && !phone) {
+      const result = await pool.query(
+        `SELECT c.phone, c.name, c.loyalty_points, COALESCE(s.orders_count, 0) AS orders_count,
+                COALESCE(s.total_spent, 0) AS total_spent, s.last_order_at
+         FROM customers c
+         LEFT JOIN v_customer_order_stats s ON s.phone = c.phone
+         ORDER BY s.last_order_at DESC NULLS LAST
+         LIMIT 200`
+      );
+      return res.json(result.rows.map((r) => ({
+        phone: r.phone, name: r.name, loyaltyPoints: r.loyalty_points,
+        ordersCount: Number(r.orders_count), totalSpent: Number(r.total_spent), lastOrderAt: r.last_order_at,
+      })));
+    }
+
     if (phone) {
       const customer = await pool.query(
         "SELECT * FROM customers WHERE phone = $1 OR phone2 = $1", [phone]
@@ -49,7 +65,8 @@ router.get("/", requireAuth, canView, async (req, res) => {
 
     if (q) {
       const result = await pool.query(
-        `SELECT c.*, COALESCE(s.orders_count, 0) AS orders_count, COALESCE(s.total_spent, 0) AS total_spent
+        `SELECT c.*, COALESCE(s.orders_count, 0) AS orders_count, COALESCE(s.total_spent, 0) AS total_spent,
+                s.last_order_at
          FROM customers c
          LEFT JOIN v_customer_order_stats s ON s.phone = c.phone
          WHERE c.phone ILIKE $1 OR c.name ILIKE $1
@@ -61,6 +78,34 @@ router.get("/", requireAuth, canView, async (req, res) => {
     }
 
     return res.status(400).json({ error: "لازم q (بحث) أو phone (بروفايل)" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/customers/dormant?days=30 - عملاء سجّلوا طلب قبل كده بس مطلبوش تاني من X يوم -
+// مرتبين بالأكتر إنفاقًا الأول (أعلى قيمة تستاهل تتصل بيها للاسترجاع)
+router.get("/dormant", requireAuth, canView, async (req, res) => {
+  const days = Number(req.query.days) || 30;
+  if (days <= 0) return res.status(400).json({ error: "عدد الأيام لازم يكون أكبر من صفر" });
+  try {
+    const result = await pool.query(
+      `SELECT c.phone, c.phone2, c.name, c.loyalty_points,
+              s.orders_count, s.total_spent, s.last_order_at
+       FROM customers c
+       JOIN v_customer_order_stats s ON s.phone = c.phone
+       WHERE s.last_order_at < now() - ($1 || ' days')::interval
+       ORDER BY s.total_spent DESC`,
+      [days]
+    );
+    res.json({
+      days,
+      customers: result.rows.map((r) => ({
+        phone: r.phone, phone2: r.phone2, name: r.name, loyaltyPoints: r.loyalty_points,
+        ordersCount: Number(r.orders_count), totalSpent: Number(r.total_spent), lastOrderAt: r.last_order_at,
+        daysSinceLastOrder: Math.floor((Date.now() - new Date(r.last_order_at).getTime()) / 86400000),
+      })),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

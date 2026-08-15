@@ -34,7 +34,8 @@ CREATE TABLE users (
 -- إعدادات نقطة البيع (صف واحد بس، زي payroll_settings)
 CREATE TABLE pos_settings (
   id                             INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-  max_unapproved_discount_percent NUMERIC NOT NULL DEFAULT 0.10 -- خصم لغاية 10% الكاشير يعمله لوحده، فوق كده لازم موافقة PIN
+  max_unapproved_discount_percent NUMERIC NOT NULL DEFAULT 0.10, -- خصم لغاية 10% الكاشير يعمله لوحده، فوق كده لازم موافقة PIN
+  loyalty_points_per_egp         NUMERIC NOT NULL DEFAULT 0.1 -- نقاط ولاء لكل جنيه يتصرف (افتراضيًا نقطة واحدة لكل 10 ج.م)
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -144,6 +145,9 @@ CREATE TABLE orders (
   -- لازم يتسجل هنا مين المدير/الأدمن اللي وافق عليه (عن طريق PIN)
   discount_approved_by INTEGER REFERENCES users(id),
   total             NUMERIC NOT NULL DEFAULT 0,
+  -- نقاط الولاء اللي اتضافت للعميل وقت إنشاء الطلب ده بالظبط (لو ليه رقم تليفون) - محفوظة هنا عشان
+  -- لو الطلب اتلغى أو اتسترجع بعد كده، نقدر نرجّع نفس الكمية دي بالظبط من رصيد العميل (مش نعيد حسابها)
+  loyalty_points_earned INTEGER NOT NULL DEFAULT 0,
   -- دورة حياة الطلب: تحت التحضير -> (للدليفري بس) في الطريق -> مكتمل/تم التسليم، أو ملغي في أي وقت
   status            TEXT NOT NULL DEFAULT 'preparing'
                       CHECK (status IN ('preparing', 'out_for_delivery', 'completed', 'cancelled')),

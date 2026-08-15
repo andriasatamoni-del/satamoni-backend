@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — بيانات العملاء</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1000px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  #tabs { display: flex; gap: 6px; margin: 0 0 16px; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select { flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--bg-alt); }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .tablewrap { overflow-x: auto; }
+
+  #profileOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 55; padding: 20px; }
+  #profileOverlay.show { display: flex; }
+  #profileBox { background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 20px; width: 480px; max-width: 100%; max-height: 88vh; overflow-y: auto; }
+  #profileBox h3 { color: var(--gold-bright); margin: 0 0 12px; font-size: 16px; }
+  #profileBox .closebtn { float: left; background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  #profileBox .statrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  #profileBox .stat { background: var(--bg-alt); border-radius: 8px; padding: 10px; text-align: center; }
+  #profileBox .stat .v { font-family: 'Courier New', monospace; font-weight: 800; font-size: 15px; color: var(--gold-bright); }
+  #profileBox .stat .l { font-size: 11px; color: var(--faint); margin-top: 2px; }
+  #profileBox .field { margin-bottom: 8px; }
+  #profileBox .field label { display: block; font-size: 11px; color: var(--faint); margin-bottom: 3px; }
+  #profileBox .field input, #profileBox .field textarea { width: 100%; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px 9px; font-size: 13px; }
+  #profileBox .field textarea { resize: vertical; min-height: 50px; }
+  #profileSaveBtn { width: 100%; padding: 11px; border: none; border-radius: 8px; background: var(--gold); color: #1a1400; font-weight: 800; cursor: pointer; font-size: 13px; margin-top: 8px; }
+  #profileOrdersList { font-size: 12px; color: var(--faint); margin-top: 6px; }
+  #profileOrdersList div { padding: 5px 0; border-bottom: 1px dashed var(--line); }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">👥 ساتاموني — بيانات العملاء</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>👥 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="directory">دليل العملاء</div>
+    <div class="tabbtn" data-tab="dormant">العملاء الغايبين</div>
+    <div class="tabbtn" id="loyaltyTabBtn" data-tab="loyalty" style="display:none">إعدادات نقاط الولاء</div>
+  </div>
+
+  <!-- دليل العملاء -->
+  <div class="panel active" id="panel-directory">
+    <div class="formbox">
+      <div class="row">
+        <input id="custSearch" placeholder="دوّر برقم التليفون أو الاسم..." />
+        <button id="custSearchBtn">بحث</button>
+        <button id="custClearBtn" style="background:transparent;border:1px solid var(--line);color:var(--faint)">كل العملاء</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الاسم</th><th>الموبايل</th><th>عدد الطلبات</th><th>إجمالي الإنفاق</th><th>نقاط الولاء</th><th>آخر طلب</th></tr></thead>
+      <tbody id="directoryBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- العملاء الغايبين -->
+  <div class="panel" id="panel-dormant">
+    <div class="formbox">
+      <div class="row">
+        <label style="flex:0;white-space:nowrap;font-size:12px;color:var(--faint)">مطلبوش من</label>
+        <input id="dormantDays" type="number" value="30" style="max-width:100px" />
+        <label style="flex:0;white-space:nowrap;font-size:12px;color:var(--faint)">يوم</label>
+        <button id="dormantRefreshBtn">تحديث</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الاسم</th><th>الموبايل</th><th>آخر طلب من</th><th>عدد الطلبات</th><th>إجمالي الإنفاق</th><th>نقاط الولاء</th></tr></thead>
+      <tbody id="dormantBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- إعدادات نقاط الولاء -->
+  <div class="panel" id="panel-loyalty">
+    <h1>نقاط الولاء</h1>
+    <div class="formbox">
+      <div style="font-size:12px;color:var(--faint);margin-bottom:10px">كل عميل بياخد نقاط ولاء تلقائيًا لكل جنيه يصرفه، بتتضاف لحسابه وقت إنشاء الطلب وترجع تتخصم لو الطلب اتلغى أو اتسترجع.</div>
+      <div class="row">
+        <label style="flex:0;white-space:nowrap;font-size:12px;color:var(--faint)">نقاط لكل جنيه</label>
+        <input id="loyaltyRateInput" type="number" step="0.01" min="0" style="max-width:120px" />
+        <button id="loyaltySaveBtn">حفظ</button>
+      </div>
+      <div style="font-size:11px;color:var(--faint)">مثال: 0.1 يعني نقطة واحدة لكل 10 ج.م صرف</div>
+      <div class="err" id="loyaltyErr"></div>
+      <div class="ok" id="loyaltyOk"></div>
+    </div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على شاشة العملاء دي.</div>
+
+<div id="profileOverlay">
+  <div id="profileBox">
+    <button class="closebtn" id="profileCloseBtn">× قفل</button>
+    <h3 id="profileTitle">بروفايل العميل</h3>
+    <div class="statrow">
+      <div class="stat"><div class="v" id="profileOrdersCount">0</div><div class="l">عدد الطلبات</div></div>
+      <div class="stat"><div class="v" id="profileTotalSpent">0</div><div class="l">إجمالي الإنفاق</div></div>
+      <div class="stat"><div class="v" id="profileLoyaltyPoints">0</div><div class="l">نقاط الولاء</div></div>
+    </div>
+    <div class="field"><label>الاسم</label><input id="profileName" /></div>
+    <div class="field"><label>رقم تليفون تاني (اختياري)</label><input id="profilePhone2" /></div>
+    <div class="field"><label>العنوان بالتفصيل</label><input id="profileAddress" /></div>
+    <div class="field"><label>علامة مميزة (تساعد الطيار يوصل)</label><input id="profileMark" /></div>
+    <div class="field"><label>ملاحظات</label><textarea id="profileNotes"></textarea></div>
+    <button id="profileSaveBtn">حفظ التعديلات</button>
+    <div class="err" id="profileErr"></div>
+    <div class="ok" id="profileOk"></div>
+    <h1 style="font-size:13px;margin:16px 0 6px">آخر الطلبات</h1>
+    <div id="profileOrdersList"></div>
+  </div>
+</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "callcenter", "branch_manager", "cashier", "accountant"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+  };
+});
+
+const money = (n) => `${Number(n || 0).toLocaleString("ar-EG", { maximumFractionDigits: 0 })} ج.م`;
+const dt = (s) => s ? new Date(s).toLocaleString("ar-EG", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  if (auth.user.role === "admin") {
+    document.getElementById("loyaltyTabBtn").style.display = "block";
+    await loadLoyaltySettings();
+  }
+  await loadDirectory();
+}
+
+// ---------------- دليل العملاء ----------------
+async function loadDirectory(q) {
+  const body = document.getElementById("directoryBody");
+  body.innerHTML = `<tr><td colspan="6">...جاري التحميل</td></tr>`;
+  try {
+    const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+    const customers = await api(`/api/customers${qs}`);
+    body.innerHTML = customers.map(c => `
+      <tr class="clickable" data-phone="${c.phone}">
+        <td>${c.name || "بدون اسم"}</td><td>${c.phone}</td>
+        <td>${c.ordersCount ?? c.orders_count ?? 0}</td>
+        <td>${money(c.totalSpent ?? c.total_spent)}</td>
+        <td><span class="pill">${c.loyaltyPoints ?? c.loyalty_points ?? 0}</span></td>
+        <td>${dt(c.lastOrderAt ?? c.last_order_at)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6">مفيش عملاء مطابقين</td></tr>`;
+    body.querySelectorAll("[data-phone]").forEach(row => {
+      row.onclick = () => openProfile(row.dataset.phone);
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6">${e.message}</td></tr>`;
+  }
+}
+document.getElementById("custSearchBtn").onclick = () => loadDirectory(document.getElementById("custSearch").value.trim());
+document.getElementById("custSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") loadDirectory(document.getElementById("custSearch").value.trim()); });
+document.getElementById("custClearBtn").onclick = () => { document.getElementById("custSearch").value = ""; loadDirectory(); };
+
+// ---------------- بروفايل العميل ----------------
+let currentProfilePhone = null;
+async function openProfile(phone) {
+  currentProfilePhone = phone;
+  document.getElementById("profileErr").textContent = "";
+  document.getElementById("profileOk").textContent = "";
+  document.getElementById("profileTitle").textContent = `بروفايل العميل — ${phone}`;
+  document.getElementById("profileOverlay").classList.add("show");
+  try {
+    const p = await api(`/api/customers?phone=${encodeURIComponent(phone)}`);
+    document.getElementById("profileOrdersCount").textContent = p.ordersCount;
+    document.getElementById("profileTotalSpent").textContent = money(p.totalSpent);
+    document.getElementById("profileLoyaltyPoints").textContent = p.loyaltyPoints;
+    document.getElementById("profileName").value = p.name || "";
+    document.getElementById("profilePhone2").value = p.phone2 || "";
+    document.getElementById("profileAddress").value = p.addressDetails || "";
+    document.getElementById("profileMark").value = p.distinguishingMark || "";
+    document.getElementById("profileNotes").value = p.notes || "";
+    document.getElementById("profileOrdersList").innerHTML = p.recentOrders.map(o => `
+      <div>#${o.id} — ${dt(o.created_at)} — ${money(o.total)} — ${o.status}</div>
+    `).join("") || `<div>مفيش طلبات مسجّلة</div>`;
+  } catch (e) {
+    document.getElementById("profileOrdersList").innerHTML = e.message;
+  }
+}
+document.getElementById("profileCloseBtn").onclick = () => {
+  document.getElementById("profileOverlay").classList.remove("show");
+};
+document.getElementById("profileSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("profileErr");
+  const okBox = document.getElementById("profileOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    await api(`/api/customers/${encodeURIComponent(currentProfilePhone)}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: document.getElementById("profileName").value.trim() || null,
+        phone2: document.getElementById("profilePhone2").value.trim() || null,
+        addressDetails: document.getElementById("profileAddress").value.trim() || null,
+        distinguishingMark: document.getElementById("profileMark").value.trim() || null,
+        notes: document.getElementById("profileNotes").value.trim() || null,
+      }),
+    });
+    okBox.textContent = "اتحفظ";
+    loadDirectory(document.getElementById("custSearch").value.trim());
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- العملاء الغايبين ----------------
+async function loadDormant() {
+  const days = Number(document.getElementById("dormantDays").value) || 30;
+  const body = document.getElementById("dormantBody");
+  body.innerHTML = `<tr><td colspan="6">...جاري التحميل</td></tr>`;
+  try {
+    const data = await api(`/api/customers/dormant?days=${days}`);
+    body.innerHTML = data.customers.map(c => `
+      <tr class="clickable" data-phone="${c.phone}">
+        <td>${c.name || "بدون اسم"}</td><td>${c.phone}</td>
+        <td>${c.daysSinceLastOrder} يوم (${dt(c.lastOrderAt)})</td>
+        <td>${c.ordersCount}</td><td>${money(c.totalSpent)}</td>
+        <td><span class="pill">${c.loyaltyPoints}</span></td>
+      </tr>
+    `).join("") || `<tr><td colspan="6">مفيش عملاء غايبين أكتر من ${days} يوم 🎉</td></tr>`;
+    body.querySelectorAll("[data-phone]").forEach(row => {
+      row.onclick = () => openProfile(row.dataset.phone);
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6">${e.message}</td></tr>`;
+  }
+}
+document.getElementById("dormantRefreshBtn").onclick = loadDormant;
+document.querySelector('[data-tab="dormant"]').addEventListener("click", loadDormant);
+
+// ---------------- إعدادات نقاط الولاء (أدمن بس) ----------------
+async function loadLoyaltySettings() {
+  try {
+    const settings = await api("/api/pos-settings");
+    document.getElementById("loyaltyRateInput").value = settings.loyalty_points_per_egp;
+  } catch (e) { /* لو مش أدمن مش هيتنفذ أصلًا */ }
+}
+document.getElementById("loyaltySaveBtn").onclick = async () => {
+  const errBox = document.getElementById("loyaltyErr");
+  const okBox = document.getElementById("loyaltyOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    await api("/api/pos-settings", {
+      method: "PATCH",
+      body: JSON.stringify({ loyaltyPointsPerEgp: Number(document.getElementById("loyaltyRateInput").value) }),
+    });
+    okBox.textContent = "اتحفظ";
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

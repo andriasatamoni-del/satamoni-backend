@@ -14,19 +14,27 @@ router.get("/", requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/pos-settings - تعديل الحد المسموح للخصم من غير موافقة (أدمن بس)
+// PATCH /api/pos-settings - تعديل الحد المسموح للخصم من غير موافقة و/أو معدّل نقاط الولاء (أدمن بس)
 router.patch("/", requireAuth, requireRole("admin"), async (req, res) => {
-  const { maxUnapprovedDiscountPercent } = req.body;
-  if (maxUnapprovedDiscountPercent === undefined) {
+  const { maxUnapprovedDiscountPercent, loyaltyPointsPerEgp } = req.body;
+  if (maxUnapprovedDiscountPercent === undefined && loyaltyPointsPerEgp === undefined) {
     return res.status(400).json({ error: "مفيش حاجة تتعدل" });
   }
-  if (maxUnapprovedDiscountPercent < 0 || maxUnapprovedDiscountPercent > 1) {
+  if (maxUnapprovedDiscountPercent !== undefined && (maxUnapprovedDiscountPercent < 0 || maxUnapprovedDiscountPercent > 1)) {
     return res.status(400).json({ error: "النسبة لازم تكون بين 0 و 1" });
   }
+  if (loyaltyPointsPerEgp !== undefined && loyaltyPointsPerEgp < 0) {
+    return res.status(400).json({ error: "معدّل نقاط الولاء لازم يكون صفر أو أكبر" });
+  }
+  const fields = [];
+  const values = [];
+  let i = 1;
+  if (maxUnapprovedDiscountPercent !== undefined) { fields.push(`max_unapproved_discount_percent = $${i++}`); values.push(maxUnapprovedDiscountPercent); }
+  if (loyaltyPointsPerEgp !== undefined) { fields.push(`loyalty_points_per_egp = $${i++}`); values.push(loyaltyPointsPerEgp); }
   try {
     const result = await pool.query(
-      "UPDATE pos_settings SET max_unapproved_discount_percent = $1 WHERE id = 1 RETURNING *",
-      [maxUnapprovedDiscountPercent]
+      `UPDATE pos_settings SET ${fields.join(", ")} WHERE id = 1 RETURNING *`,
+      values
     );
     res.json(result.rows[0]);
   } catch (err) {

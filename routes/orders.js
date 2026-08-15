@@ -145,16 +145,27 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     const initialPaymentStatus =
       orderType === "delivery" ? "pending_collection" : (paymentKind === "cash" ? "collected" : "pending_collection");
 
+    // نقاط الولاء بتتحسب على إجمالي الطلب الفعلي (بعد الخصم) وقت الإنشاء، وبتتسجل على الطلب نفسه
+    // عشان لو اتلغى/اتسترجع بعد كده نقدر نرجّع نفس الكمية بالظبط من رصيد العميل (مش نعيد حسابها)
+    let loyaltyPointsEarned = 0;
+    if (customerPhone && total > 0) {
+      const loyaltySettings = await client.query("SELECT loyalty_points_per_egp FROM pos_settings WHERE id = 1");
+      const rate = Number(loyaltySettings.rows[0]?.loyalty_points_per_egp ?? 0);
+      loyaltyPointsEarned = Math.floor(total * rate);
+    }
+
     const orderResult = await client.query(
       `INSERT INTO orders
         (branch_id, source, order_type, table_number, delivery_area_id,
          address_details, customer_name, customer_phone, payment_method_id,
-         created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status,
+         loyalty_points_earned)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, customerName, customerPhone, paymentMethodId,
-       createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus]
+       createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus,
+       loyaltyPointsEarned]
     );
     const orderId = orderResult.rows[0].id;
 
@@ -165,16 +176,18 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
 
     // تسجيل/تحديث العميل في سجل CRM المركزي عشان الكول سنتر يشوف تاريخه - بيانات الدليفري
     // (رقم تليفون تاني، عنوان تفصيلي، منطقة، علامة مميزة) بتتسجل هنا لو الطلب دليفري
+    // ونقاط الولاء اللي اتحسبت فوق بتتضاف لرصيد العميل في نفس الخطوة (upsert واحد)
     if (customerPhone) {
       await client.query(
-        `INSERT INTO customers (phone, name, phone2, address_details, delivery_area_id, distinguishing_mark)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO customers (phone, name, phone2, address_details, delivery_area_id, distinguishing_mark, loyalty_points)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (phone) DO UPDATE SET
            name = COALESCE(EXCLUDED.name, customers.name),
            phone2 = COALESCE(EXCLUDED.phone2, customers.phone2),
            address_details = COALESCE(EXCLUDED.address_details, customers.address_details),
            delivery_area_id = COALESCE(EXCLUDED.delivery_area_id, customers.delivery_area_id),
            distinguishing_mark = COALESCE(EXCLUDED.distinguishing_mark, customers.distinguishing_mark),
+           loyalty_points = customers.loyalty_points + $7,
            updated_at = now()`,
         [
           customerPhone, customerName || null,
@@ -182,6 +195,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
           orderType === "delivery" ? addressDetails || null : null,
           orderType === "delivery" ? deliveryAreaId || null : null,
           orderType === "delivery" ? distinguishingMark || null : null,
+          loyaltyPointsEarned,
         ]
       );
     }
@@ -395,7 +409,10 @@ router.patch(
       return res.status(400).json({ error: "حالة غير معروفة" });
     }
     try {
-      const existing = await pool.query("SELECT branch_id, status FROM orders WHERE id = $1", [req.params.id]);
+      const existing = await pool.query(
+        "SELECT branch_id, status, customer_phone, loyalty_points_earned FROM orders WHERE id = $1",
+        [req.params.id]
+      );
       if (existing.rows.length === 0) return res.status(404).json({ error: "الطلب مش موجود" });
       const current = existing.rows[0];
 
@@ -419,6 +436,15 @@ router.patch(
         `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, $4)`,
         [req.params.id, status, req.user.id, notes || null]
       );
+
+      // لو الطلب اتلغى قبل ما يكتمل، لازم نرجّع نقاط الولاء اللي كانت اتضافت للعميل وقت الإنشاء
+      if (status === "cancelled" && current.customer_phone && current.loyalty_points_earned > 0) {
+        await pool.query(
+          `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
+          [current.loyalty_points_earned, current.customer_phone]
+        );
+      }
+
       res.json(result.rows[0]);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -544,6 +570,14 @@ router.post(
            SELECT $2, sub.inventory_item_id, 'adjustment', SUM(sub.qty), $1, CURRENT_DATE FROM (${reversalIngredients}) sub
            GROUP BY sub.inventory_item_id`,
           [order.id, order.branch_id]
+        );
+      }
+
+      // إرجاع نقاط الولاء اللي كانت اتضافت للعميل وقت البيع - نفس منطق إرجاع المخزون بالظبط
+      if (order.customer_phone && order.loyalty_points_earned > 0) {
+        await client.query(
+          `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
+          [order.loyalty_points_earned, order.customer_phone]
         );
       }
 
