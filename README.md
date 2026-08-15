@@ -310,6 +310,37 @@ docker compose exec app npm run import-menu
 ### Tests
 `tests/phase3-1-costing.test.js` (9 اختبارات جديدة، المجموع 65) - يغطي: تجميد التكلفة عند تغيّر سعر المكوّن بعد كده (بما فيها بعد تفعيل نسخة وصفة جديدة)، عدم تأثر تقرير تاريخي بعمليات لاحقة (شراء بسعر جديد/تسوية/هالك/تحويل/استرجاع)، فصل فئات الاستهلاك (بيع/هالك/تسوية منفصلين تمامًا)، سيناريو رقمي كامل (750/300/300/15/5/320/20)، تطابق الجدول المسطّح مع فك الوصفة النشطة، وصحة التجميع عبر أوردرات كتير بنفس نسخة الوصفة (الكاش مبيوهمش النتيجة).
 
+## المشتريات (المرحلة 4A): مورد → طلب شراء → أمر شراء → اعتماد → استلام → الليدجر
+
+دورة مشتريات رسمية كاملة فوق الـInventory Ledger الحالي (المرحلة 2) - **الاستلام هو اللحظة الوحيدة اللي بتلمس المخزون فعليًا**، وبيعدّي حصريًا من `db/inventory-ledger.js` زي أي حركة تانية في النظام.
+
+### الموردين (`/api/suppliers`)
+جدول `suppliers` القديم اتوسّع (مش اتبدّل) بحقول كاملة: `supplier_code`, `legal_name`, `trade_name`, `contact_person`, `email`, `address`, `tax_id`, `payment_terms`, `default_currency`, وحالة `status` (`ACTIVE`/`INACTIVE`/`BLOCKED`). **مفيش أي DELETE للموردين خالص** - مورد مرتبط بمعاملات تاريخية بيتقفل بالحالة بس. أسعار الموردين بتاريخ حقيقي في جدول جديد `supplier_items` (`POST/GET /api/suppliers/:id/price-history`) - كل سعر جديد بيقفل القديم (`effective_to`) وينشئ صف جديد، **مفيش أي تعديل أو مسح لسعر قديم أبدًا** (نفس نمط `recipe_versions` "نسخة واحدة سارية" بالظبط).
+
+### طلب الشراء (`/api/purchase-requests`)
+`DRAFT → SUBMITTED → APPROVED/REJECTED → CONVERTED_TO_PO/CANCELLED`. الاعتماد أدمن بس. تحويله لأمر شراء بيحصل تلقائيًا لما تعمل `POST /api/purchase-orders` بـ`purchaseRequestId` (مفيش endpoint تحويل منفصل).
+
+### أمر الشراء (`/api/purchase-orders`)
+`DRAFT → SUBMITTED → APPROVED → PARTIALLY_RECEIVED → FULLY_RECEIVED → CLOSED/CANCELLED`. الاعتماد محتاج `purchasing.approve` (أدمن بس، زي `recipes.approve`/`production.approve` بالظبط) - اللي بينشئ الـPO ميقدرش يعتمدها لوحده لأنه أصلًا مالوش الصلاحية دي. إنشاء PO يقبل `idempotencyKey` (نفس نمط `orders.idempotency_key`) - retry متزامن حقيقي بيتحقق منه بالاختبار. `GET /:id/price-variance` بيقارن سعر كل سطر بآخر سعر مسجّل للمورد في `supplier_items` (السابق/الجديد/الفرق/الفرق%).
+
+### سند الاستلام - GRN (`/api/goods-receipts`)
+منفصل تمامًا عن إنشاء الـPO - `DRAFT → POSTED → CANCELLED`. إنشاء GRN (DRAFT) مجرد تسجيل نية، **`POST /:id/post` هو اللحظة الوحيدة اللي بتلمس المخزون**: كل صنف مقبول (`accepted_quantity`) بيتحول لحركة `PURCHASE_RECEIPT` حقيقية (batch جديد لو فيه رقم دفعة/صلاحية، تحويل وحدة عن طريق نفس محرك التحويل بتاع `/purchase-receipt` بالظبط - كرتونة=5كيلو، 450ج/كرتونة يبقى 90ج/كيلو تلقائي). **المرفوض (`rejected_quantity`) ميدخلش الرصيد خالص** - بيتسجل للتتبّع/الـaudit بس. استلام أكتر من المتبقي في الـPO (over-receiving) محتاج موافقة صريحة (`overReceiveApprovedBy`، نفس نمط تجاوز الرصيد السالب بالـPIN). مسموح أكتر من GRN لنفس الـPO (استلام جزئي على مراحل) - حالة الـPO بتتحدّث تلقائيًا (`PARTIALLY_RECEIVED`/`FULLY_RECEIVED`) بناءً على `received_quantity` المجمّع.
+
+**Idempotency حقيقي**: `POST /:id/post` بيقفل صف الـGRN (`SELECT ... FOR UPDATE`) من جوه transaction من أول حاجة - طلبين ترحيل متزامنين بالظبط لنفس الـGRN، واحد بس بينفّذ فعليًا والتاني بيستنى يشوف النتيجة النهائية (`POSTED`) ويرجّعها كـ`duplicate: true` من غير أي تكرار في المخزون - نفس مستوى الحماية اللي اتعمل لـ`orders.idempotency_key` في المرحلة 2.5.
+
+**إلغاء GRN بعد الترحيل** بيرجّع بالظبط نفس الكميات (حركة `RETURN_TO_SUPPLIER` معاكسة، بنفس التكلفة التاريخية المسجّلة) - بس **مرفوض لو جزء من الدفعة اتصرف بالفعل** (بيع/تحويل/تصنيع) لحماية دقة السجل التاريخي.
+
+### تقارير المشتريات
+`GET /api/reports/purchase-orders`, `purchase-receipts`, `supplier-purchase-history`, `purchase-price-history`, `purchase-price-variance`, `supplier-performance` (كمية مطلوبة/مستلمة/مرفوضة، معدل تسليم في الوقت، عدد تغييرات السعر)، `outstanding-purchase-orders`, `rejected-goods`, `purchases-by-branch`, `purchases-by-item` - كلها محتاجة صلاحية `purchasing.view`.
+
+### الصلاحيات الجديدة
+`purchasing.view/create/edit/submit/approve/cancel/export` - `branch_manager` عنده كل حاجة ما عدا `approve` (أدمن بس)، `accountant` عنده `view`/`export` بس.
+
+### Tests
+`tests/procurement.test.js` (29 اختبار، المجموع 94 مع كل المراحل اللي فاتت) - يغطي دورة المشتريات كاملة: مورد BLOCKED مينفعش تعمله PO، تاريخ أسعار لا يُمحى، استلام جزئي + عدة GRNs لنفس الـPO، استلام زائد بموافقة، رفض كمية بسبب، دفعات وتكلفة تاريخية، تحويل وحدات، idempotency (متتابع ومتزامن حقيقي)، صلاحيات عبر الفروع، إلغاء PO/GRN مع الحماية من إلغاء دفعة اتصرف منها.
+
+**باج حقيقي اتلقط وأتصلح أثناء الاختبار**: idempotency الخاص بإنشاء PO/GRN كان بيحاول يقرا الصف الموجود قبل ما يعمل ROLLBACK للـtransaction اللي فشلت (Postgres بيرفض أي query تاني غير ROLLBACK/COMMIT بعد ما transaction تبقى "aborted") - نفس فئة الباج اللي اتصلح في `orders.js` بالمرحلة 2.5 بالظبط، اتصلح هنا بترتيب العمليات صح. وكمان `POST /:id/post` كان عرضة لسباق حقيقي بين طلبين متزامنين (كلاهما يشوف الحالة DRAFT قبل ما أي واحد يعمل COMMIT) - اتصلح بقفل الصف (`FOR UPDATE`) من جوه الـtransaction بدل قراءته من برّاها.
+
 ## السنتر كيتشن (خام → تصنيع → طلبيات فروع → تحويلات)
 
 السنتر كيتشن هو صف في جدول `branches` عادي بس بعلامة `is_central_kitchen = true` (بتتحدد وقت إنشاء الفرع من `satamoni-admin.html`، وفيها كمان قسم "الفروع" جديد لإنشاء الفروع نفسها لأول مرة). موظف مربوط بالفرع ده (`branch_manager` غالبًا) بياخد صلاحيات السنتر كيتشن تلقائيًا — مفيش دور خاص منفصل، الصلاحية بتتحدد من فرعه.

@@ -32,6 +32,9 @@ app.use("/api/audit-logs", require("./routes/audit"));
 app.use("/api/approvals", require("./routes/approvals"));
 app.use("/api/recipes", require("./routes/recipes"));
 app.use("/api/production", require("./routes/production"));
+app.use("/api/purchase-requests", require("./routes/purchase-requests"));
+app.use("/api/purchase-orders", require("./routes/purchase-orders"));
+app.use("/api/goods-receipts", require("./routes/goods-receipts"));
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 

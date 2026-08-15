@@ -1513,4 +1513,325 @@ router.get("/cost-traceability/:orderId", requireAuth, canSeeReports, requirePer
   }
 });
 
+// ==================== المرحلة 4A: تقارير المشتريات (Procurement) ====================
+const canSeePurchasing = requirePermission("purchasing.view");
+
+// GET /api/reports/purchase-orders?branchId=&from=&to=&status=&supplierId= - كل أوامر الشراء في المدى
+router.get("/purchase-orders", requireAuth, canSeePurchasing, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  const { status, supplierId } = req.query;
+  try {
+    const result = await pool.query(
+      `SELECT po.*, s.name AS supplier_name, b.name AS branch_name,
+              COALESCE(SUM(poi.ordered_quantity), 0) AS total_ordered_quantity,
+              COALESCE(SUM(poi.received_quantity), 0) AS total_received_quantity
+       FROM purchase_orders po
+       JOIN suppliers s ON s.id = po.supplier_id
+       JOIN branches b ON b.id = po.branch_id
+       LEFT JOIN purchase_order_items poi ON poi.purchase_order_id = po.id
+       WHERE po.order_date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR po.branch_id = $3)
+         AND ($4::text IS NULL OR po.status = $4)
+         AND ($5::int IS NULL OR po.supplier_id = $5)
+       GROUP BY po.id, s.name, b.name
+       ORDER BY po.order_date DESC, po.id DESC`,
+      [range.from, range.to, branchId, status || null, supplierId || null]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/purchase-receipts?branchId=&from=&to=&supplierId= - سندات الاستلام المرحّلة (POSTED)
+router.get("/purchase-receipts", requireAuth, canSeePurchasing, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  const { supplierId } = req.query;
+  try {
+    const result = await pool.query(
+      `SELECT gr.id, gr.received_at, gr.supplier_document_number, gr.status,
+              s.name AS supplier_name, b.name AS branch_name, po.id AS purchase_order_id,
+              COALESCE(SUM(gri.accepted_quantity), 0) AS total_accepted_quantity,
+              COALESCE(SUM(gri.rejected_quantity), 0) AS total_rejected_quantity,
+              COALESCE(SUM(gri.accepted_quantity * gri.unit_price), 0) AS total_value
+       FROM goods_receipts gr
+       JOIN suppliers s ON s.id = gr.supplier_id
+       JOIN branches b ON b.id = gr.branch_id
+       JOIN purchase_orders po ON po.id = gr.purchase_order_id
+       LEFT JOIN goods_receipt_items gri ON gri.goods_receipt_id = gr.id
+       WHERE gr.status = 'POSTED' AND gr.received_at::date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR gr.branch_id = $3)
+         AND ($4::int IS NULL OR gr.supplier_id = $4)
+       GROUP BY gr.id, s.name, b.name, po.id
+       ORDER BY gr.received_at DESC`,
+      [range.from, range.to, branchId, supplierId || null]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/supplier-purchase-history?supplierId=&from=&to= - كل أوامر الشراء والاستلامات لمورد معيّن
+router.get("/supplier-purchase-history", requireAuth, canSeePurchasing, async (req, res) => {
+  const { supplierId } = req.query;
+  if (!supplierId) return res.status(400).json({ error: "لازم تحدد المورد" });
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  try {
+    const orders = await pool.query(
+      `SELECT po.id, po.order_date, po.status, po.total, b.name AS branch_name
+       FROM purchase_orders po JOIN branches b ON b.id = po.branch_id
+       WHERE po.supplier_id = $1 AND po.order_date BETWEEN $2 AND $3
+       ORDER BY po.order_date DESC`,
+      [supplierId, range.from, range.to]
+    );
+    const receipts = await pool.query(
+      `SELECT gr.id, gr.received_at, gr.status,
+              COALESCE(SUM(gri.accepted_quantity * gri.unit_price), 0) AS total_value
+       FROM goods_receipts gr LEFT JOIN goods_receipt_items gri ON gri.goods_receipt_id = gr.id
+       WHERE gr.supplier_id = $1 AND gr.status = 'POSTED' AND gr.received_at::date BETWEEN $2 AND $3
+       GROUP BY gr.id ORDER BY gr.received_at DESC`,
+      [supplierId, range.from, range.to]
+    );
+    const totals = await pool.query(
+      `SELECT COALESCE(SUM(total), 0) AS total_ordered_value, COUNT(*) AS orders_count
+       FROM purchase_orders WHERE supplier_id = $1 AND order_date BETWEEN $2 AND $3 AND status <> 'CANCELLED'`,
+      [supplierId, range.from, range.to]
+    );
+    res.json({
+      supplierId: Number(supplierId), from: range.from, to: range.to,
+      totals: { totalOrderedValue: Number(totals.rows[0].total_ordered_value), ordersCount: Number(totals.rows[0].orders_count) },
+      purchaseOrders: orders.rows, goodsReceipts: receipts.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/purchase-price-history?itemId=&supplierId= - تاريخ سعر صنف (عند مورد معيّن أو كل الموردين)
+router.get("/purchase-price-history", requireAuth, canSeePurchasing, async (req, res) => {
+  const { itemId, supplierId } = req.query;
+  if (!itemId) return res.status(400).json({ error: "لازم تحدد الصنف" });
+  try {
+    const result = await pool.query(
+      `SELECT si.*, s.name AS supplier_name, ii.name AS item_name
+       FROM supplier_items si
+       JOIN suppliers s ON s.id = si.supplier_id
+       JOIN inventory_items ii ON ii.id = si.inventory_item_id
+       WHERE si.inventory_item_id = $1 AND ($2::int IS NULL OR si.supplier_id = $2)
+       ORDER BY si.effective_from DESC`,
+      [itemId, supplierId || null]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/purchase-price-variance?from=&to=&branchId= - كل سطور الـPO في المدى مع انحراف سعرها
+// عن آخر سعر مسجّل للمورد وقت الطلب (نفس منطق GET /api/purchase-orders/:id/price-variance، بس مجمّع
+// على كل الأوامر في المدى - تقرير إداري بند 11)
+router.get("/purchase-price-variance", requireAuth, canSeePurchasing, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    // آخر سعر "سابق" لكل (مورد، صنف) قبل تاريخ كل PO - بنستخدم أقرب صف supplier_items بدأ سريانه قبل
+    // order_date (مش effective_to IS NULL الحالي، عشان الانحراف يتقارن بالسعر اللي كان معروف وقتها فعليًا)
+    const result = await pool.query(
+      `SELECT po.id AS purchase_order_id, po.order_date, po.supplier_id, s.name AS supplier_name,
+              poi.inventory_item_id, ii.name AS item_name, poi.unit_price AS new_price,
+              prev.unit_price AS previous_price
+       FROM purchase_order_items poi
+       JOIN purchase_orders po ON po.id = poi.purchase_order_id
+       JOIN suppliers s ON s.id = po.supplier_id
+       JOIN inventory_items ii ON ii.id = poi.inventory_item_id
+       LEFT JOIN LATERAL (
+         SELECT unit_price FROM supplier_items si
+         WHERE si.supplier_id = po.supplier_id AND si.inventory_item_id = poi.inventory_item_id
+           AND si.effective_from < po.created_at
+         ORDER BY si.effective_from DESC LIMIT 1
+       ) prev ON TRUE
+       WHERE po.status <> 'CANCELLED' AND po.order_date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR po.branch_id = $3)
+       ORDER BY po.order_date DESC`,
+      [range.from, range.to, branchId]
+    );
+    res.json(result.rows.map((r) => {
+      const newPrice = Number(r.new_price);
+      const previousPrice = r.previous_price != null ? Number(r.previous_price) : null;
+      const difference = previousPrice != null ? newPrice - previousPrice : null;
+      return {
+        purchaseOrderId: r.purchase_order_id, orderDate: r.order_date, supplierId: r.supplier_id, supplierName: r.supplier_name,
+        inventoryItemId: r.inventory_item_id, itemName: r.item_name, previousPrice, newPrice, difference,
+        differencePercent: previousPrice ? (difference / previousPrice) * 100 : null,
+      };
+    }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/supplier-performance?supplierId=&from=&to= - أسس تقرير أداء المورد (بند 12 - Backend بس، مفيش dashboard)
+router.get("/supplier-performance", requireAuth, canSeePurchasing, async (req, res) => {
+  const { supplierId } = req.query;
+  if (!supplierId) return res.status(400).json({ error: "لازم تحدد المورد" });
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  try {
+    const quantities = await pool.query(
+      `SELECT COALESCE(SUM(poi.ordered_quantity), 0) AS ordered_quantity,
+              COALESCE(SUM(poi.received_quantity), 0) AS received_quantity
+       FROM purchase_order_items poi JOIN purchase_orders po ON po.id = poi.purchase_order_id
+       WHERE po.supplier_id = $1 AND po.order_date BETWEEN $2 AND $3 AND po.status <> 'CANCELLED'`,
+      [supplierId, range.from, range.to]
+    );
+    const rejected = await pool.query(
+      `SELECT COALESCE(SUM(gri.rejected_quantity), 0) AS rejected_quantity, COALESCE(SUM(gri.received_quantity), 0) AS received_quantity
+       FROM goods_receipt_items gri JOIN goods_receipts gr ON gr.id = gri.goods_receipt_id
+       WHERE gr.supplier_id = $1 AND gr.status = 'POSTED' AND gr.received_at::date BETWEEN $2 AND $3`,
+      [supplierId, range.from, range.to]
+    );
+    // في الوقت (on-time) = أول استلام POSTED لكل PO حصل في/قبل expected_delivery_date بتاعه
+    const delivery = await pool.query(
+      `SELECT po.id, po.expected_delivery_date, MIN(gr.received_at)::date AS first_received_date
+       FROM purchase_orders po
+       JOIN goods_receipts gr ON gr.purchase_order_id = po.id AND gr.status = 'POSTED'
+       WHERE po.supplier_id = $1 AND po.order_date BETWEEN $2 AND $3
+       GROUP BY po.id, po.expected_delivery_date`,
+      [supplierId, range.from, range.to]
+    );
+    const priceChanges = await pool.query(
+      `SELECT COUNT(*) AS count FROM supplier_items WHERE supplier_id = $1 AND effective_from BETWEEN $2 AND $3`,
+      [supplierId, range.from, range.to]
+    );
+
+    const withExpectedDate = delivery.rows.filter((r) => r.expected_delivery_date);
+    const onTime = withExpectedDate.filter((r) => new Date(r.first_received_date) <= new Date(r.expected_delivery_date)).length;
+    const orderedQty = Number(quantities.rows[0].ordered_quantity);
+    const receivedQty = Number(quantities.rows[0].received_quantity);
+
+    res.json({
+      supplierId: Number(supplierId), from: range.from, to: range.to,
+      orderedQuantity: orderedQty, receivedQuantity: receivedQty,
+      fulfillmentRate: orderedQty > 0 ? (receivedQty / orderedQty) * 100 : null,
+      rejectedQuantity: Number(rejected.rows[0].rejected_quantity),
+      rejectionRate: Number(rejected.rows[0].received_quantity) > 0
+        ? (Number(rejected.rows[0].rejected_quantity) / Number(rejected.rows[0].received_quantity)) * 100 : null,
+      deliveries: { total: withExpectedDate.length, onTime, late: withExpectedDate.length - onTime },
+      priceChangesCount: Number(priceChanges.rows[0].count),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/outstanding-purchase-orders?branchId= - أوامر شراء لسه مستنية استلام (كامل أو جزء)
+router.get("/outstanding-purchase-orders", requireAuth, canSeePurchasing, async (req, res) => {
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `SELECT po.id, po.order_date, po.expected_delivery_date, po.status, s.name AS supplier_name, b.name AS branch_name,
+              COALESCE(SUM(poi.ordered_quantity - poi.received_quantity), 0) AS remaining_quantity,
+              COALESCE(SUM((poi.ordered_quantity - poi.received_quantity) * poi.unit_price), 0) AS remaining_value
+       FROM purchase_orders po
+       JOIN suppliers s ON s.id = po.supplier_id
+       JOIN branches b ON b.id = po.branch_id
+       JOIN purchase_order_items poi ON poi.purchase_order_id = po.id
+       WHERE po.status IN ('APPROVED', 'PARTIALLY_RECEIVED') AND ($1::int IS NULL OR po.branch_id = $1)
+       GROUP BY po.id, s.name, b.name
+       HAVING COALESCE(SUM(poi.ordered_quantity - poi.received_quantity), 0) > 0
+       ORDER BY po.expected_delivery_date NULLS LAST, po.id`,
+      [branchId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/rejected-goods?branchId=&from=&to= - كل الكميات المرفوضة وأسبابها
+router.get("/rejected-goods", requireAuth, canSeePurchasing, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `SELECT gr.id AS goods_receipt_id, gr.received_at, s.name AS supplier_name, b.name AS branch_name,
+              ii.name AS item_name, gri.rejected_quantity, gri.unit, gri.unit_price,
+              gri.rejected_quantity * gri.unit_price AS rejected_value, gri.rejection_reason
+       FROM goods_receipt_items gri
+       JOIN goods_receipts gr ON gr.id = gri.goods_receipt_id
+       JOIN suppliers s ON s.id = gr.supplier_id
+       JOIN branches b ON b.id = gr.branch_id
+       JOIN inventory_items ii ON ii.id = gri.inventory_item_id
+       WHERE gr.status = 'POSTED' AND gri.rejected_quantity > 0 AND gr.received_at::date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR gr.branch_id = $3)
+       ORDER BY gr.received_at DESC`,
+      [range.from, range.to, branchId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/purchases-by-branch?from=&to= - إجمالي قيمة المشتريات (المستلمة فعليًا) لكل فرع
+router.get("/purchases-by-branch", requireAuth, canSeePurchasing, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  try {
+    const result = await pool.query(
+      `SELECT gr.branch_id, b.name AS branch_name,
+              COALESCE(SUM(gri.accepted_quantity * gri.unit_price), 0) AS total_value,
+              COUNT(DISTINCT gr.id) AS receipts_count
+       FROM goods_receipts gr
+       JOIN branches b ON b.id = gr.branch_id
+       LEFT JOIN goods_receipt_items gri ON gri.goods_receipt_id = gr.id
+       WHERE gr.status = 'POSTED' AND gr.received_at::date BETWEEN $1 AND $2
+       GROUP BY gr.branch_id, b.name ORDER BY total_value DESC`,
+      [range.from, range.to]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/purchases-by-item?from=&to=&branchId= - إجمالي كمية/قيمة المشتريات لكل صنف
+router.get("/purchases-by-item", requireAuth, canSeePurchasing, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `SELECT gri.inventory_item_id, ii.name AS item_name, ii.unit,
+              COALESCE(SUM(gri.accepted_quantity), 0) AS total_quantity,
+              COALESCE(SUM(gri.accepted_quantity * gri.unit_price), 0) AS total_value
+       FROM goods_receipt_items gri
+       JOIN goods_receipts gr ON gr.id = gri.goods_receipt_id
+       JOIN inventory_items ii ON ii.id = gri.inventory_item_id
+       WHERE gr.status = 'POSTED' AND gr.received_at::date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR gr.branch_id = $3)
+       GROUP BY gri.inventory_item_id, ii.name, ii.unit
+       ORDER BY total_value DESC`,
+      [range.from, range.to, branchId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

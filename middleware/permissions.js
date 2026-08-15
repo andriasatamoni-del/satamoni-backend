@@ -10,6 +10,10 @@ const ROLE_PERMISSIONS = {
     "production.view", "production.create", "production.complete", "production.cancel",
     "food_cost.view",
     "expenses.view", "purchases.view",
+    // المرحلة 4A: مدير فرع/سنتر كيتشن يقدر ينشئ/يعدّل/يقدّم طلبات شراء وأوامر شراء لفرعه ويلغيها - بس
+    // مش يعتمدها (purchasing.approve أدمن بس عمدًا، زي recipes.approve/production.approve بالظبط -
+    // "الشخص اللي بينشئ PO ميقدرش يعتمدها لوحده من غير صلاحية منفصلة")
+    "purchasing.view", "purchasing.create", "purchasing.edit", "purchasing.submit", "purchasing.cancel",
     "users.view",
     "approvals.create", "approvals.decide",
     "audit.view.branch",
@@ -19,6 +23,7 @@ const ROLE_PERMISSIONS = {
     "production.view",
     "food_cost.view", "food_cost.export",
     "expenses.view", "purchases.view",
+    "purchasing.view", "purchasing.export",
     "approvals.create",
     "audit.view.branch",
   ],

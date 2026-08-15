@@ -310,15 +310,31 @@ CREATE TABLE inventory_items (
 );
 
 -- ---------------- الموردين (شركات المواد الخام) ----------------
+-- المرحلة 4A: name فضل زي ما هو (لتوافق كل الكود القديم اللي بيقرأه) - الحقول الجديدة كلها اختيارية،
+-- name لسه هو الاسم المعروض الافتراضي لو legal_name/trade_name مش متسجلين. مفيش DELETE للموردين خالص -
+-- مورد بقى مرتبط بمعاملات تاريخية (PO/GRN) بيتقفل بـstatus='BLOCKED'/'INACTIVE' مش بيتمسح
 CREATE TABLE suppliers (
-  id            SERIAL PRIMARY KEY,
-  name          TEXT NOT NULL UNIQUE,
-  phone         TEXT,
-  notes         TEXT,
-  created_at    TIMESTAMPTZ DEFAULT now()
+  id              SERIAL PRIMARY KEY,
+  name            TEXT NOT NULL UNIQUE,
+  supplier_code   TEXT UNIQUE,
+  legal_name      TEXT,
+  trade_name      TEXT,
+  contact_person  TEXT,
+  phone           TEXT,
+  email           TEXT,
+  address         TEXT,
+  tax_id          TEXT,
+  payment_terms   TEXT,   -- نص حر (زي "30 يوم من تاريخ الفاتورة") - مش enum، يختلف من مورد لمورد
+  default_currency TEXT NOT NULL DEFAULT 'EGP',
+  status          TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE', 'BLOCKED')),
+  notes           TEXT,
+  created_by      INTEGER REFERENCES users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- سعر كل مكوّن عند كل مورد بيبيعه (لمقارنة الأسعار واختيار الأرخص)
+-- سعر كل مكوّن عند كل مورد بيبيعه (لمقارنة الأسعار واختيار الأرخص) - جدول قديم بيتحدّث بالسعر الأحدث
+-- بس (ON CONFLICT DO UPDATE)، مالوش تاريخ. لسه شغال زي ما هو لأي كود قديم بيقرأه - مش متضاف عليه أي حاجة
 CREATE TABLE inventory_item_suppliers (
   id                SERIAL PRIMARY KEY,
   inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE CASCADE,
@@ -326,6 +342,178 @@ CREATE TABLE inventory_item_suppliers (
   unit_price        NUMERIC NOT NULL,
   UNIQUE(inventory_item_id, supplier_id)
 );
+
+-- المرحلة 4A: نفس فكرة inventory_item_suppliers، لكن بتاريخ أسعار حقيقي (مطلوب صراحة: "Never overwrite
+-- historical prices") - كل تغيير سعر = صف جديد effective_from = دلوقتي، والصف القديم بيتقفل
+-- effective_to = دلوقتي (زي نمط recipe_versions "نسخة واحدة نشطة" بالظبط، مطبّق هنا على الأسعار)
+CREATE TABLE supplier_items (
+  id                     SERIAL PRIMARY KEY,
+  supplier_id            INTEGER NOT NULL REFERENCES suppliers(id),
+  inventory_item_id      INTEGER NOT NULL REFERENCES inventory_items(id),
+  supplier_item_code     TEXT,
+  purchase_unit          TEXT,             -- الوحدة اللي المورد بيبيع بيها (ممكن تختلف عن وحدة تخزين الصنف)
+  conversion_factor      NUMERIC,          -- purchase_unit → وحدة تخزين الصنف (لو NULL، يتحسب من unit_conversions وقت الاستلام)
+  unit_price             NUMERIC NOT NULL, -- سعر وحدة الشراء (purchase_unit)، مش وحدة التخزين بالضرورة
+  currency               TEXT NOT NULL DEFAULT 'EGP',
+  minimum_order_quantity NUMERIC,
+  lead_time_days         INTEGER,
+  preferred_supplier     BOOLEAN NOT NULL DEFAULT FALSE,
+  effective_from         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  effective_to           TIMESTAMPTZ,      -- NULL = السعر الحالي الساري
+  created_by             INTEGER REFERENCES users(id),
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- سعر ساري واحد بس لكل (مورد، صنف) في نفس اللحظة - مفروض على مستوى القاعدة نفسها
+CREATE UNIQUE INDEX idx_supplier_items_one_current ON supplier_items(supplier_id, inventory_item_id) WHERE effective_to IS NULL;
+CREATE INDEX idx_supplier_items_supplier ON supplier_items(supplier_id);
+CREATE INDEX idx_supplier_items_item ON supplier_items(inventory_item_id);
+
+-- ============================================================
+-- المرحلة 4A: المشتريات (Procurement) - Supplier → Purchase Request → Purchase Order → Approval →
+-- Goods Receipt → Inventory Ledger → Batch/Cost Layer. الاستلام (GRN) هو المصدر الوحيد اللي بيلمس
+-- المخزون فعليًا - بيعدّي حصريًا من db/inventory-ledger.js (postInventoryMovement)، زي أي حركة تانية
+-- في النظام، من غير أي استثناء أو تحديث مباشر على branch_inventory_stock
+-- ============================================================
+
+-- طلب شراء داخلي (الفرع/السنتر كيتشن بيطلب صنف يتشترى) - قبل أي التزام مع مورد بسعر/كمية محددة
+CREATE TABLE purchase_requests (
+  id             SERIAL PRIMARY KEY,
+  branch_id      INTEGER NOT NULL REFERENCES branches(id),
+  requested_by   INTEGER REFERENCES users(id),
+  requested_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  required_date  DATE,
+  reason         TEXT,
+  status         TEXT NOT NULL DEFAULT 'DRAFT'
+                 CHECK (status IN ('DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'CONVERTED_TO_PO', 'CANCELLED')),
+  approved_by    INTEGER REFERENCES users(id),
+  approved_at    TIMESTAMPTZ,
+  rejected_by    INTEGER REFERENCES users(id),
+  rejection_reason TEXT,
+  cancelled_by   INTEGER REFERENCES users(id),
+  cancelled_at   TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_purchase_requests_branch ON purchase_requests(branch_id);
+CREATE INDEX idx_purchase_requests_status ON purchase_requests(status);
+CREATE INDEX idx_purchase_requests_created ON purchase_requests(created_at);
+
+CREATE TABLE purchase_request_items (
+  id                  SERIAL PRIMARY KEY,
+  purchase_request_id INTEGER NOT NULL REFERENCES purchase_requests(id) ON DELETE CASCADE,
+  inventory_item_id   INTEGER NOT NULL REFERENCES inventory_items(id),
+  requested_quantity  NUMERIC NOT NULL,
+  unit                TEXT,
+  notes               TEXT
+);
+CREATE INDEX idx_purchase_request_items_request ON purchase_request_items(purchase_request_id);
+CREATE INDEX idx_purchase_request_items_item ON purchase_request_items(inventory_item_id);
+
+-- أمر شراء رسمي لمورد محدد - العمود idempotency_key بيحمي إنشاء PO مكرر لو نفس الطلب اتبعت مرتين
+-- (retry شبكة) بنفس نمط orders.idempotency_key بالظبط (المرحلة 2.5)
+CREATE TABLE purchase_orders (
+  id                     SERIAL PRIMARY KEY,
+  supplier_id            INTEGER NOT NULL REFERENCES suppliers(id),
+  branch_id              INTEGER NOT NULL REFERENCES branches(id), -- فرع/سنتر كيتشن الاستلام
+  purchase_request_id    INTEGER REFERENCES purchase_requests(id), -- NULL لو PO مباشر من غير طلب شراء سابق
+  order_date             DATE NOT NULL DEFAULT CURRENT_DATE,
+  expected_delivery_date DATE,
+  payment_terms          TEXT,
+  currency               TEXT NOT NULL DEFAULT 'EGP',
+  subtotal               NUMERIC NOT NULL DEFAULT 0,
+  discount               NUMERIC NOT NULL DEFAULT 0,
+  tax                    NUMERIC NOT NULL DEFAULT 0,
+  total                  NUMERIC NOT NULL DEFAULT 0,
+  status                 TEXT NOT NULL DEFAULT 'DRAFT'
+                         CHECK (status IN ('DRAFT', 'SUBMITTED', 'APPROVED', 'PARTIALLY_RECEIVED', 'FULLY_RECEIVED', 'CLOSED', 'CANCELLED')),
+  notes                  TEXT,
+  created_by             INTEGER REFERENCES users(id),
+  submitted_at           TIMESTAMPTZ,
+  approved_by            INTEGER REFERENCES users(id),
+  approved_at            TIMESTAMPTZ,
+  cancelled_by           INTEGER REFERENCES users(id),
+  cancelled_at           TIMESTAMPTZ,
+  idempotency_key        TEXT,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_purchase_orders_idempotency_key ON purchase_orders(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_purchase_orders_supplier ON purchase_orders(supplier_id);
+CREATE INDEX idx_purchase_orders_branch ON purchase_orders(branch_id);
+CREATE INDEX idx_purchase_orders_status ON purchase_orders(status);
+CREATE INDEX idx_purchase_orders_expected_delivery ON purchase_orders(expected_delivery_date);
+CREATE INDEX idx_purchase_orders_created ON purchase_orders(created_at);
+
+-- received_quantity بيتحدّث بس وقت POST جرن (goods_receipts) فعلي - مصدره الوحيد. remaining_quantity
+-- مش عمود مخزّن عمدًا (ordered_quantity - received_quantity محسوبة وقت القراءة) عشان متعملش drift
+CREATE TABLE purchase_order_items (
+  id                 SERIAL PRIMARY KEY,
+  purchase_order_id  INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  inventory_item_id  INTEGER NOT NULL REFERENCES inventory_items(id),
+  ordered_quantity   NUMERIC NOT NULL,
+  unit               TEXT,
+  unit_price         NUMERIC NOT NULL,
+  discount           NUMERIC NOT NULL DEFAULT 0,
+  tax                NUMERIC NOT NULL DEFAULT 0,
+  total              NUMERIC NOT NULL DEFAULT 0,
+  received_quantity  NUMERIC NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_purchase_order_items_po ON purchase_order_items(purchase_order_id);
+CREATE INDEX idx_purchase_order_items_item ON purchase_order_items(inventory_item_id);
+
+-- سند استلام بضاعة (GRN) - منفصل تمامًا عن إنشاء الـPO (ممكن أكتر من GRN لنفس الـPO - استلام جزئي على
+-- مراحل). idempotency_key بيحمي POST (الترحيل الفعلي للمخزون) من التكرار لو اتبعت الطلب مرتين
+CREATE TABLE goods_receipts (
+  id                      SERIAL PRIMARY KEY,
+  purchase_order_id       INTEGER NOT NULL REFERENCES purchase_orders(id),
+  supplier_id             INTEGER NOT NULL REFERENCES suppliers(id),
+  branch_id               INTEGER NOT NULL REFERENCES branches(id),
+  received_by             INTEGER REFERENCES users(id),
+  received_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  supplier_document_number TEXT,
+  notes                   TEXT,
+  status                  TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'POSTED', 'CANCELLED')),
+  posted_by               INTEGER REFERENCES users(id),
+  posted_at               TIMESTAMPTZ,
+  cancelled_by            INTEGER REFERENCES users(id),
+  cancelled_at            TIMESTAMPTZ,
+  idempotency_key         TEXT,
+  created_by              INTEGER REFERENCES users(id),
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_goods_receipts_idempotency_key ON goods_receipts(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_goods_receipts_po ON goods_receipts(purchase_order_id);
+CREATE INDEX idx_goods_receipts_branch ON goods_receipts(branch_id);
+CREATE INDEX idx_goods_receipts_status ON goods_receipts(status);
+CREATE INDEX idx_goods_receipts_created ON goods_receipts(created_at);
+
+-- accepted_quantity بس هو اللي بيدخل المخزون فعليًا وقت POST (rejected_quantity بيتسجل للتتبّع/الـaudit
+-- بس وميعملش أي حركة مخزون خالص - "لازم منخلّيهوش يدخل الرصيد المتاح"). batch_id بيتربط بعد POST
+-- (لما الدفعة تتنشئ فعليًا في inventory_batches عن طريق الليدجر)
+CREATE TABLE goods_receipt_items (
+  id                     SERIAL PRIMARY KEY,
+  goods_receipt_id       INTEGER NOT NULL REFERENCES goods_receipts(id) ON DELETE CASCADE,
+  purchase_order_item_id INTEGER NOT NULL REFERENCES purchase_order_items(id),
+  inventory_item_id      INTEGER NOT NULL REFERENCES inventory_items(id),
+  ordered_quantity       NUMERIC NOT NULL, -- نسخة (snapshot) من كمية الـPO الأصلية وقت الاستلام، للمرجعية
+  received_quantity      NUMERIC NOT NULL,
+  accepted_quantity      NUMERIC NOT NULL,
+  rejected_quantity      NUMERIC NOT NULL DEFAULT 0,
+  unit                   TEXT,
+  unit_price             NUMERIC NOT NULL,
+  batch_number           TEXT,
+  expiry_date            DATE,
+  manufacturing_date     DATE,
+  quality_status         TEXT NOT NULL DEFAULT 'ACCEPTED' CHECK (quality_status IN ('ACCEPTED', 'REJECTED', 'PARTIAL')),
+  rejection_reason       TEXT,
+  -- batch_id: مفيش REFERENCES هنا مباشرة لأن inventory_batches معرّف بعد كدة في الملف (زي
+  -- order_items.recipe_version_id بالظبط في المرحلة 3) - الـFK بيتضاف بـALTER TABLE تحت
+  batch_id               INTEGER,
+  CHECK (accepted_quantity + rejected_quantity <= received_quantity + 0.0000001) -- سماحية تقريب عائمة بسيطة
+);
+CREATE INDEX idx_goods_receipt_items_grn ON goods_receipt_items(goods_receipt_id);
+CREATE INDEX idx_goods_receipt_items_po_item ON goods_receipt_items(purchase_order_item_id);
+CREATE INDEX idx_goods_receipt_items_item ON goods_receipt_items(inventory_item_id);
 
 -- وصفة تصنيع صنف مصنّع من مكونات خام/مصنّعة تانية (كام وحدة من كل مكوّن داخل عشان تنتج وحدة واحدة من الناتج)
 -- المرحلة 3: زي menu_item_variant_ingredients بالظبط - "جدول قراءة توافقي" (compatibility read model)،
@@ -420,6 +608,12 @@ CREATE TABLE inventory_batches (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_inventory_batches_item_branch ON inventory_batches(inventory_item_id, branch_id, status);
+
+-- المرحلة 4A: goods_receipt_items.batch_id اتعرّف قبل كدة في الملف (قبل inventory_batches) - الـFK
+-- بيتضاف هنا بعد ما الجدول المرجعي يتعرّف فعليًا (زي order_items.recipe_version_id بالظبط في المرحلة 3)
+ALTER TABLE goods_receipt_items ADD CONSTRAINT fk_goods_receipt_items_batch
+  FOREIGN KEY (batch_id) REFERENCES inventory_batches(id);
+CREATE INDEX idx_goods_receipt_items_batch ON goods_receipt_items(batch_id);
 
 -- لو الصنف المُحوَّل بين فرعين متتبّع بدفعات، كل جزء من الكمية بيتسجل هنا بهويته الأصلية (رقم الدفعة/
 -- الصلاحية/الإنتاج/التكلفة) - عشان الدفعة تفضل معروفة بنفس هويتها في الفرع المستلم بدل ما تتحول لرصيد
