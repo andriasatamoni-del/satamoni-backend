@@ -347,8 +347,10 @@ router.patch(
         return res.status(400).json({ error: "لازم اسم الطيار عشان تنقل الطلب لحالة (في الطريق)" });
       }
 
+      // synced_at بيترجع NULL عمدًا هنا - لو الطلب كان اتبعت للمركزي قبل كده (مزامنة الفروع)،
+      // ده بيخلي db/sync-worker.js يلقطه تاني ويبعت الحالة الجديدة بدل ما يفضل واقف على القديمة
       const result = await pool.query(
-        `UPDATE orders SET status = $1, driver_name = COALESCE($2, driver_name) WHERE id = $3 RETURNING *`,
+        `UPDATE orders SET status = $1, driver_name = COALESCE($2, driver_name), synced_at = NULL WHERE id = $3 RETURNING *`,
         [status, driverName || null, req.params.id]
       );
       await pool.query(
@@ -383,7 +385,7 @@ router.patch(
       }
 
       const result = await pool.query(
-        `UPDATE orders SET payment_status = $1 WHERE id = $2 RETURNING *`,
+        `UPDATE orders SET payment_status = $1, synced_at = NULL WHERE id = $2 RETURNING *`,
         [paymentStatus, req.params.id]
       );
       await pool.query(
@@ -440,8 +442,11 @@ router.post(
 
       await client.query("BEGIN");
 
+      // synced_at بيترجع NULL عمدًا - لو الطلب ده كان اتبعت للمركزي قبل الاسترجاع، لازم يترفع تاني
+      // بحالته الجديدة (ملغي/مسترجع) عشان الإيرادات المجمّعة مركزيًا متفضلش شايلة بيع اتلغى فعليًا
       await client.query(
-        `UPDATE orders SET status = 'cancelled', voided = TRUE, voided_by = $1, voided_at = now(), void_reason = $2
+        `UPDATE orders SET status = 'cancelled', voided = TRUE, voided_by = $1, voided_at = now(),
+         void_reason = $2, synced_at = NULL
          WHERE id = $3`,
         [finalApproverId, reason, order.id]
       );

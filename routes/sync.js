@@ -20,9 +20,13 @@ async function assertBranchExists(branchId) {
 }
 
 // POST /api/sync/orders
-// ملاحظة: مش بنحاول نربط delivery_area_id/payment_method_id/item_id/variant_id/created_by
-// بالمركزي، لأن IDs الفرع المحلي منفصلة تمامًا عن IDs المركزي. النسخة المركزية للتقارير
-// (الأرقام) بس، مش لإعادة فتح/تعديل الطلب من هناك.
+// ملاحظة: مش بنحاول نربط delivery_area_id/payment_method_id/item_id/variant_id/created_by/
+// voided_by/discount_approved_by بالمركزي، لأن IDs الفرع المحلي منفصلة تمامًا عن IDs المركزي
+// (نفس المستخدم/الصنف ممكن يكون بأرقام مختلفة تمامًا محليًا ومركزيًا). النسخة المركزية للتقارير
+// المجمّعة (الإيرادات/التكلفة/الربح) بس، مش لإعادة فتح/تعديل الطلب من هناك.
+// status/payment_status/voided قابلين للتحديث لو الطلب اتغيّر محليًا بعد أول مزامنة (زي استرجاع
+// طلب بعد ما كان اتبعت أصلًا) - عشان كده ON CONFLICT بيعمل UPDATE مش DO NOTHING، وبنمسح order_items
+// القديمة ونعيد إدخالها من جديد في كل مزامنة (مفيش هوية ثابتة لكل سطر صنف يوضح إنه هو نفسه القديم).
 router.post("/orders", async (req, res) => {
   const { branchId, orders } = req.body;
   if (!branchId || !Array.isArray(orders)) return res.status(400).json({ error: "بيانات ناقصة" });
@@ -33,34 +37,38 @@ router.post("/orders", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    let inserted = 0;
+    let processed = 0;
     for (const o of orders) {
       const result = await client.query(
         `INSERT INTO orders
           (branch_id, source, order_type, table_number, address_details,
            customer_name, customer_phone, subtotal, delivery_fee, discount, total,
-           status, created_at, sync_uuid, synced_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())
-         ON CONFLICT (sync_uuid) DO NOTHING
+           status, payment_status, voided, void_reason, created_at, sync_uuid, synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now())
+         ON CONFLICT (sync_uuid) DO UPDATE SET
+           status = EXCLUDED.status,
+           payment_status = EXCLUDED.payment_status,
+           voided = EXCLUDED.voided,
+           void_reason = EXCLUDED.void_reason,
+           synced_at = now()
          RETURNING id`,
         [branchId, o.source, o.order_type, o.table_number, o.address_details,
          o.customer_name, o.customer_phone, o.subtotal, o.delivery_fee, o.discount, o.total,
-         o.status, o.created_at, o.sync_uuid]
+         o.status, o.payment_status, o.voided || false, o.void_reason || null, o.created_at, o.sync_uuid]
       );
-      if (result.rows.length > 0) {
-        inserted++;
-        const orderId = result.rows[0].id;
-        for (const it of o.items || []) {
-          await client.query(
-            `INSERT INTO order_items (order_id, quantity, unit_price, line_total)
-             VALUES ($1, $2, $3, $4)`,
-            [orderId, it.quantity, it.unit_price, it.line_total]
-          );
-        }
+      processed++;
+      const orderId = result.rows[0].id;
+      await client.query("DELETE FROM order_items WHERE order_id = $1", [orderId]);
+      for (const it of o.items || []) {
+        await client.query(
+          `INSERT INTO order_items (order_id, quantity, unit_price, line_total, cost_at_sale, cost_at_sale_incomplete)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [orderId, it.quantity, it.unit_price, it.line_total, it.cost_at_sale, it.cost_at_sale_incomplete || false]
+        );
       }
     }
     await client.query("COMMIT");
-    res.json({ ok: true, inserted, received: orders.length });
+    res.json({ ok: true, processed, received: orders.length });
   } catch (err) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
@@ -110,6 +118,18 @@ router.post("/daily_cash_sessions", async (req, res) => {
   }
 });
 
+// بند المصروف بيتبعت بالاسم (categoryName) مش بالـ id، لأن expense_categories.id محلي للفرع ومختلف
+// عن المركزي - بندوّر على بند بنفس الاسم في المركزي، ولو مش موجود بننشئه (findOrCreate)
+async function findOrCreateExpenseCategory(client, name) {
+  const existing = await client.query("SELECT id FROM expense_categories WHERE name = $1", [name]);
+  if (existing.rows.length > 0) return existing.rows[0].id;
+  const created = await client.query(
+    "INSERT INTO expense_categories (name) VALUES ($1) RETURNING id",
+    [name]
+  );
+  return created.rows[0].id;
+}
+
 // POST /api/sync/expenses
 router.post("/expenses", async (req, res) => {
   const { branchId, rows } = req.body;
@@ -117,21 +137,28 @@ router.post("/expenses", async (req, res) => {
   if (!(await assertBranchExists(branchId))) {
     return res.status(400).json({ error: `مفيش فرع بالرقم ${branchId} في السيرفر المركزي` });
   }
+  const client = await pool.connect();
   try {
+    await client.query("BEGIN");
     let inserted = 0;
     for (const r of rows) {
-      const result = await pool.query(
-        `INSERT INTO expenses (branch_id, business_date, category, amount, notes, sync_uuid, synced_at)
+      const categoryId = await findOrCreateExpenseCategory(client, r.category_name);
+      const result = await client.query(
+        `INSERT INTO expenses (branch_id, business_date, category_id, amount, notes, sync_uuid, synced_at)
          VALUES ($1,$2,$3,$4,$5,$6, now())
          ON CONFLICT (sync_uuid) DO NOTHING
          RETURNING id`,
-        [branchId, r.business_date, r.category, r.amount, r.notes, r.sync_uuid]
+        [branchId, r.business_date, categoryId, r.amount, r.notes, r.sync_uuid]
       );
       if (result.rows.length > 0) inserted++;
     }
+    await client.query("COMMIT");
     res.json({ ok: true, inserted, received: rows.length });
   } catch (err) {
+    await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

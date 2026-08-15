@@ -11,7 +11,7 @@ const BRANCH_ID = process.env.CENTRAL_BRANCH_ID;
 const INTERVAL_MS = (Number(process.env.SYNC_INTERVAL_SECONDS) || 300) * 1000;
 const BATCH_LIMIT = 200;
 
-const SIMPLE_TABLES = ["daily_cash_sessions", "expenses", "purchases"];
+const SIMPLE_TABLES = ["daily_cash_sessions", "purchases"];
 
 if (!CENTRAL_URL || !SYNC_KEY || !BRANCH_ID) {
   console.log(
@@ -35,6 +35,9 @@ async function postJson(path, body) {
 }
 
 async function syncOrders() {
+  // status/payment_status/voided/discount بيترجعوا NULL لـ synced_at (من routes/orders.js) لما
+  // يتغيّروا بعد أول مزامنة - عشان كده نفس الشرط (synced_at IS NULL) بيلقط الطلبات الجديدة
+  // والطلبات القديمة اللي اتغيّرت محليًا (زي استرجاع Void) في نفس الوقت
   const { rows: orders } = await pool.query(
     `SELECT * FROM orders WHERE synced_at IS NULL ORDER BY id LIMIT $1`,
     [BATCH_LIMIT]
@@ -60,15 +63,39 @@ async function syncOrders() {
     discount: o.discount,
     total: o.total,
     status: o.status,
+    payment_status: o.payment_status,
+    voided: o.voided,
+    void_reason: o.void_reason,
     created_at: o.created_at,
     items: items
       .filter((it) => it.order_id === o.id)
-      .map((it) => ({ quantity: it.quantity, unit_price: it.unit_price, line_total: it.line_total })),
+      .map((it) => ({
+        quantity: it.quantity, unit_price: it.unit_price, line_total: it.line_total,
+        cost_at_sale: it.cost_at_sale, cost_at_sale_incomplete: it.cost_at_sale_incomplete,
+      })),
   }));
 
   await postJson("/api/sync/orders", { branchId: BRANCH_ID, orders: payload });
   await pool.query(`UPDATE orders SET synced_at = now() WHERE id = ANY($1)`, [orderIds]);
   return orders.length;
+}
+
+async function syncExpenses() {
+  // بنبعت اسم البند (category_name) مش الـ id، لأن expense_categories.id محلي وممكن يختلف عن
+  // نفس البند بالمركزي - المركزي بيدوّر/ينشئ بند بنفس الاسم (findOrCreate) لوحده
+  const { rows } = await pool.query(
+    `SELECT e.*, ec.name AS category_name
+     FROM expenses e
+     JOIN expense_categories ec ON ec.id = e.category_id
+     WHERE e.synced_at IS NULL ORDER BY e.id LIMIT $1`,
+    [BATCH_LIMIT]
+  );
+  if (rows.length === 0) return 0;
+
+  await postJson("/api/sync/expenses", { branchId: BRANCH_ID, rows });
+  const ids = rows.map((r) => r.id);
+  await pool.query(`UPDATE expenses SET synced_at = now() WHERE id = ANY($1)`, [ids]);
+  return rows.length;
 }
 
 async function syncSimpleTable(table) {
@@ -92,6 +119,7 @@ async function runOnce() {
   const results = {};
   try {
     results.orders = await syncOrders();
+    results.expenses = await syncExpenses();
     for (const table of SIMPLE_TABLES) {
       results[table] = await syncSimpleTable(table);
     }
