@@ -139,8 +139,8 @@
   }
 
   /* ===== Item modal (variant + modifiers) ===== */
-  #itemModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 55; }
-  #itemModalOverlay.show { display: flex; }
+  #itemModalOverlay, #pinModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 55; }
+  #itemModalOverlay.show, #pinModalOverlay.show { display: flex; }
   #itemModalBox { background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 20px; width: 340px; max-height: 82vh; overflow-y: auto; }
   #itemModalBox h3 { color: var(--gold-bright); margin: 0 0 12px; font-size: 16px; }
   #itemModalBox .section-label { font-size: 12px; color: var(--faint); margin: 10px 0 6px; }
@@ -230,6 +230,11 @@
 
     <div id="cartFooter">
       <div class="row"><span>الإجمالي الفرعي</span><span id="subtotalVal">0 ج.م</span></div>
+      <div class="row" style="align-items:center">
+        <span>خصم</span>
+        <input id="discountInput" type="number" min="0" value="0" style="width:90px;background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 8px;font-size:13px" />
+      </div>
+      <div id="discountApprovalNote" style="font-size:11px;color:var(--faint);margin-bottom:4px"></div>
       <div class="row total"><span>الإجمالي</span><span id="totalVal">0 ج.م</span></div>
       <div id="payRow"></div>
       <button id="submitBtn" disabled>أرسل الطلب</button>
@@ -260,6 +265,17 @@
   </div>
 </div>
 
+<div id="pinModalOverlay">
+  <div id="itemModalBox">
+    <h3 id="pinModalTitle">موافقة مدير الفرع/الأدمن</h3>
+    <div id="pinModalMsg" style="font-size:12px;color:var(--faint);margin-bottom:10px"></div>
+    <input id="pinInput" type="password" inputmode="numeric" maxlength="6" placeholder="PIN" style="width:100%;background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:12px;font-size:16px;text-align:center;margin-bottom:8px" />
+    <div id="pinModalErr" style="color:#F08A83;font-size:12px;margin-bottom:8px;min-height:16px"></div>
+    <button id="pinModalSubmit"></button>
+    <button id="pinModalCancel">إلغاء</button>
+  </div>
+</div>
+
 <script>
 // ============================================================
 // إعدادات الاتصال بالـ Backend — عدّل العنوان ده لعنوان السيرفر الفعلي
@@ -282,6 +298,8 @@ const state = {
   orderType: "takeaway",
   selectedBranchId: "",
   selectedPaymentId: "",
+  maxUnapprovedDiscountPercent: 0.1,
+  discountApproval: null, // { approverId, approverName } - لما الخصم فوق الحد المسموح
 };
 
 function priceFor(variant) {
@@ -366,6 +384,14 @@ async function loadConfig() {
     state.selectedBranchId = ownBranchId || data.branches[0]?.id || "";
     state.selectedPaymentId = data.paymentMethods.find(p => p.enabled)?.id || "";
     state.activeCategory = [...new Set(menuForChannel().map(m => m.category))][0];
+
+    try {
+      const settingsRes = await fetch(`${API_BASE_URL}/api/pos-settings`, { headers: { Authorization: `Bearer ${auth.token}` } });
+      if (settingsRes.ok) {
+        const settings = await settingsRes.json();
+        state.maxUnapprovedDiscountPercent = Number(settings.max_unapproved_discount_percent);
+      }
+    } catch (e) { /* لو فشل، هيفضل الحد الافتراضي 10% */ }
 
     document.getElementById("connDot").className = "dot ok";
     document.getElementById("connText").textContent = "متصل بالسيرفر";
@@ -616,9 +642,75 @@ function renderCart() {
 
   const subtotal = rows.reduce((s, [,v]) => s + v.price * v.qty, 0);
   document.getElementById("subtotalVal").textContent = money(subtotal);
-  document.getElementById("totalVal").textContent = money(subtotal);
+  document.getElementById("totalVal").textContent = money(Math.max(subtotal - currentDiscount(), 0));
+  updateDiscountNote();
   updateSubmitState();
 }
+
+function currentDiscount() {
+  return Number(document.getElementById("discountInput").value) || 0;
+}
+function discountNeedsApproval() {
+  const subtotal = Object.values(state.cart).reduce((s, v) => s + v.price * v.qty, 0);
+  const discount = currentDiscount();
+  if (discount <= 0 || subtotal <= 0) return false;
+  return (discount / subtotal) > state.maxUnapprovedDiscountPercent;
+}
+function updateDiscountNote() {
+  const note = document.getElementById("discountApprovalNote");
+  if (discountNeedsApproval() && !state.discountApproval) {
+    note.textContent = `⚠️ الخصم ده فوق ${Math.round(state.maxUnapprovedDiscountPercent * 100)}% ومحتاج موافقة مدير/أدمن (PIN) وقت الإرسال`;
+    note.style.color = "#F08A83";
+  } else if (state.discountApproval) {
+    note.textContent = `✅ الخصم متوافق عليه من ${state.discountApproval.approverName}`;
+    note.style.color = "var(--green)";
+  } else {
+    note.textContent = "";
+  }
+}
+document.getElementById("discountInput").addEventListener("input", () => {
+  state.discountApproval = null;
+  renderCart();
+});
+
+// ---------------- مودال موافقة PIN (خصومات كبيرة / استرجاع طلبات) ----------------
+let pinModalResolve = null;
+function openPinModal(msg) {
+  document.getElementById("pinModalMsg").textContent = msg;
+  document.getElementById("pinInput").value = "";
+  document.getElementById("pinModalErr").textContent = "";
+  document.getElementById("pinModalSubmit").textContent = "تأكيد";
+  document.getElementById("pinModalOverlay").classList.add("show");
+  document.getElementById("pinInput").focus();
+  return new Promise((resolve) => { pinModalResolve = resolve; });
+}
+function closePinModal(result) {
+  document.getElementById("pinModalOverlay").classList.remove("show");
+  if (pinModalResolve) { pinModalResolve(result); pinModalResolve = null; }
+}
+document.getElementById("pinModalCancel").onclick = () => closePinModal(null);
+document.getElementById("pinModalSubmit").onclick = async () => {
+  const pin = document.getElementById("pinInput").value.trim();
+  const errBox = document.getElementById("pinModalErr");
+  errBox.textContent = "";
+  if (!pin) { errBox.textContent = "دخّل الـ PIN"; return; }
+  const btn = document.getElementById("pinModalSubmit");
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/auth/verify-override-pin`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+      body: JSON.stringify({ pin, branchId: state.selectedBranchId }),
+    });
+    const data = await res.json();
+    if (!res.ok) { errBox.textContent = data.error || "PIN غير صحيح"; return; }
+    closePinModal(data);
+  } catch (e) {
+    errBox.textContent = "تعذر التحقق، حاول تاني";
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 function updateSubmitState() {
   const rows = Object.entries(state.cart);
@@ -661,9 +753,17 @@ document.getElementById("tableInput").addEventListener("input", updateSubmitStat
 document.getElementById("submitBtn").onclick = async () => {
   const btn = document.getElementById("submitBtn");
   const errBox = document.getElementById("errBox");
+  errBox.textContent = "";
+
+  if (discountNeedsApproval() && !state.discountApproval) {
+    const approval = await openPinModal("الخصم ده فوق الحد المسموح - دخّل PIN مدير الفرع أو الأدمن للموافقة:");
+    if (!approval) return;
+    state.discountApproval = approval;
+    updateDiscountNote();
+  }
+
   btn.disabled = true;
   btn.textContent = "جاري الإرسال...";
-  errBox.textContent = "";
   try {
     const isTalabat = state.channel === "talabat";
     const payload = {
@@ -674,6 +774,8 @@ document.getElementById("submitBtn").onclick = async () => {
       customerPhone: !isTalabat ? (document.getElementById("phoneInput").value.trim() || null) : null,
       paymentMethodId: state.selectedPaymentId,
       deliveryFee: 0,
+      discount: isTalabat ? 0 : currentDiscount(),
+      discountApprovedBy: !isTalabat && state.discountApproval ? state.discountApproval.approverId : null,
       items: Object.values(state.cart).map(v => v.comboId
         ? { comboId: v.comboId, unitPrice: v.price, quantity: v.qty }
         : { itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty, modifiers: v.modifiers || [] }
@@ -705,8 +807,10 @@ document.getElementById("submitBtn").onclick = async () => {
 
 document.getElementById("newOrderBtn").onclick = () => {
   state.cart = {};
+  state.discountApproval = null;
   document.getElementById("tableInput").value = "";
   document.getElementById("phoneInput").value = "";
+  document.getElementById("discountInput").value = "0";
   document.getElementById("confirmOverlay").classList.remove("show");
   renderCart();
 };

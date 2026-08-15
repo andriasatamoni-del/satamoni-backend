@@ -26,8 +26,17 @@ CREATE TABLE users (
   password_hash TEXT NOT NULL,
   role          TEXT NOT NULL CHECK (role IN ('admin', 'branch_manager', 'accountant', 'cashier', 'callcenter')),
   is_active     BOOLEAN DEFAULT TRUE,
+  pin_hash      TEXT, -- PIN قصير (4-6 أرقام) لمدير الفرع/الأدمن بس - لموافقة الخصومات الكبيرة واسترجاع الطلبات
+                       -- من غير ما يسجلوا خروج ودخول تاني على جهاز الكاشير
   created_at    TIMESTAMPTZ DEFAULT now()
 );
+
+-- إعدادات نقطة البيع (صف واحد بس، زي payroll_settings)
+CREATE TABLE pos_settings (
+  id                             INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  max_unapproved_discount_percent NUMERIC NOT NULL DEFAULT 0.10 -- خصم لغاية 10% الكاشير يعمله لوحده، فوق كده لازم موافقة PIN
+);
+INSERT INTO pos_settings (id) VALUES (1);
 
 -- ---------------- المنيو ----------------
 CREATE TABLE menu_categories (
@@ -121,6 +130,9 @@ CREATE TABLE orders (
   subtotal          NUMERIC NOT NULL DEFAULT 0,
   delivery_fee      NUMERIC NOT NULL DEFAULT 0,
   discount          NUMERIC NOT NULL DEFAULT 0,
+  -- خصم فوق الحد المسموح للكاشير من غير موافقة (pos_settings.max_unapproved_discount_percent)
+  -- لازم يتسجل هنا مين المدير/الأدمن اللي وافق عليه (عن طريق PIN)
+  discount_approved_by INTEGER REFERENCES users(id),
   total             NUMERIC NOT NULL DEFAULT 0,
   -- دورة حياة الطلب: تحت التحضير -> (للدليفري بس) في الطريق -> مكتمل/تم التسليم، أو ملغي في أي وقت
   status            TEXT NOT NULL DEFAULT 'preparing'
@@ -128,6 +140,12 @@ CREATE TABLE orders (
   driver_name       TEXT, -- اسم الطيار اللي معاه الأوردر (بيتسجل وقت التحويل لحالة "في الطريق")
   -- حالة التحصيل: مستقلة عن حالة الطلب - كاش بيتسجل "محصّل" أوتوماتيك، فيزا/محفظة/آجل "تحت التحصيل" لحد ما يتأكد
   payment_status    TEXT NOT NULL DEFAULT 'collected' CHECK (payment_status IN ('collected', 'pending_collection')),
+  -- استرجاع طلب مكتمل بالغلط (Void) - بيرجّع حالته لـ 'cancelled' (يستبعده من الإيرادات زي أي إلغاء)
+  -- بس بيتفرّق عن الإلغاء العادي قبل التنفيذ بالأعمدة دي، ولازم موافقة مدير/أدمن دايمًا
+  voided            BOOLEAN NOT NULL DEFAULT FALSE,
+  voided_by         INTEGER REFERENCES users(id),
+  voided_at         TIMESTAMPTZ,
+  void_reason       TEXT,
   created_at        TIMESTAMPTZ DEFAULT now(),
   sync_uuid         UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE, -- هوية ثابتة عبر الفروع لمزامنة السيرفر المركزي
   synced_at         TIMESTAMPTZ -- NULL يعني لسه محتاج يترفع للمركزي

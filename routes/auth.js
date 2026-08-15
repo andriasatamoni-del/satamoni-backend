@@ -55,4 +55,29 @@ router.get("/me", requireAuth, (req, res) => {
   res.json(req.user);
 });
 
+// POST /api/auth/verify-override-pin - {pin, branchId?} -> {approverId, approverName}
+// موافقة مدير الفرع/الأدمن بـ PIN من غير ما يسجل خروج ودخول تاني على جهاز الكاشير - مستخدمة
+// للخصومات اللي فوق الحد المسموح واسترجاع الطلبات المكتملة (Void). أي موظف مسجل دخول يقدر يطلبها،
+// بس بترجع موافقة صحيحة بس لو الـ PIN فعلاً بتاع مدير فرع (نفس الفرع) أو أدمن.
+router.post("/verify-override-pin", requireAuth, async (req, res) => {
+  const { pin, branchId } = req.body;
+  if (!pin) return res.status(400).json({ error: "لازم تدخل PIN" });
+  try {
+    const candidates = await pool.query(
+      `SELECT id, name, pin_hash FROM users
+       WHERE is_active = TRUE AND pin_hash IS NOT NULL
+         AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $1))`,
+      [branchId || null]
+    );
+    for (const candidate of candidates.rows) {
+      if (await bcrypt.compare(pin, candidate.pin_hash)) {
+        return res.json({ approverId: candidate.id, approverName: candidate.name });
+      }
+    }
+    res.status(401).json({ error: "PIN غير صحيح" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

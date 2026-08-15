@@ -16,7 +16,8 @@ router.get("/", requireRole("admin", "branch_manager"), async (req, res) => {
   }
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.role, u.is_active, u.branch_id, b.name AS branch_name, u.created_at
+      `SELECT u.id, u.name, u.email, u.role, u.is_active, u.branch_id, b.name AS branch_name, u.created_at,
+              (u.pin_hash IS NOT NULL) AS has_pin
        FROM users u
        LEFT JOIN branches b ON b.id = u.branch_id
        WHERE ($1::int IS NULL OR u.branch_id = $1)
@@ -57,10 +58,11 @@ router.post("/", requireRole("admin"), async (req, res) => {
   }
 });
 
-// PATCH /api/users/:id - تعديل دور/فرع/تفعيل، أو تغيير كلمة المرور (أدمن بس)
+// PATCH /api/users/:id - تعديل دور/فرع/تفعيل، تغيير كلمة المرور، أو تعيين/تصفير PIN (أدمن بس)
+// PIN بتاع موافقة الخصومات الكبيرة واسترجاع الطلبات - بيتحدد بس لمدير فرع/أدمن (4-6 أرقام)
 router.patch("/:id", requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { role, branchId, isActive, password } = req.body;
+  const { role, branchId, isActive, password, pin } = req.body;
   const fields = [];
   const values = [];
   let i = 1;
@@ -73,13 +75,24 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
     fields.push(`password_hash = $${i++}`);
     values.push(passwordHash);
   }
+  if (pin !== undefined) {
+    if (pin === null) {
+      fields.push(`pin_hash = $${i++}`);
+      values.push(null);
+    } else {
+      if (!/^\d{4,6}$/.test(pin)) return res.status(400).json({ error: "الـ PIN لازم يكون رقم من 4 لـ 6 خانات" });
+      const pinHash = await bcrypt.hash(pin, 10);
+      fields.push(`pin_hash = $${i++}`);
+      values.push(pinHash);
+    }
+  }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
 
   values.push(id);
   try {
     const result = await pool.query(
       `UPDATE users SET ${fields.join(", ")} WHERE id = $${i}
-       RETURNING id, name, email, role, branch_id, is_active, created_at`,
+       RETURNING id, name, email, role, branch_id, is_active, created_at, (pin_hash IS NOT NULL) AS has_pin`,
       values
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "المستخدم مش موجود" });

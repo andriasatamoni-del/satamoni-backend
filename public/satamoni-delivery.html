@@ -58,6 +58,14 @@
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
   #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+
+  #pinModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 65; }
+  #pinModalOverlay.show { display: flex; }
+  #pinModalBox { background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 20px; width: 300px; text-align: center; }
+  #pinModalBox h3 { color: var(--gold-bright); margin: 0 0 10px; font-size: 15px; }
+  #pinModalBox input { width: 100%; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 16px; text-align: center; margin-bottom: 8px; }
+  #pinModalBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; margin-top: 6px; }
+  #pinModalBox button#pinModalCancel { background: transparent; border: 1px solid var(--line); color: var(--faint); font-weight: 700; }
 </style>
 </head>
 <body>
@@ -97,6 +105,17 @@
   </div>
   <div id="ordersList"></div>
   <div id="emptyState" style="display:none">مفيش طلبات مطابقة</div>
+</div>
+
+<div id="pinModalOverlay">
+  <div id="pinModalBox">
+    <h3>موافقة مدير الفرع/الأدمن</h3>
+    <div id="pinModalMsg" style="font-size:12px;color:var(--faint);margin-bottom:10px"></div>
+    <input id="pinInput" type="password" inputmode="numeric" maxlength="6" placeholder="PIN" />
+    <div id="pinModalErr" style="color:#F08A83;font-size:12px;margin-bottom:8px;min-height:16px"></div>
+    <button id="pinModalSubmit">تأكيد</button>
+    <button id="pinModalCancel">إلغاء</button>
+  </div>
 </div>
 
 <script>
@@ -220,12 +239,13 @@ function renderOrders(orders) {
       <div class="head">
         <span class="oid">#${o.id} — ${orderTypeLabels[o.order_type] || o.order_type} — ${branchName(o.branch_id)}</span>
         <span>
-          <span class="badge ${o.status}">${statusLabels[o.status] || o.status}</span>
+          <span class="badge ${o.status}">${statusLabels[o.status] || o.status}${o.voided ? " (استرجاع)" : ""}</span>
           <span class="badge ${o.payment_status}">${paymentLabels[o.payment_status] || o.payment_status}</span>
         </span>
       </div>
       <div class="meta">${o.customer_name || "بدون اسم"} — ${o.customer_phone || "—"}${o.address_details ? " — " + o.address_details : ""}</div>
       ${o.driver_name ? `<div class="meta">🛵 الطيار: ${o.driver_name}</div>` : ""}
+      ${o.voided ? `<div class="meta" style="color:#F08A83">🗑️ استرجاع: ${o.void_reason || "—"}</div>` : ""}
       <div class="meta">الإجمالي: ${money(o.total)} — ${new Date(o.created_at).toLocaleString("ar-EG")}</div>
       <div class="actions" data-actions></div>
       <div class="items" data-detail style="display:none"></div>
@@ -256,6 +276,9 @@ function renderActions(card, order) {
   if (order.payment_status === "pending_collection" && order.status !== "cancelled") {
     btns.push(`<button data-act="collect">💰 تأكيد التحصيل</button>`);
   }
+  if (order.status === "completed" && !order.voided) {
+    btns.push(`<button class="danger" data-act="void">🗑️ استرجاع (Void)</button>`);
+  }
   wrap.innerHTML = btns.join("");
   wrap.querySelectorAll("button").forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); handleAction(order, btn.dataset.act); };
@@ -276,10 +299,57 @@ async function handleAction(order, act) {
       await api(`/api/orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) });
     } else if (act === "collect") {
       await api(`/api/orders/${order.id}/payment-status`, { method: "PATCH", body: JSON.stringify({ paymentStatus: "collected" }) });
+    } else if (act === "void") {
+      const reason = prompt(`سبب استرجاع الطلب #${order.id} (Void):`);
+      if (!reason) return;
+      let approverId = null;
+      if (auth.user.role !== "admin" && auth.user.role !== "branch_manager") {
+        const approval = await openPinModal("استرجاع الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:", order.branch_id);
+        if (!approval) return;
+        approverId = approval.approverId;
+      }
+      await api(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approverId }) });
     }
     loadOrders();
   } catch (e) { alert(e.message); }
 }
+
+// ---------------- مودال موافقة PIN (استرجاع الطلبات) ----------------
+let pinModalResolve = null;
+let pinModalBranchId = null;
+function openPinModal(msg, branchId) {
+  pinModalBranchId = branchId || null;
+  document.getElementById("pinModalMsg").textContent = msg;
+  document.getElementById("pinInput").value = "";
+  document.getElementById("pinModalErr").textContent = "";
+  document.getElementById("pinModalOverlay").classList.add("show");
+  document.getElementById("pinInput").focus();
+  return new Promise((resolve) => { pinModalResolve = resolve; });
+}
+function closePinModal(result) {
+  document.getElementById("pinModalOverlay").classList.remove("show");
+  if (pinModalResolve) { pinModalResolve(result); pinModalResolve = null; }
+}
+document.getElementById("pinModalCancel").onclick = () => closePinModal(null);
+document.getElementById("pinModalSubmit").onclick = async () => {
+  const pin = document.getElementById("pinInput").value.trim();
+  const errBox = document.getElementById("pinModalErr");
+  errBox.textContent = "";
+  if (!pin) { errBox.textContent = "دخّل الـ PIN"; return; }
+  const btn = document.getElementById("pinModalSubmit");
+  btn.disabled = true;
+  try {
+    const data = await api("/api/auth/verify-override-pin", {
+      method: "POST",
+      body: JSON.stringify({ pin, branchId: pinModalBranchId }),
+    });
+    closePinModal(data);
+  } catch (e) {
+    errBox.textContent = e.message || "PIN غير صحيح";
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 async function toggleDetail(card, order) {
   const box = card.querySelector("[data-detail]");

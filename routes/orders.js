@@ -33,15 +33,38 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       branchId, source, orderType, tableNumber,
       deliveryAreaId, addressDetails, customerName, customerPhone, customerPhone2,
       distinguishingMark, paymentMethodId, items, deliveryFee = 0, discount = 0,
+      discountApprovedBy,
     } = req.body;
 
     if ((source === "pos" || source === "talabat") && !assertOwnBranch(req.user, branchId)) {
       return res.status(403).json({ error: "معندكش صلاحية تسجل طلب على فرع تاني" });
     }
 
+    const subtotal = items.reduce((s, it) => s + it.unitPrice * it.quantity, 0);
+
+    // خصم فوق النسبة المسموحة للكاشير لوحده لازم يبقى معاه موافقة مدير/أدمن اتاكدنا منها بـ PIN
+    // (verify-override-pin) - بنتأكد من صحتها تاني هنا من السيرفر، مش بس بنصدّق الفرونت إند
+    if (discount > 0 && subtotal > 0) {
+      const settings = await client.query("SELECT max_unapproved_discount_percent FROM pos_settings WHERE id = 1");
+      const maxUnapproved = Number(settings.rows[0]?.max_unapproved_discount_percent ?? 0.1);
+      if (discount / subtotal > maxUnapproved) {
+        if (!discountApprovedBy) {
+          return res.status(400).json({ error: "الخصم ده محتاج موافقة مدير الفرع أو الأدمن" });
+        }
+        const approver = await client.query(
+          `SELECT id FROM users
+           WHERE id = $1 AND is_active = TRUE
+             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
+          [discountApprovedBy, branchId]
+        );
+        if (approver.rows.length === 0) {
+          return res.status(400).json({ error: "الموافقة على الخصم غير صالحة" });
+        }
+      }
+    }
+
     await client.query("BEGIN");
 
-    const subtotal = items.reduce((s, it) => s + it.unitPrice * it.quantity, 0);
     const total = subtotal + deliveryFee - discount;
     const createdBy = source === "pos" || source === "callcenter" || source === "talabat" ? req.user.id : null;
 
@@ -64,12 +87,12 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       `INSERT INTO orders
         (branch_id, source, order_type, table_number, delivery_area_id,
          address_details, customer_name, customer_phone, payment_method_id,
-         created_by, subtotal, delivery_fee, discount, total, status, payment_status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, customerName, customerPhone, paymentMethodId,
-       createdBy, subtotal, deliveryFee, discount, total, initialStatus, initialPaymentStatus]
+       createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus]
     );
     const orderId = orderResult.rows[0].id;
 
@@ -370,6 +393,101 @@ router.patch(
       res.json(result.rows[0]);
     } catch (err) {
       res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// POST /api/orders/:id/void - استرجاع طلب مكتمل اتسجل بالغلط (Void) - بيرجّعه لحالة "ملغي" (يستبعده من
+// الإيرادات في التقارير زي أي إلغاء) وبيرجّع المخزون اللي كان اتخصم وقته. لازم موافقة مدير الفرع/الأدمن
+// دايمًا: لو اللي بيسترجع نفسه مدير فرع/أدمن بيوافق بحسابه على طول، غيره لازم PIN معتمد (approverId من
+// verify-override-pin). حالة التحصيل (اتحصّل الفلوس فعليًا ولا لأ) مبتتغيّرش أوتوماتيك هنا - لو الفلوس
+// كانت اتحصّلت فعلاً، ده محتاج تسوية كاش يدوية منفصلة، مش جزء من الاسترجاع نفسه.
+router.post(
+  "/:id/void",
+  requireAuth,
+  requireRole("cashier", "branch_manager", "admin", "callcenter"),
+  async (req, res) => {
+    const { reason, approverId } = req.body;
+    if (!reason) return res.status(400).json({ error: "لازم سبب الاسترجاع" });
+
+    const client = await pool.connect();
+    try {
+      const orderRes = await client.query("SELECT * FROM orders WHERE id = $1", [req.params.id]);
+      if (orderRes.rows.length === 0) return res.status(404).json({ error: "الطلب مش موجود" });
+      const order = orderRes.rows[0];
+
+      if ((req.user.role === "cashier" || req.user.role === "branch_manager") && !assertOwnBranch(req.user, order.branch_id)) {
+        return res.status(403).json({ error: "معندكش صلاحية تسترجع طلب فرع تاني" });
+      }
+      if (order.status !== "completed" || order.voided) {
+        return res.status(400).json({ error: "الاسترجاع (Void) بس للطلبات المكتملة اللي لسه ما اتسترجعتش" });
+      }
+
+      let finalApproverId;
+      if (req.user.role === "admin" || req.user.role === "branch_manager") {
+        finalApproverId = req.user.id;
+      } else {
+        if (!approverId) return res.status(400).json({ error: "استرجاع الطلب محتاج موافقة مدير الفرع أو الأدمن" });
+        const approver = await client.query(
+          `SELECT id FROM users
+           WHERE id = $1 AND is_active = TRUE
+             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
+          [approverId, order.branch_id]
+        );
+        if (approver.rows.length === 0) return res.status(400).json({ error: "الموافقة على الاسترجاع غير صالحة" });
+        finalApproverId = approverId;
+      }
+
+      await client.query("BEGIN");
+
+      await client.query(
+        `UPDATE orders SET status = 'cancelled', voided = TRUE, voided_by = $1, voided_at = now(), void_reason = $2
+         WHERE id = $3`,
+        [finalApproverId, reason, order.id]
+      );
+      await client.query(
+        `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, 'cancelled', $2, $3)`,
+        [order.id, req.user.id, `استرجاع (Void) - ${reason}`]
+      );
+
+      // إرجاع المخزون اللي كان اتخصم وقت البيع - نفس منطق خصم الـ BOM وقت إنشاء الطلب بالظبط بس بالعكس
+      if (order.branch_id) {
+        const reversalIngredients = `
+          SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * oi.quantity::numeric AS qty
+          FROM order_items oi
+          JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi.variant_id
+          WHERE oi.order_id = $1 AND oi.variant_id IS NOT NULL
+          UNION ALL
+          SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi.quantity::numeric AS qty
+          FROM order_items oi
+          JOIN combo_items ci ON ci.combo_id = oi.combo_id
+          JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = ci.variant_id
+          WHERE oi.order_id = $1 AND oi.combo_id IS NOT NULL`;
+
+        await client.query(
+          `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
+           SELECT $2, sub.inventory_item_id, SUM(sub.qty) FROM (${reversalIngredients}) sub
+           GROUP BY sub.inventory_item_id
+           ON CONFLICT (branch_id, inventory_item_id)
+           DO UPDATE SET quantity = branch_inventory_stock.quantity + EXCLUDED.quantity`,
+          [order.id, order.branch_id]
+        );
+        await client.query(
+          `INSERT INTO inventory_movements (branch_id, inventory_item_id, movement_type, quantity, order_id, business_date)
+           SELECT $2, sub.inventory_item_id, 'adjustment', SUM(sub.qty), $1, CURRENT_DATE FROM (${reversalIngredients}) sub
+           GROUP BY sub.inventory_item_id`,
+          [order.id, order.branch_id]
+        );
+      }
+
+      await client.query("COMMIT");
+      const updated = await pool.query("SELECT * FROM orders WHERE id = $1", [order.id]);
+      res.json(updated.rows[0]);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   }
 );

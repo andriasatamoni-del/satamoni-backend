@@ -27,6 +27,7 @@ app.use("/api/sync", require("./routes/sync"));
 app.use("/api/reports", require("./routes/reports"));
 app.use("/api/payroll", require("./routes/payroll"));
 app.use("/api/config", require("./routes/config"));
+app.use("/api/pos-settings", require("./routes/pos-settings"));
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 

@@ -23,13 +23,13 @@
   #main { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
   h1 { font-size: 18px; color: var(--gold-bright); margin-bottom: 16px; }
 
-  #userForm, #branchForm { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 24px; }
-  #userForm .row, #branchForm .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-  #userForm input, #userForm select, #branchForm input, #branchForm select {
+  #userForm, #branchForm, #posSettingsForm { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 24px; }
+  #userForm .row, #branchForm .row, #posSettingsForm .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  #userForm input, #userForm select, #branchForm input, #branchForm select, #posSettingsForm input {
     flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink);
     border-radius: 6px; padding: 9px 10px; font-size: 13px;
   }
-  #userForm button, #branchForm button {
+  #userForm button, #branchForm button, #posSettingsForm button {
     padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff;
     font-weight: 800; cursor: pointer; font-size: 13px;
   }
@@ -119,10 +119,20 @@
   </div>
 
   <h1>الموظفين الحاليين</h1>
-  <table>
-    <thead><tr><th>الاسم</th><th>البريد</th><th>الدور</th><th>الفرع</th><th>الحالة</th><th></th></tr></thead>
+  <table style="margin-bottom:24px">
+    <thead><tr><th>الاسم</th><th>البريد</th><th>الدور</th><th>الفرع</th><th>الحالة</th><th>PIN موافقة</th><th></th></tr></thead>
     <tbody id="usersBody"></tbody>
   </table>
+
+  <h1>إعدادات نقطة البيع</h1>
+  <div id="posSettingsForm">
+    <div class="row">
+      <label class="chk" style="flex:0 0 auto">أقصى خصم بدون موافقة مدير/أدمن (%)</label>
+      <input id="maxDiscountInput" type="number" min="0" max="100" step="1" style="max-width:100px" />
+      <button id="posSettingsSubmit">حفظ</button>
+    </div>
+    <div id="posSettingsErr" class="err"></div>
+  </div>
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية أدمن على الحساب ده.</div>
@@ -199,6 +209,7 @@ async function boot() {
   document.getElementById("accessDenied").style.display = "none";
   await loadBranches();
   await loadUsers();
+  await loadPosSettings();
 }
 
 async function loadBranches() {
@@ -248,6 +259,7 @@ document.getElementById("branchSubmit").onclick = async () => {
 async function loadUsers() {
   const users = await api("/api/users");
   const roleLabels = { admin: "أدمن", branch_manager: "مدير فرع", accountant: "محاسب", cashier: "كاشير", callcenter: "كول سنتر" };
+  const canHavePin = (role) => role === "admin" || role === "branch_manager";
   document.getElementById("usersBody").innerHTML = users.map(u => `
     <tr>
       <td>${u.name}</td>
@@ -255,16 +267,53 @@ async function loadUsers() {
       <td>${roleLabels[u.role] || u.role}</td>
       <td>${u.branch_name || "—"}</td>
       <td><span class="badge ${u.is_active ? "active" : "inactive"}">${u.is_active ? "شغال" : "معطّل"}</span></td>
+      <td>${canHavePin(u.role)
+        ? `<span class="badge ${u.has_pin ? "active" : "inactive"}">${u.has_pin ? "متحدد" : "مش متحدد"}</span>
+           <button class="linkbtn" data-setpin="${u.id}" data-name="${u.name}">${u.has_pin ? "تغيير" : "تحديد"}</button>`
+        : "—"}
+      </td>
       <td><button class="linkbtn" data-id="${u.id}" data-active="${u.is_active}">${u.is_active ? "تعطيل" : "تفعيل"}</button></td>
     </tr>`).join("");
-  document.querySelectorAll("#usersBody .linkbtn").forEach(btn => {
+  document.querySelectorAll("#usersBody button[data-id]").forEach(btn => {
     btn.onclick = async () => {
       const isActive = btn.dataset.active === "true";
       await api(`/api/users/${btn.dataset.id}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
       loadUsers();
     };
   });
+  document.querySelectorAll("#usersBody button[data-setpin]").forEach(btn => {
+    btn.onclick = async () => {
+      const pin = prompt(`PIN جديد لـ "${btn.dataset.name}" (4-6 أرقام) - بيستخدمه للموافقة على الخصومات الكبيرة واسترجاع الطلبات:`);
+      if (pin === null) return;
+      if (pin === "") {
+        await api(`/api/users/${btn.dataset.setpin}`, { method: "PATCH", body: JSON.stringify({ pin: null }) });
+        loadUsers();
+        return;
+      }
+      if (!/^\d{4,6}$/.test(pin)) { alert("الـ PIN لازم يكون رقم من 4 لـ 6 خانات"); return; }
+      try {
+        await api(`/api/users/${btn.dataset.setpin}`, { method: "PATCH", body: JSON.stringify({ pin }) });
+        loadUsers();
+      } catch (e) { alert(e.message); }
+    };
+  });
 }
+
+// ---------------- إعدادات نقطة البيع ----------------
+async function loadPosSettings() {
+  const settings = await api("/api/pos-settings");
+  document.getElementById("maxDiscountInput").value = Math.round(Number(settings.max_unapproved_discount_percent) * 100);
+}
+document.getElementById("posSettingsSubmit").onclick = async () => {
+  const errBox = document.getElementById("posSettingsErr");
+  errBox.textContent = "";
+  try {
+    const percent = Number(document.getElementById("maxDiscountInput").value) / 100;
+    await api("/api/pos-settings", { method: "PATCH", body: JSON.stringify({ maxUnapprovedDiscountPercent: percent }) });
+    errBox.style.color = "var(--green)";
+    errBox.textContent = "اتحفظ ✓";
+  } catch (e) { errBox.style.color = "#F08A83"; errBox.textContent = e.message; }
+};
 
 document.getElementById("createBtn").onclick = async () => {
   const errBox = document.getElementById("formErr");
