@@ -295,8 +295,17 @@ async function loadCategories() {
       const id = btn.dataset.savecat;
       const displayOrder = Number(document.querySelector(`[data-catorder="${id}"]`).value || 0);
       const menuGroup = document.querySelector(`[data-catgroup="${id}"]`).value;
-      await api(`/api/menu/categories/${id}`, { method: "PATCH", body: JSON.stringify({ displayOrder, menuGroup }) });
-      await loadCategories();
+      // ملحوظة: عمدًا مش بنعمل loadCategories() تاني هنا - لو المستخدم بيعدّل ترتيب أكتر
+      // من قسم مرة واحدة، إعادة تحميل الجدول كامل كانت بتمسح التعديلات اللي لسه ما اتحفظتش
+      // في باقي الصفوف. بدالها بنأكد الحفظ بصريًا بس على الصف ده.
+      const originalText = btn.textContent;
+      try {
+        await api(`/api/menu/categories/${id}`, { method: "PATCH", body: JSON.stringify({ displayOrder, menuGroup }) });
+        btn.textContent = "✓ اتحفظ";
+        setTimeout(() => { btn.textContent = originalText; }, 1200);
+      } catch (e) {
+        alert(e.message);
+      }
     };
   });
 }
