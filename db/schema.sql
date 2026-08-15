@@ -48,7 +48,8 @@ CREATE TABLE pos_settings (
   max_unapproved_discount_percent NUMERIC NOT NULL DEFAULT 0.10, -- خصم لغاية 10% الكاشير يعمله لوحده، فوق كده لازم موافقة PIN
   discount_manager_max_percent   NUMERIC NOT NULL DEFAULT 0.15, -- خصم لغاية 15% مدير الفرع يقدر يوافق عليه، فوق كده لازم أدمن
   loyalty_points_per_egp         NUMERIC NOT NULL DEFAULT 0.1, -- نقاط ولاء لكل جنيه يتصرف (افتراضيًا نقطة واحدة لكل 10 ج.م)
-  batch_consumption_method       TEXT NOT NULL DEFAULT 'FEFO' CHECK (batch_consumption_method IN ('FEFO', 'FIFO')) -- طريقة الصرف من الدفعات: الأقرب انتهاءً أو الأقدم دخولًا
+  batch_consumption_method       TEXT NOT NULL DEFAULT 'FEFO' CHECK (batch_consumption_method IN ('FEFO', 'FIFO')), -- طريقة الصرف من الدفعات: الأقرب انتهاءً أو الأقدم دخولًا
+  production_variance_alert_percent NUMERIC NOT NULL DEFAULT 10 -- فرق الإنتاج (مخطط مقابل فعلي) فوق النسبة دي لازم له سبب مكتوب
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -203,7 +204,12 @@ CREATE TABLE order_items (
   unit_price                NUMERIC NOT NULL,
   line_total                NUMERIC NOT NULL,
   cost_at_sale              NUMERIC, -- تكلفة الريسبي وقت البيع فعليًا (مش محسوبة لحظيًا من الريسبي الحالي) - لدقة قائمة الدخل التاريخية
-  cost_at_sale_incomplete   BOOLEAN NOT NULL DEFAULT FALSE -- TRUE لو في مكوّن من غير unit_cost وقت البيع (التكلفة أقل من الحقيقي)
+  cost_at_sale_incomplete   BOOLEAN NOT NULL DEFAULT FALSE, -- TRUE لو في مكوّن من غير unit_cost وقت البيع (التكلفة أقل من الحقيقي)
+  -- نسخة الوصفة اللي كانت ACTIVE وقت البيع ده بالظبط (المرحلة 3) - رابط تتبّع صريح للتكلفة النظرية
+  -- التاريخية، منفصل عن cost_at_sale (اللي هو التكلفة الفعلية المحسوبة وقتها). NULL على الطلبات اللي
+  -- اتسجلت قبل المرحلة 3 (محرك الوصفات لسه ما كانش موجود وقتها). الـFK متضاف بـALTER TABLE تحت بعد ما
+  -- جدول recipe_versions نفسه يتعرّف (recipe_versions معرّف بعد كدة في الملف)
+  recipe_version_id        INTEGER
 );
 
 -- المرفقات المختارة فعليًا في سطر الطلب - بتتسجل بسعرها واسمها وقت البيع (snapshot) عشان لو اتغير
@@ -452,7 +458,11 @@ CREATE TABLE inventory_discrepancies (
 );
 CREATE INDEX idx_inventory_discrepancies_open ON inventory_discrepancies(branch_id) WHERE resolved_at IS NULL;
 
--- كام وحدة من كل مكوّن بتتاخد لما يتباع variant واحد (الوصفة/BOM)
+-- كام وحدة من كل مكوّن بتتاخد لما يتباع variant واحد (الوصفة/BOM) - "الجدول المسطّح" القديم، لسه هو
+-- المصدر اللي بيقرأ منه خصم المخزون وقت البيع (routes/orders.js) وحساب cost_at_sale، من غير أي تغيير.
+-- من المرحلة 3، محرك الوصفات الموثّق تحت (recipes/recipe_versions) هو اللي بيكتب هنا تلقائيًا وقت
+-- تفعيل نسخة جديدة (activation) - يعني الجدول ده بقى "إسقاط" (projection) لآخر نسخة معتمدة، مش
+-- مصدر التعديل المباشر تاني، لكن نفس الشكل بالظبط فمفيش أي كسر لأي كود قديم بيقرأ منه
 CREATE TABLE menu_item_variant_ingredients (
   id                  SERIAL PRIMARY KEY,
   variant_id          INTEGER REFERENCES menu_item_variants(id) ON DELETE CASCADE,
@@ -460,6 +470,129 @@ CREATE TABLE menu_item_variant_ingredients (
   quantity_per_unit   NUMERIC NOT NULL,
   UNIQUE(variant_id, inventory_item_id)
 );
+
+-- ============================================================
+-- المرحلة 3: محرك الوصفات الموثّق بالإصدارات (Recipe Engine)
+-- ============================================================
+
+-- هوية ثابتة للوصفة (مش بتتغيّر) - إما وصفة صنف مباع (sellable_variant) أو وصفة تصنيع نصف مصنّع/مكوّن
+-- مصنّع (manufactured_item). النُسخ الفعلية (recipe_versions) هي اللي فيها التفاصيل والتاريخ
+CREATE TABLE recipes (
+  id                 SERIAL PRIMARY KEY,
+  recipe_type        TEXT NOT NULL CHECK (recipe_type IN ('sellable_variant', 'manufactured_item')),
+  variant_id         INTEGER REFERENCES menu_item_variants(id) ON DELETE CASCADE,
+  inventory_item_id  INTEGER REFERENCES inventory_items(id) ON DELETE CASCADE,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (
+    (recipe_type = 'sellable_variant' AND variant_id IS NOT NULL AND inventory_item_id IS NULL) OR
+    (recipe_type = 'manufactured_item' AND inventory_item_id IS NOT NULL AND variant_id IS NULL)
+  ),
+  UNIQUE (variant_id),
+  UNIQUE (inventory_item_id)
+);
+
+-- نسخة فعلية من الوصفة - كل تغيير حقيقي في المكونات/الكميات بينشئ نسخة جديدة، مش بيعدّل نسخة قديمة.
+-- نسخة اتستخدمت في بيع/تصنيع فعلي (APPROVED/ACTIVE/ARCHIVED) ما ينفعش تتعدّل تاني - غير قابلة للتغيير،
+-- أي تعديل لازم نسخة جديدة (DRAFT) توديها لدورة اعتماد تانية من الأول
+CREATE TABLE recipe_versions (
+  id                        SERIAL PRIMARY KEY,
+  recipe_id                 INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  version_number            INTEGER NOT NULL,
+  status                    TEXT NOT NULL DEFAULT 'DRAFT'
+                             CHECK (status IN ('DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'ACTIVE', 'ARCHIVED', 'REJECTED')),
+  yield_quantity             NUMERIC NOT NULL DEFAULT 1, -- الوصفة دي بتنتج كام وحدة (مثلًا: تنتج 10 بيتزا، أو 5 كيلو صوص)
+  yield_unit                 TEXT,
+  preparation_loss_percent   NUMERIC NOT NULL DEFAULT 0, -- فقد أثناء التحضير (تقطيع، تنضيف...)
+  cooking_loss_percent        NUMERIC NOT NULL DEFAULT 0, -- فقد أثناء الطهي (تبخّر، انكماش...)
+  notes                        TEXT,
+  created_by                   INTEGER REFERENCES users(id),
+  approved_by                    INTEGER REFERENCES users(id),
+  rejected_by                     INTEGER REFERENCES users(id),
+  rejection_reason                 TEXT,
+  effective_from                    TIMESTAMPTZ,
+  effective_to                       TIMESTAMPTZ,
+  submitted_at                        TIMESTAMPTZ,
+  approved_at                          TIMESTAMPTZ,
+  activated_at                          TIMESTAMPTZ,
+  archived_at                            TIMESTAMPTZ,
+  created_at                              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at                               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (recipe_id, version_number)
+);
+-- نسخة واحدة بس ACTIVE لكل وصفة في نفس اللحظة - مفروضة على مستوى القاعدة نفسها، مش مجرد فحص تطبيقي
+CREATE UNIQUE INDEX idx_recipe_versions_one_active ON recipe_versions(recipe_id) WHERE status = 'ACTIVE';
+CREATE INDEX idx_recipe_versions_recipe ON recipe_versions(recipe_id);
+
+-- order_items.recipe_version_id اتعرّف قبل كدة في الملف (order_items جاي قبل recipe_versions) - الـFK
+-- بيتضاف هنا بعد ما الجدول المرجعي يتعرّف فعليًا
+ALTER TABLE order_items ADD CONSTRAINT fk_order_items_recipe_version
+  FOREIGN KEY (recipe_version_id) REFERENCES recipe_versions(id);
+CREATE INDEX idx_order_items_recipe_version ON order_items(recipe_version_id);
+
+-- مكونات نسخة الوصفة - المكوّن نفسه ممكن يكون خام أو "مصنّع له وصفة تانية بتاعته" (sub-recipe) - محرك
+-- الاستهلاك النظري بيتعرّف على ده تلقائيًا وينفجر فيه (routes recipe-engine.js) لحد ما يوصل لخام بس
+CREATE TABLE recipe_ingredients (
+  id                          SERIAL PRIMARY KEY,
+  recipe_version_id           INTEGER NOT NULL REFERENCES recipe_versions(id) ON DELETE CASCADE,
+  ingredient_item_id          INTEGER NOT NULL REFERENCES inventory_items(id),
+  quantity                    NUMERIC NOT NULL,
+  unit                        TEXT,
+  wastage_percent              NUMERIC NOT NULL DEFAULT 0,
+  yield_percent                 NUMERIC NOT NULL DEFAULT 100,
+  preparation_loss_percent       NUMERIC NOT NULL DEFAULT 0,
+  cost_method                      TEXT NOT NULL DEFAULT 'AVERAGE' CHECK (cost_method IN ('AVERAGE', 'LATEST', 'FEFO_BATCH')),
+  is_optional                        BOOLEAN NOT NULL DEFAULT FALSE,
+  substitute_for_ingredient_id         INTEGER REFERENCES inventory_items(id),
+  created_at                             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_recipe_ingredients_version ON recipe_ingredients(recipe_version_id);
+CREATE INDEX idx_recipe_ingredients_item ON recipe_ingredients(ingredient_item_id);
+
+-- ============================================================
+-- المرحلة 3: أوامر التصنيع (Production Orders) - دورة حياة كاملة فوق /api/inventory/produce الحالي
+-- (اللي لسه شغال زي ما هو للتصنيع الفوري البسيط) - للحالات اللي محتاجة اعتماد وتتبّع دفعات وanomaly
+-- ============================================================
+CREATE TABLE production_orders (
+  id                 SERIAL PRIMARY KEY,
+  branch_id          INTEGER NOT NULL REFERENCES branches(id),
+  recipe_id          INTEGER NOT NULL REFERENCES recipes(id),
+  recipe_version_id  INTEGER NOT NULL REFERENCES recipe_versions(id),
+  status             TEXT NOT NULL DEFAULT 'DRAFT'
+                     CHECK (status IN ('DRAFT', 'APPROVED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+  planned_quantity    NUMERIC NOT NULL,
+  actual_quantity      NUMERIC,
+  production_date       DATE NOT NULL DEFAULT CURRENT_DATE,
+  batch_number            TEXT,
+  expiry_date               DATE,
+  variance_reason             TEXT, -- لازم تتحدد لو الفرق بين المخطط والفعلي كبير (نسبة قابلة للإعداد وقت الإكمال)
+  notes                        TEXT,
+  operator_id                   INTEGER REFERENCES users(id),
+  approved_by                    INTEGER REFERENCES users(id),
+  completed_by                     INTEGER REFERENCES users(id),
+  cancelled_by                       INTEGER REFERENCES users(id),
+  approved_at                         TIMESTAMPTZ,
+  started_at                           TIMESTAMPTZ,
+  completed_at                          TIMESTAMPTZ,
+  cancelled_at                           TIMESTAMPTZ,
+  created_at                              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_production_orders_branch ON production_orders(branch_id);
+CREATE INDEX idx_production_orders_recipe ON production_orders(recipe_id, recipe_version_id);
+CREATE INDEX idx_production_orders_status ON production_orders(status);
+
+-- تتبّع الدفعات: أي دفعات خام اتستهلكت (input) وأي دفعة ناتج اتنتجت (output) في نفس أمر التصنيع -
+-- بيربط بينهم بـproduction_order_id الواحد، فتقدر تتبّع "الدفعة دي طلعت من إيه بالظبط"
+CREATE TABLE production_order_batches (
+  id                   SERIAL PRIMARY KEY,
+  production_order_id  INTEGER NOT NULL REFERENCES production_orders(id) ON DELETE CASCADE,
+  role                 TEXT NOT NULL CHECK (role IN ('input', 'output')),
+  inventory_item_id     INTEGER NOT NULL REFERENCES inventory_items(id),
+  batch_id               INTEGER REFERENCES inventory_batches(id),
+  quantity                NUMERIC NOT NULL,
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_production_order_batches_order ON production_order_batches(production_order_id);
+CREATE INDEX idx_production_order_batches_batch ON production_order_batches(batch_id);
 
 -- سجل حركة المخزون - ده الـInventory Ledger: المصدر الأساسي لكل حركة مخزون، append-only، كل حركة
 -- بتتسجل من خلال db/inventory-ledger.js (postInventoryMovement) اللي بيقفل الصف (FOR UPDATE) ويحسب
@@ -477,7 +610,7 @@ CREATE TABLE inventory_movements (
                       -- القيم القياسية الجديدة (كل حركة جديدة بتستخدم واحدة منها)
                       'OPENING_BALANCE', 'PURCHASE_RECEIPT', 'PRODUCTION_IN', 'PRODUCTION_OUT', 'SALE', 'SALE_REVERSAL',
                       'TRANSFER_OUT', 'TRANSFER_IN', 'WASTE', 'DAMAGE', 'EXPIRY', 'STOCK_COUNT', 'ADJUSTMENT',
-                      'RETURN_TO_SUPPLIER', 'RETURN_FROM_BRANCH'
+                      'RETURN_TO_SUPPLIER', 'RETURN_FROM_BRANCH', 'PRODUCTION_REVERSAL'
                      )),
   quantity          NUMERIC NOT NULL,        -- موجب = زيادة، سالب = نقصان
   unit              TEXT,                    -- وحدة الحركة (عادة نفس inventory_items.unit وقت الحركة)

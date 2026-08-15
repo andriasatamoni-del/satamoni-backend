@@ -6,7 +6,9 @@ const ROLE_PERMISSIONS = {
   branch_manager: [
     "orders.discount.approve", "orders.void.approve", "orders.cancel",
     "inventory.view", "inventory.adjust", "inventory.count",
-    "recipes.view", "recipes.edit",
+    "recipes.view", "recipes.create", "recipes.edit", "recipes.submit",
+    "production.view", "production.create", "production.complete", "production.cancel",
+    "food_cost.view",
     "expenses.view", "purchases.view",
     "users.view",
     "approvals.create", "approvals.decide",
@@ -14,6 +16,8 @@ const ROLE_PERMISSIONS = {
   ],
   accountant: [
     "inventory.view", "recipes.view",
+    "production.view",
+    "food_cost.view", "food_cost.export",
     "expenses.view", "purchases.view",
     "approvals.create",
     "audit.view.branch",

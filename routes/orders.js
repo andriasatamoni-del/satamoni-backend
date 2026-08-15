@@ -273,6 +273,18 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       }
     }
 
+    // المرحلة 3: تسجيل نسخة الوصفة اللي كانت ACTIVE وقت البيع ده بالظبط لكل سطر مرتبط بحجم/صنف مباشر
+    // (مش عرض/كومبو) - رابط تتبّع تاريخي صريح، منفصل عن cost_at_sale نفسها. NULL لو الصنف ده لسه معندوش
+    // وصفة مسجّلة في محرك الوصفات (المرحلة 3) - سلوك متوقّع ومتوافق مع الأصناف القديمة
+    await client.query(
+      `UPDATE order_items oi
+       SET recipe_version_id = rv.id
+       FROM recipes r JOIN recipe_versions rv ON rv.recipe_id = r.id AND rv.status = 'ACTIVE'
+       WHERE r.recipe_type = 'sellable_variant' AND r.variant_id = oi.variant_id
+         AND oi.order_id = $1 AND oi.variant_id IS NOT NULL`,
+      [orderId]
+    );
+
     // تسجيل تكلفة الريسبي الفعلية وقت البيع (مش لحظيًا وقت التقرير) عشان قائمة الدخل التاريخية تفضل دقيقة
     // حتى لو الريسبي أو تركيبة العرض اتغيرت بعدين - كله بحساب ::numeric جوه SQL زي خصم المخزون بالظبط
     if (branchId) {
