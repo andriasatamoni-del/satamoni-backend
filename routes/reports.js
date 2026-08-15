@@ -4,6 +4,7 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { computeConsumptionBreakdown, aggregateBreakdown } = require("../db/food-cost-engine");
+const { convertQuantity } = require("../db/unit-conversion");
 const {
   computeFingerprintPayroll,
   computeManualPayroll,
@@ -1829,6 +1830,117 @@ router.get("/purchases-by-item", requireAuth, canSeePurchasing, async (req, res)
       [range.from, range.to, branchId]
     );
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== المرحلة 4.1: مقارنة موردين + توصيات شراء ====================
+// وحدة الشراء (purchase_unit) بتختلف عن وحدة تخزين الصنف أحيانًا بس - أغلب أصناف ساتاموني وحدة الشراء
+// عندهم = وحدة التخزين بالظبط (زي ما اتأكدنا من البيانات الفعلية)، فمفيش أي تحويل مطلوب في الحالة دي.
+// بيستخدم نفس محرك التحويل الموجود (db/unit-conversion.js) - مفيش منطق تحويل جديد أو Unit Master جديد.
+async function normalizedSupplierCost(client, supplierItem, stockUnit) {
+  const purchaseUnit = supplierItem.purchase_unit || stockUnit;
+  if (purchaseUnit === stockUnit) {
+    return { normalizedCost: Number(supplierItem.unit_price), incomplete: false };
+  }
+  if (supplierItem.conversion_factor != null && Number(supplierItem.conversion_factor) > 0) {
+    return { normalizedCost: Number(supplierItem.unit_price) / Number(supplierItem.conversion_factor), incomplete: false };
+  }
+  try {
+    const factor = await convertQuantity(client, 1, purchaseUnit, stockUnit);
+    return { normalizedCost: Number(supplierItem.unit_price) / factor, incomplete: false };
+  } catch (err) {
+    if (err.code === "NO_UNIT_CONVERSION") return { normalizedCost: null, incomplete: true };
+    throw err;
+  }
+}
+
+// GET /api/reports/supplier-comparison?itemId= - كل الموردين اللي بيبيعوا الصنف ده دلوقتي (سعر ساري حاليًا
+// بس)، مسعّرين بوحدة تخزين الصنف نفسها (مش وحدة الشراء) عشان تتقارن صح - الأرخص أولًا
+router.get("/supplier-comparison", requireAuth, canSeePurchasing, async (req, res) => {
+  const { itemId } = req.query;
+  if (!itemId) return res.status(400).json({ error: "لازم تحدد الصنف" });
+  try {
+    const item = await pool.query("SELECT id, name, unit FROM inventory_items WHERE id = $1", [itemId]);
+    if (item.rows.length === 0) return res.status(404).json({ error: "الصنف مش موجود" });
+    const stockUnit = item.rows[0].unit;
+
+    const supplierItems = await pool.query(
+      `SELECT si.*, s.name AS supplier_name, s.status AS supplier_status
+       FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id
+       WHERE si.inventory_item_id = $1 AND si.effective_to IS NULL`,
+      [itemId]
+    );
+
+    const rows = [];
+    for (const si of supplierItems.rows) {
+      const { normalizedCost, incomplete } = await normalizedSupplierCost(pool, si, stockUnit);
+      rows.push({
+        supplierId: si.supplier_id, supplierName: si.supplier_name, supplierStatus: si.supplier_status,
+        purchaseUnit: si.purchase_unit || stockUnit, unitPrice: Number(si.unit_price), currency: si.currency,
+        normalizedCost, incomplete, stockUnit,
+        minimumOrderQuantity: si.minimum_order_quantity != null ? Number(si.minimum_order_quantity) : null,
+        leadTimeDays: si.lead_time_days, preferredSupplier: si.preferred_supplier,
+      });
+    }
+    rows.sort((a, b) => {
+      if (a.incomplete && !b.incomplete) return 1;
+      if (!a.incomplete && b.incomplete) return -1;
+      return (a.normalizedCost ?? Infinity) - (b.normalizedCost ?? Infinity);
+    });
+    res.json({ inventoryItemId: Number(itemId), itemName: item.rows[0].name, stockUnit, suppliers: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/purchasing-recommendations?branchId= - أصناف الفرع اللي رصيدها وصل لحد إعادة الطلب
+// (reorder_point) أو أقل - بيقترح كمية الطلب (لحد max_stock لو محدد) وأرخص/مفضّل مورد نشط متاح للصنف
+router.get("/purchasing-recommendations", requireAuth, canSeePurchasing, async (req, res) => {
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  if (!branchId) return res.status(400).json({ error: "لازم تحدد الفرع" });
+  try {
+    const belowReorder = await pool.query(
+      `SELECT bis.inventory_item_id, ii.name AS item_name, ii.unit AS stock_unit,
+              bis.quantity, bis.reorder_point, bis.min_stock, bis.max_stock
+       FROM branch_inventory_stock bis JOIN inventory_items ii ON ii.id = bis.inventory_item_id
+       WHERE bis.branch_id = $1 AND bis.reorder_point IS NOT NULL AND bis.quantity <= bis.reorder_point
+       ORDER BY (bis.quantity - bis.reorder_point) ASC`,
+      [branchId]
+    );
+
+    const recommendations = [];
+    for (const row of belowReorder.rows) {
+      const target = row.max_stock != null ? Number(row.max_stock) : Number(row.reorder_point) * 2;
+      const suggestedQuantity = Math.max(0, target - Number(row.quantity));
+
+      const supplierItems = await pool.query(
+        `SELECT si.*, s.name AS supplier_name
+         FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id
+         WHERE si.inventory_item_id = $1 AND si.effective_to IS NULL AND s.status = 'ACTIVE'`,
+        [row.inventory_item_id]
+      );
+      let recommendedSupplier = null;
+      let bestCost = Infinity;
+      for (const si of supplierItems.rows) {
+        const { normalizedCost, incomplete } = await normalizedSupplierCost(pool, si, row.stock_unit);
+        if (si.preferred_supplier) { recommendedSupplier = { supplierId: si.supplier_id, supplierName: si.supplier_name, normalizedCost, reason: "preferred" }; break; }
+        if (!incomplete && normalizedCost < bestCost) {
+          bestCost = normalizedCost;
+          recommendedSupplier = { supplierId: si.supplier_id, supplierName: si.supplier_name, normalizedCost, reason: "cheapest" };
+        }
+      }
+
+      recommendations.push({
+        inventoryItemId: row.inventory_item_id, itemName: row.item_name, stockUnit: row.stock_unit,
+        currentQuantity: Number(row.quantity), reorderPoint: Number(row.reorder_point),
+        minStock: row.min_stock != null ? Number(row.min_stock) : null, maxStock: row.max_stock != null ? Number(row.max_stock) : null,
+        suggestedOrderQuantity: suggestedQuantity, recommendedSupplier,
+      });
+    }
+    res.json(recommendations);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

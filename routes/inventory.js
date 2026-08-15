@@ -159,6 +159,47 @@ router.post("/stock/adjust", requireAuth, stockManagers, async (req, res) => {
   }
 });
 
+// PATCH /api/inventory/stock-thresholds - المرحلة 4.1: حدود إعادة الطلب لصنف في فرع معيّن (بوحدة تخزين
+// الصنف نفسها - مفيش أي وحدة تانية أو تحويل). {branchId, inventoryItemId, reorderPoint?, minStock?, maxStock?}
+router.patch("/stock-thresholds", requireAuth, stockManagers, async (req, res) => {
+  const { branchId, inventoryItemId, reorderPoint, minStock, maxStock } = req.body;
+  if (!branchId || !inventoryItemId) return res.status(400).json({ error: "لازم تحدد الفرع والصنف" });
+  if (!assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية تعدّل حدود فرع تاني" });
+  if ([reorderPoint, minStock, maxStock].some((v) => v !== undefined && v !== null && Number(v) < 0)) {
+    return res.status(400).json({ error: "الحدود لازم تكون أرقام موجبة" });
+  }
+
+  try {
+    const before = await pool.query(
+      "SELECT reorder_point, min_stock, max_stock FROM branch_inventory_stock WHERE branch_id = $1 AND inventory_item_id = $2",
+      [branchId, inventoryItemId]
+    );
+    const fields = [];
+    const values = [];
+    let i = 1;
+    if (reorderPoint !== undefined) { fields.push(`reorder_point = $${i++}`); values.push(reorderPoint); }
+    if (minStock !== undefined) { fields.push(`min_stock = $${i++}`); values.push(minStock); }
+    if (maxStock !== undefined) { fields.push(`max_stock = $${i++}`); values.push(maxStock); }
+    if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
+
+    values.push(branchId, inventoryItemId);
+    const result = await pool.query(
+      `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
+       VALUES ($${i}, $${i + 1}, 0)
+       ON CONFLICT (branch_id, inventory_item_id) DO UPDATE SET ${fields.join(", ")}
+       RETURNING *`,
+      values
+    );
+    await logAudit(pool, {
+      branchId, userId: req.user.id, action: "STOCK_THRESHOLDS_CHANGED", entityType: "inventory_item", entityId: Number(inventoryItemId),
+      oldValues: before.rows[0] || null, newValues: { reorderPoint, minStock, maxStock }, req,
+    });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/inventory/reconcile - جرد فعلي: تدخل الكمية الحقيقية اللي عددتها، والسيستم
 // بيحسب الفرق عن رصيده الحالي ويسجله تلقائي (بدل ما تحسب الفرق بنفسك)
 // {branchId, inventoryItemId, actualQuantity, notes}

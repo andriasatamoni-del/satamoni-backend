@@ -585,6 +585,11 @@ CREATE TABLE branch_inventory_stock (
   branch_id         INTEGER REFERENCES branches(id),
   inventory_item_id INTEGER REFERENCES inventory_items(id),
   quantity          NUMERIC NOT NULL DEFAULT 0,
+  -- المرحلة 4.1: حدود إعادة الطلب - بوحدة تخزين الصنف نفسها بالظبط (نفس وحدة quantity فوق)، مفيش أي
+  -- وحدة تانية أو تحويل جديد. NULL يعني "مفيش حد محدد لسه" لهذا الصنف في الفرع ده - مش صفر عمدًا
+  reorder_point     NUMERIC,
+  min_stock         NUMERIC,
+  max_stock         NUMERIC,
   UNIQUE(branch_id, inventory_item_id)
 );
 
