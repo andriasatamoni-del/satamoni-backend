@@ -12,7 +12,13 @@ router.get("/", async (req, res) => {
              mc.name AS category, mc.display_order AS category_order, mc.menu_group,
              json_agg(jsonb_build_object('id', v.id, 'label', v.label, 'price', v.price, 'talabatPrice', v.talabat_price) ORDER BY v.id) FILTER (WHERE v.id IS NOT NULL) AS variants,
              COALESCE(
-               (SELECT json_agg(jsonb_build_object('id', m.id, 'name', m.name, 'priceDelta', m.price_delta) ORDER BY m.id)
+               (SELECT json_agg(jsonb_build_object(
+                  'id', m.id, 'name', m.name, 'priceDelta', m.price_delta,
+                  'variantPrices', COALESCE(
+                    (SELECT jsonb_object_agg(vp.variant_id, vp.price_delta) FROM menu_item_modifier_variant_prices vp WHERE vp.modifier_id = m.id),
+                    '{}'::jsonb
+                  )
+                ) ORDER BY m.id)
                 FROM menu_item_modifiers m WHERE m.item_id = mi.id AND m.is_active = TRUE),
                '[]'
              ) AS modifiers
@@ -209,10 +215,15 @@ router.delete("/variants/:id", requireAuth, requireRole("admin"), async (req, re
 // ---------------- مرفقات الصنف (إضافة موتزريلا / بدون طماطم ...) ----------------
 
 // GET /api/menu/items/:id/modifiers - كل مرفقات الصنف (نشطة وغير نشطة، لشاشة الإدارة)
+// كل مرفق بييجي بـ variantPrices: أسعار مخصوصة لأحجام معيّنة (لو موجودة) غير السعر الافتراضي
 router.get("/items/:id/modifiers", requireAuth, requireRole("admin"), async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM menu_item_modifiers WHERE item_id = $1 ORDER BY id",
+      `SELECT m.*, COALESCE(
+         (SELECT jsonb_object_agg(vp.variant_id, vp.price_delta) FROM menu_item_modifier_variant_prices vp WHERE vp.modifier_id = m.id),
+         '{}'::jsonb
+       ) AS variant_prices
+       FROM menu_item_modifiers m WHERE m.item_id = $1 ORDER BY m.id`,
       [req.params.id]
     );
     res.json(result.rows);
@@ -270,6 +281,39 @@ router.delete("/modifiers/:id", requireAuth, requireRole("admin"), async (req, r
       [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "المرفق مش موجود" });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/menu/modifiers/:id/variant-prices/:variantId - سعر مخصوص للمرفق ده على حجم معيّن
+// (لو "اضافة سدق" سعرها مختلف على بيتزا وسط عن فطير كبير، كل حجم بيتسجل سعره لوحده هنا)
+router.put("/modifiers/:id/variant-prices/:variantId", requireAuth, requireRole("admin"), async (req, res) => {
+  const { priceDelta } = req.body;
+  if (priceDelta === undefined || priceDelta === null) return res.status(400).json({ error: "لازم تحدد السعر" });
+  try {
+    const result = await pool.query(
+      `INSERT INTO menu_item_modifier_variant_prices (modifier_id, variant_id, price_delta)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (modifier_id, variant_id) DO UPDATE SET price_delta = EXCLUDED.price_delta
+       RETURNING *`,
+      [req.params.id, req.params.variantId, priceDelta]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === "23503") return res.status(400).json({ error: "المرفق أو الحجم ده مش موجود" });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/menu/modifiers/:id/variant-prices/:variantId - إلغاء السعر المخصوص (يرجع للسعر الافتراضي)
+router.delete("/modifiers/:id/variant-prices/:variantId", requireAuth, requireRole("admin"), async (req, res) => {
+  try {
+    await pool.query(
+      "DELETE FROM menu_item_modifier_variant_prices WHERE modifier_id = $1 AND variant_id = $2",
+      [req.params.id, req.params.variantId]
+    );
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

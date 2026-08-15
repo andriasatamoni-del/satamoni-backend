@@ -418,10 +418,13 @@ function renderItemModal() {
   const modsWrap = document.getElementById("itemModalModifiersWrap");
   const mods = item.modifiers || [];
   modsWrap.style.display = mods.length ? "block" : "none";
-  document.getElementById("itemModalModifiers").innerHTML = mods.map(m => `
+  document.getElementById("itemModalModifiers").innerHTML = mods.map(m => {
+    const delta = modifierPriceForVariant(m, modalState.variant.id);
+    return `
     <div class="modal-opt ${modalState.modifierIds.has(m.id) ? "active" : ""}" data-modifier="${m.id}">
-      <span>${m.name}</span><span class="price">${Number(m.priceDelta) > 0 ? "+" + money(m.priceDelta) : "مجاني"}</span>
-    </div>`).join("");
+      <span>${m.name}</span><span class="price">${delta > 0 ? "+" + money(delta) : "مجاني"}</span>
+    </div>`;
+  }).join("");
   document.getElementById("itemModalModifiers").querySelectorAll("[data-modifier]").forEach(el => {
     el.onclick = () => {
       const id = Number(el.dataset.modifier);
@@ -431,14 +434,24 @@ function renderItemModal() {
     };
   });
 
-  const selectedMods = mods.filter(m => modalState.modifierIds.has(m.id));
+  const selectedMods = resolvedSelectedModifiers(item, modalState.variant.id, modalState.modifierIds);
   const total = Number(modalState.variant.price) + selectedMods.reduce((s, m) => s + Number(m.priceDelta), 0);
   document.getElementById("itemModalAdd").textContent = `إضافة للسلة (${money(total)})`;
+}
+// سعر المرفق ممكن يختلف حسب الحجم المختار (variantPrices) - لو مفيش سعر مخصوص للحجم ده، السعر الافتراضي بتاع المرفق
+function modifierPriceForVariant(modifier, variantId) {
+  const override = (modifier.variantPrices || {})[variantId];
+  return override != null ? Number(override) : Number(modifier.priceDelta);
+}
+function resolvedSelectedModifiers(item, variantId, modifierIds) {
+  return (item.modifiers || [])
+    .filter(m => modifierIds.has(m.id))
+    .map(m => ({ id: m.id, name: m.name, priceDelta: modifierPriceForVariant(m, variantId) }));
 }
 document.getElementById("itemModalCancel").onclick = closeItemModal;
 document.getElementById("itemModalAdd").onclick = () => {
   const item = modalState.item;
-  const selectedMods = (item.modifiers || []).filter(m => modalState.modifierIds.has(m.id));
+  const selectedMods = resolvedSelectedModifiers(item, modalState.variant.id, modalState.modifierIds);
   addToCart(item, modalState.variant, selectedMods);
   closeItemModal();
 };

@@ -59,9 +59,13 @@ async function resolveOrderItems(client, items, source) {
     const modifiers = [];
     let modifierTotal = 0;
     for (const mod of it.modifiers || []) {
+      // سعر المرفق ممكن يكون له سعر مخصوص للحجم (variant) ده تحديدًا - لو مفيش، السعر الافتراضي بتاع المرفق
       const modRow = await client.query(
-        "SELECT id, name, price_delta FROM menu_item_modifiers WHERE id = $1 AND item_id = $2 AND is_active = TRUE",
-        [mod.id, it.itemId]
+        `SELECT m.id, m.name, COALESCE(vp.price_delta, m.price_delta) AS price_delta
+         FROM menu_item_modifiers m
+         LEFT JOIN menu_item_modifier_variant_prices vp ON vp.modifier_id = m.id AND vp.variant_id = $3
+         WHERE m.id = $1 AND m.item_id = $2 AND m.is_active = TRUE`,
+        [mod.id, it.itemId, it.variantId]
       );
       if (modRow.rows.length === 0) throw new Error("مرفق مش موجود أو متوقف حاليًا");
       const delta = Number(modRow.rows[0].price_delta);

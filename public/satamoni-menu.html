@@ -355,7 +355,7 @@ async function loadItems() {
     </div>
   `).join("") : `<div style="color:var(--faint);font-size:13px">لسه مفيش أصناف — ضيف قسم وصنف الأول</div>`;
 
-  items.forEach(it => loadModifiers(it.id));
+  items.forEach(it => loadModifiers(it.id, it.variants));
 
   document.querySelectorAll("[data-toggle]").forEach(btn => {
     btn.onclick = async () => {
@@ -409,29 +409,54 @@ async function loadItems() {
 }
 
 // ---------------- مرفقات الصنف ----------------
-async function loadModifiers(itemId) {
+// كل مرفق ليه سعر افتراضي، وممكن كمان سعر مخصوص لأي حجم من أحجام الصنف (★ يعني السعر ده مخصوص مش افتراضي)
+async function loadModifiers(itemId, variants = []) {
   const wrap = document.querySelector(`[data-modifierslist="${itemId}"]`);
   if (!wrap) return;
   const mods = await api(`/api/menu/items/${itemId}/modifiers`);
   wrap.innerHTML = mods.length ? mods.map(m => `
     <div class="variant-row">
       <span class="lbl">${m.name}${m.is_active ? "" : " (معطّل)"}</span>
-      <span>${Number(m.price_delta) > 0 ? "+" + money(m.price_delta) : "مجاني"}</span>
+      <span>${Number(m.price_delta) > 0 ? "+" + money(m.price_delta) : "مجاني"} (افتراضي)</span>
       <button class="linkbtn" data-togglemod="${m.id}" data-item2="${itemId}" data-active="${m.is_active}">${m.is_active ? "تعطيل" : "تفعيل"}</button>
       <button class="linkbtn danger" data-delmod="${m.id}" data-item3="${itemId}">حذف</button>
     </div>
+    ${variants.length > 1 ? `<div style="display:flex;gap:12px;flex-wrap:wrap;margin:2px 0 8px 20px;font-size:11px;color:var(--faint)">
+      ${variants.map(v => {
+        const override = (m.variant_prices || {})[v.id];
+        const effective = override != null ? Number(override) : Number(m.price_delta);
+        return `<span>${v.label}: ${effective > 0 ? "+" + money(effective) : "مجاني"}${override != null ? " ★" : ""}
+          <button class="linkbtn" data-editvarprice="${m.id}" data-variant="${v.id}" data-current="${effective}">تعديل</button></span>`;
+      }).join("")}
+    </div>` : ""}
   `).join("") : `<div style="font-size:11px;color:var(--faint)">لسه مفيش مرفقات للصنف ده</div>`;
   wrap.querySelectorAll("[data-togglemod]").forEach(btn => {
     btn.onclick = async () => {
       const isActive = btn.dataset.active === "true";
       await api(`/api/menu/modifiers/${btn.dataset.togglemod}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
-      loadModifiers(btn.dataset.item2);
+      loadModifiers(btn.dataset.item2, variants);
     };
   });
   wrap.querySelectorAll("[data-delmod]").forEach(btn => {
     btn.onclick = async () => {
       await api(`/api/menu/modifiers/${btn.dataset.delmod}`, { method: "DELETE" });
-      loadModifiers(btn.dataset.item3);
+      loadModifiers(btn.dataset.item3, variants);
+    };
+  });
+  wrap.querySelectorAll("[data-editvarprice]").forEach(btn => {
+    btn.onclick = async () => {
+      const answer = prompt("السعر للحجم ده (سيبه فاضي عشان يرجع للسعر الافتراضي):", btn.dataset.current);
+      if (answer === null) return;
+      const modId = btn.dataset.editvarprice;
+      const variantId = btn.dataset.variant;
+      try {
+        if (answer.trim() === "") {
+          await api(`/api/menu/modifiers/${modId}/variant-prices/${variantId}`, { method: "DELETE" });
+        } else {
+          await api(`/api/menu/modifiers/${modId}/variant-prices/${variantId}`, { method: "PUT", body: JSON.stringify({ priceDelta: Number(answer) }) });
+        }
+        loadModifiers(itemId, variants);
+      } catch (e) { alert(e.message); }
     };
   });
 }

@@ -1,6 +1,6 @@
 // بيحدّث talabat_price للأصناف اللي مباعة فعليًا على تطبيق طلبات، من ملف
-// db/seed-data/talabat-prices.json: [[اسم الصنف بالحجم, سعر طلبات], ...].
-// أي صنف مش موجود في الملف ده بيفضل talabat_price بتاعه NULL (يعني مش مباع على طلبات حاليًا).
+// db/seed-data/talabat-prices.json: [[اسم الصنف, حجمه, سعر طلبات], ...].
+// أي حجم مش موجود في الملف ده بيفضل talabat_price بتاعه NULL (يعني مش مباع على طلبات حاليًا).
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
@@ -13,17 +13,17 @@ async function main() {
   let updated = 0;
   const notFound = [];
 
-  for (const [itemName, talabatPrice] of mapping) {
+  for (const [itemName, variantLabel, talabatPrice] of mapping) {
     const result = await pool.query(
       `UPDATE menu_item_variants v
-       SET talabat_price = $2
+       SET talabat_price = $3
        FROM menu_items i
-       WHERE v.item_id = i.id AND i.name = $1
+       WHERE v.item_id = i.id AND i.name = $1 AND v.label = $2
        RETURNING v.id`,
-      [itemName, talabatPrice]
+      [itemName, variantLabel, talabatPrice]
     );
     if (result.rows.length === 0) {
-      notFound.push(itemName);
+      notFound.push(`${itemName} (${variantLabel})`);
     } else {
       updated++;
     }

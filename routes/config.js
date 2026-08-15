@@ -41,7 +41,13 @@ router.get("/full", async (req, res) => {
                mc.name AS category, mc.display_order AS "categoryOrder", mc.menu_group AS "menuGroup",
                json_agg(jsonb_build_object('id', v.id, 'label', v.label, 'price', v.price, 'talabatPrice', v.talabat_price) ORDER BY v.id) AS variants,
                COALESCE(
-                 (SELECT json_agg(jsonb_build_object('id', m.id, 'name', m.name, 'priceDelta', m.price_delta) ORDER BY m.id)
+                 (SELECT json_agg(jsonb_build_object(
+                    'id', m.id, 'name', m.name, 'priceDelta', m.price_delta,
+                    'variantPrices', COALESCE(
+                      (SELECT jsonb_object_agg(vp.variant_id, vp.price_delta) FROM menu_item_modifier_variant_prices vp WHERE vp.modifier_id = m.id),
+                      '{}'::jsonb
+                    )
+                  ) ORDER BY m.id)
                   FROM menu_item_modifiers m WHERE m.item_id = mi.id AND m.is_active = TRUE),
                  '[]'
                ) AS modifiers

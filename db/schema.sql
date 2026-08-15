@@ -73,9 +73,19 @@ CREATE TABLE menu_item_modifiers (
   id            SERIAL PRIMARY KEY,
   item_id       INTEGER REFERENCES menu_items(id) ON DELETE CASCADE,
   name          TEXT NOT NULL,              -- إضافة موتزريلا / بدون طماطم / بدون خضار ...
-  price_delta   NUMERIC NOT NULL DEFAULT 0, -- زيادة على السعر (أو 0 لو مجرد توصيف زي "بدون")
+  price_delta   NUMERIC NOT NULL DEFAULT 0, -- السعر الافتراضي (لو مفيش سعر مخصوص لحجم معيّن في الجدول اللي تحت)
   is_active     BOOLEAN DEFAULT TRUE,
   UNIQUE(item_id, name)
+);
+
+-- سعر المرفق ممكن يختلف حسب حجم الصنف (مثلاً "اضافة سدق" سعرها على بيتزا وسط مختلف عن فطير كبير) -
+-- لو مفيش صف هنا لحجم (variant) معيّن، السعر الافتراضي بييجي من menu_item_modifiers.price_delta
+CREATE TABLE menu_item_modifier_variant_prices (
+  id             SERIAL PRIMARY KEY,
+  modifier_id    INTEGER NOT NULL REFERENCES menu_item_modifiers(id) ON DELETE CASCADE,
+  variant_id     INTEGER NOT NULL REFERENCES menu_item_variants(id) ON DELETE CASCADE,
+  price_delta    NUMERIC NOT NULL,
+  UNIQUE(modifier_id, variant_id)
 );
 
 -- ---------------- العروض/الكومبوهات (أكتر من صنف بسعر واحد) ----------------
