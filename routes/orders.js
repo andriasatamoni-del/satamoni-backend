@@ -90,11 +90,27 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       branchId, source, orderType, tableNumber,
       deliveryAreaId, addressDetails, customerName, customerPhone, customerPhone2,
       distinguishingMark, paymentMethodId, items: rawItems, deliveryFee = 0, discount = 0,
-      discountApprovedBy,
+      discountApprovedBy, idempotencyKey, inventoryOverrideApprovedBy,
     } = req.body;
 
     if ((source === "pos" || source === "talabat") && !assertOwnBranch(req.user, branchId)) {
       return res.status(403).json({ error: "معندكش صلاحية تسجل طلب على فرع تاني" });
+    }
+
+    // Idempotency: لو نفس مفتاح الطلب اتبعت قبل كده، رجّع نفس نتيجة الطلب الأصلي من غير ما تعمل أي حاجة
+    // تانية (مش أوردر جديد، مش خصم مخزون تاني). الفحص ده تحسين أداء للحالة الشائعة (retry عادي) بس -
+    // الحماية الحقيقية ضد سباق طلبين متزامنين بنفس المفتاح بالظبط هي الـUNIQUE INDEX على
+    // orders.idempotency_key، والتعامل مع تعارضه في catch تحت (atomic على مستوى القاعدة نفسها)
+    if (idempotencyKey) {
+      const existing = await client.query(
+        "SELECT id, subtotal, total FROM orders WHERE idempotency_key = $1", [idempotencyKey]
+      );
+      if (existing.rows.length > 0) {
+        return res.status(200).json({
+          orderId: existing.rows[0].id, subtotal: Number(existing.rows[0].subtotal),
+          total: Number(existing.rows[0].total), duplicate: true,
+        });
+      }
     }
 
     let items;
@@ -139,6 +155,23 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       }
     }
 
+    // موافقة تجاوز نقص المخزون (لأصناف سياستها ALLOW_WITH_APPROVAL بس) - نفس نمط موافقة الخصم بالظبط:
+    // اتاكدنا منها هنا كمان (مش بس صدّقنا approverId من الفرونت إند). لو مش موجودة، الطلب لسه ممكن ينجح
+    // عادي طالما مفيش صنف فيه هينزل تحت صفر - هنعرف ده بس لما نحاول الخصم فعليًا تحت
+    let inventoryOverrideApprover = null;
+    if (inventoryOverrideApprovedBy) {
+      const overrideApprover = await client.query(
+        `SELECT id, name FROM users
+         WHERE id = $1 AND is_active = TRUE
+           AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
+        [inventoryOverrideApprovedBy, branchId]
+      );
+      if (overrideApprover.rows.length === 0) {
+        return res.status(400).json({ error: "الموافقة على تجاوز نقص المخزون غير صالحة" });
+      }
+      inventoryOverrideApprover = overrideApprover.rows[0];
+    }
+
     await client.query("BEGIN");
 
     const total = subtotal + deliveryFee - discount;
@@ -173,13 +206,13 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
         (branch_id, source, order_type, table_number, delivery_area_id,
          address_details, customer_name, customer_phone, payment_method_id,
          created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status,
-         loyalty_points_earned)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         loyalty_points_earned, idempotency_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, customerName, customerPhone, paymentMethodId,
        createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus,
-       loyaltyPointsEarned]
+       loyaltyPointsEarned, idempotencyKey || null]
     );
     const orderId = orderResult.rows[0].id;
 
@@ -280,6 +313,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
 
     // خصم المخزون تلقائيًا حسب وصفة كل صنف (BOM) - لو الطلب مربوط بفرع
     // العروض (combo) مفيهاش وصفة مباشرة - بنفكّها لأصنافها الأصلية وناخد وصفة كل صنف منهم
+    const negativeStockOverrides = [];
     if (branchId) {
       for (const it of items) {
         let variantsToDeduct = [];
@@ -306,20 +340,54 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
             const deduction = await client.query(
               "SELECT ($1::numeric * $2::numeric) AS qty", [ing.quantity_per_unit, v.multiplier]
             );
-            await postInventoryMovement(client, {
+            const { movement: saleMovement, negativeOverrideUsed } = await postInventoryMovement(client, {
               branchId, inventoryItemId: ing.inventory_item_id, quantity: -Number(deduction.rows[0].qty),
               movementType: "SALE", referenceType: "order", referenceId: orderId,
-              userId: createdBy, enforceNegativeStockPolicy: false,
+              userId: createdBy, negativeStockOverrideApproved: !!inventoryOverrideApprover,
             });
+            if (negativeOverrideUsed) {
+              negativeStockOverrides.push({
+                inventoryItemId: ing.inventory_item_id, quantityBefore: saleMovement.quantity_before,
+                quantityRequested: Number(deduction.rows[0].qty),
+              });
+            }
           }
         }
       }
+    }
+
+    if (negativeStockOverrides.length > 0) {
+      await logAudit(client, {
+        branchId, userId: req.user.id, action: "NEGATIVE_STOCK_OVERRIDE", entityType: "order", entityId: orderId,
+        newValues: { items: negativeStockOverrides },
+        metadata: { approverId: inventoryOverrideApprover.id, approverName: inventoryOverrideApprover.name }, req,
+      });
     }
 
     await client.query("COMMIT");
     res.status(201).json({ orderId, subtotal, total });
   } catch (err) {
     await client.query("ROLLBACK");
+    // طلبين متزامنين بنفس idempotency_key بالظبط - واحد بس فاز بالـINSERT، التاني بيرجّع نتيجة الفايز
+    // بدل ما يفشل أو يسجّل أوردر تاني. ده الحماية الحقيقية (على مستوى القاعدة) مش بس الفحص المبدئي فوق.
+    // بنستخدم req.body مباشرة هنا (مش المتغيّر المحلي) لأن const جوه try{} مش شايفها catch{} - نطاقات منفصلة
+    if (err.code === "23505" && req.body.idempotencyKey) {
+      const existing = await pool.query(
+        "SELECT id, subtotal, total FROM orders WHERE idempotency_key = $1", [req.body.idempotencyKey]
+      );
+      if (existing.rows.length > 0) {
+        return res.status(200).json({
+          orderId: existing.rows[0].id, subtotal: Number(existing.rows[0].subtotal),
+          total: Number(existing.rows[0].total), duplicate: true,
+        });
+      }
+    }
+    if (err.code === "INSUFFICIENT_STOCK") {
+      return res.status(400).json({ error: err.message, code: "INSUFFICIENT_STOCK" });
+    }
+    if (err.code === "INSUFFICIENT_STOCK_NEEDS_APPROVAL") {
+      return res.status(400).json({ error: err.message, code: "INSUFFICIENT_STOCK_NEEDS_APPROVAL" });
+    }
     res.status(500).json({ error: err.message });
   } finally {
     client.release();

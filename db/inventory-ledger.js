@@ -3,11 +3,14 @@
 //  1) قفل الصف (SELECT ... FOR UPDATE) عشان يمنع سباق بين حركتين على نفس الصنف/الفرع في نفس اللحظة
 //  2) quantity_before/quantity_after دقيقين لكل حركة (تاريخ رصيد كامل قابل للمراجعة)
 //  3) idempotency_key اختياري - لو اتكرر نفس المفتاح (retry شبكة/مزامنة) بيرجّع الحركة الأصلية من غير تكرار
-//  4) سياسة الرصيد السالب (allow_negative_stock لكل صنف)
+//  4) سياسة الرصيد السالب بمستويين (inventory_items.negative_stock_policy): STRICT ممنوع خالص، أو
+//     ALLOW_WITH_APPROVAL ممنوع إلا بموافقة صريحة (negativeStockOverrideApproved)
 //  5) صرف تلقائي من الدفعات (FEFO/FIFO) لو الصنف متتبّع بدفعات - بيحدد تكلفة الحركة الفعلية
 //
 // لازم يتنادى بـclient واحد جوه transaction شغالة بالفعل (BEGIN اتعمل قبله) - نفس نمط باقي المشروع.
 
+// بيرجّع تفصيل كل دفعة اتصرف منها (مش بس متوسط التكلفة) - مهم للتحويلات اللي محتاجة تنقل هوية الدفعة
+// (رقمها/صلاحيتها) مع الكمية المنقولة، مش تكلفة مجمّعة بس. بترجع null لو الصنف مش متتبّع بدفعات أصلًا.
 async function consumeFromBatches(client, { branchId, inventoryItemId, quantity }) {
   const settings = await client.query("SELECT batch_consumption_method FROM pos_settings WHERE id = 1");
   const method = settings.rows[0]?.batch_consumption_method || "FEFO";
@@ -25,6 +28,7 @@ async function consumeFromBatches(client, { branchId, inventoryItemId, quantity 
   let remaining = quantity;
   let totalCost = 0;
   let lastBatchId = null;
+  const consumed = [];
   for (const b of batches.rows) {
     if (remaining <= 0) break;
     const take = Math.min(remaining, Number(b.remaining_quantity));
@@ -32,6 +36,10 @@ async function consumeFromBatches(client, { branchId, inventoryItemId, quantity 
     totalCost += take * Number(b.unit_cost || 0);
     remaining -= take;
     lastBatchId = b.id;
+    consumed.push({
+      batchId: b.id, quantity: take, unitCost: b.unit_cost != null ? Number(b.unit_cost) : null,
+      batchNumber: b.batch_number, expiryDate: b.expiry_date, productionDate: b.production_date,
+    });
     const newRemaining = Number(b.remaining_quantity) - take;
     await client.query(
       `UPDATE inventory_batches SET remaining_quantity = $2::numeric, status = CASE WHEN $2::numeric <= 0 THEN 'depleted' ELSE status END WHERE id = $1`,
@@ -46,7 +54,7 @@ async function consumeFromBatches(client, { branchId, inventoryItemId, quantity 
     totalCost += remaining * lastCost;
   }
   const weightedUnitCost = quantity > 0 ? totalCost / quantity : null;
-  return { weightedUnitCost, lastBatchId };
+  return { weightedUnitCost, lastBatchId, consumed };
 }
 
 async function postInventoryMovement(client, {
@@ -54,11 +62,14 @@ async function postInventoryMovement(client, {
   referenceType = null, referenceId = null, unit = null, unitCost = null,
   batchId = null, reason = null, notes = null, userId = null, idempotencyKey = null,
   businessDate = null,
-  // المبيعات لازم تكمّل دايمًا حتى لو تتبّع المخزون ناقص/متأخر (العميل دفع بالفعل) - زي سلوك النظام
-  // الحالي بالظبط قبل هذه المرحلة. سياسة منع الرصيد السالب (allow_negative_stock) بتتطبّق على الحركات
-  // اليدوية/الإدارية (تسوية، هالك، تحويل...) مش على البيع - الرصيد السالب هنا لسه بيظهر في تقرير
-  // "الرصيد السالب" كتنبيه، بس مبيمنعش تسجيل البيع نفسه
-  enforceNegativeStockPolicy = true,
+  // ALLOW_WITH_APPROVAL بس هو اللي بيحتاج الـflag ده عشان يعدّي - لازم يبقى معتمد صراحة (موافقة PIN
+  // وقت البيع، أو الدور نفسه مخوّل زي مدير فرع/أدمن بيستخدم /stock/adjust مباشرة - دوره هو الموافقة).
+  // STRICT ممنوع خالص مهما كانت قيمة الـflag دي - مفيش تجاوز ليها إطلاقًا
+  negativeStockOverrideApproved = false,
+  // التحويلات بين الفروع بتحل هوية الدفعة (batch) بنفسها مقدمًا عشان تنقلها زي ما هي للفرع المستلم -
+  // لو true، الدالة مش بتنادي consumeFromBatches تاني (كانت هتستهلك من دفعة تانية غلط) وبتستخدم
+  // unitCost/batchId المُمرَّرين زي ما هما
+  skipBatchConsumption = false,
 }) {
   if (!branchId || !inventoryItemId || !movementType || quantity === undefined || quantity === null) {
     throw new Error("بيانات حركة المخزون ناقصة");
@@ -71,7 +82,7 @@ async function postInventoryMovement(client, {
     const existing = await client.query(
       "SELECT * FROM inventory_movements WHERE idempotency_key = $1", [idempotencyKey]
     );
-    if (existing.rows.length > 0) return { movement: existing.rows[0], duplicate: true };
+    if (existing.rows.length > 0) return { movement: existing.rows[0], duplicate: true, negativeOverrideUsed: false };
   }
 
   // نضمن وجود صف الرصيد الأول (لو أول حركة على الصنف ده في الفرع ده) وبعدين نقفله - القفل هنا هو
@@ -91,20 +102,30 @@ async function postInventoryMovement(client, {
   const quantityAfter = quantityBefore + Number(quantity);
 
   const itemRes = await client.query(
-    "SELECT unit, unit_cost, allow_negative_stock FROM inventory_items WHERE id = $1", [inventoryItemId]
+    "SELECT unit, unit_cost, negative_stock_policy FROM inventory_items WHERE id = $1", [inventoryItemId]
   );
   const item = itemRes.rows[0];
   if (!item) throw new Error("الصنف مش موجود");
 
-  if (quantityAfter < 0 && !item.allow_negative_stock && enforceNegativeStockPolicy) {
-    const err = new Error("الرصيد الحالي مش كافي للعملية دي");
-    err.code = "INSUFFICIENT_STOCK";
-    throw err;
+  let negativeOverrideUsed = false;
+  if (quantityAfter < 0) {
+    if (item.negative_stock_policy === "STRICT") {
+      const err = new Error(`الرصيد الحالي مش كافي (متاح ${quantityBefore}، مطلوب ${Math.abs(Number(quantity))}) - الصنف ده سياسته STRICT ومفيش تجاوز ليها`);
+      err.code = "INSUFFICIENT_STOCK";
+      throw err;
+    }
+    // ALLOW_WITH_APPROVAL: لازم موافقة صريحة، وإلا نفس المنع
+    if (!negativeStockOverrideApproved) {
+      const err = new Error(`الرصيد الحالي مش كافي (متاح ${quantityBefore}، مطلوب ${Math.abs(Number(quantity))}) - محتاج موافقة مدير الفرع أو الأدمن`);
+      err.code = "INSUFFICIENT_STOCK_NEEDS_APPROVAL";
+      throw err;
+    }
+    negativeOverrideUsed = true;
   }
 
   let resolvedUnitCost = unitCost != null ? Number(unitCost) : (item.unit_cost != null ? Number(item.unit_cost) : null);
   let resolvedBatchId = batchId;
-  if (Number(quantity) < 0) {
+  if (!skipBatchConsumption && Number(quantity) < 0) {
     const consumed = await consumeFromBatches(client, {
       branchId, inventoryItemId, quantity: Math.abs(Number(quantity)),
     });
@@ -132,7 +153,7 @@ async function postInventoryMovement(client, {
      userId, idempotencyKey, businessDate]
   );
 
-  return { movement: inserted.rows[0], duplicate: false };
+  return { movement: inserted.rows[0], duplicate: false, negativeOverrideUsed };
 }
 
 module.exports = { postInventoryMovement, consumeFromBatches };

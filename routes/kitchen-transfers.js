@@ -2,10 +2,110 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
-const { postInventoryMovement } = require("../db/inventory-ledger");
+const { postInventoryMovement, consumeFromBatches } = require("../db/inventory-ledger");
 const { logAudit } = require("../db/audit");
 
 const stockManagers = requireRole("admin", "branch_manager");
+
+// بيستهلك من دفعات فرع المصدر (لو الصنف متتبّع بدفعات) وبيسجل تفصيل كل دفعة اتصرف منها في
+// kitchen_transfer_item_batches عشان هويتها (رقم/صلاحية/إنتاج/تكلفة) تتنقل مع الكمية لفرع الاستلام
+// بعدين - لو الصنف عادي (مفيش دفعات نشطة)، بيرجع لحركة واحدة عادية زي أي تحويل قبل هذه المرحلة
+async function issueTransferItem(client, { kitchenTransferItemId, fromBranchId, inventoryItemId, quantity, transferId, userId, businessDate, notes }) {
+  const consumed = await consumeFromBatches(client, { branchId: fromBranchId, inventoryItemId, quantity: Number(quantity) });
+  if (consumed && consumed.consumed.length > 0) {
+    for (const part of consumed.consumed) {
+      await postInventoryMovement(client, {
+        branchId: fromBranchId, inventoryItemId, quantity: -part.quantity,
+        movementType: "TRANSFER_OUT", referenceType: "kitchen_transfer", referenceId: transferId,
+        unitCost: part.unitCost, batchId: part.batchId, notes: notes || null, userId, businessDate,
+        skipBatchConsumption: true, negativeStockOverrideApproved: true,
+      });
+      await client.query(
+        `INSERT INTO kitchen_transfer_item_batches
+          (kitchen_transfer_item_id, source_batch_id, quantity, batch_number, expiry_date, production_date, unit_cost)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [kitchenTransferItemId, part.batchId, part.quantity, part.batchNumber, part.expiryDate, part.productionDate, part.unitCost]
+      );
+    }
+  } else {
+    await postInventoryMovement(client, {
+      branchId: fromBranchId, inventoryItemId, quantity: -Number(quantity),
+      movementType: "TRANSFER_OUT", referenceType: "kitchen_transfer", referenceId: transferId,
+      notes: notes || null, userId, businessDate, negativeStockOverrideApproved: true,
+    });
+  }
+}
+
+// بيوزّع الكمية المستلمة فعليًا (ممكن تقل عن المُصدَر) على الدفعات المُصدَرة بالترتيب اللي خرجت بيه
+// (نفس ترتيب FEFO/FIFO المحفوظ من وقت الإصدار)، وبيفتح/يزوّد **نفس هوية الدفعة بالظبط** (رقم/صلاحية/
+// إنتاج/تكلفة) في فرع الاستلام - مش دفعة جديدة مجهولة. لو الصنف عادي (مفيش دفعات)، حركة واحدة عادية.
+async function receiveTransferItem(client, { kitchenTransferItemId, toBranchId, inventoryItemId, quantityReceived, transferId, userId, businessDate }) {
+  const batchPortions = await client.query(
+    `SELECT * FROM kitchen_transfer_item_batches WHERE kitchen_transfer_item_id = $1 ORDER BY id`,
+    [kitchenTransferItemId]
+  );
+  if (batchPortions.rows.length === 0) {
+    if (Number(quantityReceived) > 0) {
+      await postInventoryMovement(client, {
+        branchId: toBranchId, inventoryItemId, quantity: Number(quantityReceived),
+        movementType: "TRANSFER_IN", referenceType: "kitchen_transfer", referenceId: transferId,
+        userId, businessDate, negativeStockOverrideApproved: true,
+      });
+    }
+    return;
+  }
+
+  let remaining = Number(quantityReceived);
+  for (const portion of batchPortions.rows) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, Number(portion.quantity));
+    if (take <= 0) continue;
+    remaining -= take;
+
+    const existingBatch = await client.query(
+      `SELECT id FROM inventory_batches
+       WHERE inventory_item_id = $1 AND branch_id = $2 AND status = 'active'
+         AND COALESCE(batch_number,'') = COALESCE($3,'')
+         AND COALESCE(expiry_date, '0001-01-01'::date) = COALESCE($4::date, '0001-01-01'::date)
+       FOR UPDATE`,
+      [inventoryItemId, toBranchId, portion.batch_number, portion.expiry_date]
+    );
+    let destBatchId;
+    if (existingBatch.rows.length > 0) {
+      destBatchId = existingBatch.rows[0].id;
+      await client.query(
+        `UPDATE inventory_batches SET remaining_quantity = remaining_quantity + $1, original_quantity = original_quantity + $1 WHERE id = $2`,
+        [take, destBatchId]
+      );
+    } else {
+      const created = await client.query(
+        `INSERT INTO inventory_batches
+          (batch_number, inventory_item_id, branch_id, received_date, production_date, expiry_date,
+           original_quantity, remaining_quantity, unit_cost, created_by)
+         VALUES ($1,$2,$3,CURRENT_DATE,$4,$5,$6,$6,$7,$8) RETURNING id`,
+        [portion.batch_number, inventoryItemId, toBranchId, portion.production_date, portion.expiry_date,
+         take, portion.unit_cost, userId]
+      );
+      destBatchId = created.rows[0].id;
+    }
+
+    await postInventoryMovement(client, {
+      branchId: toBranchId, inventoryItemId, quantity: take,
+      movementType: "TRANSFER_IN", referenceType: "kitchen_transfer", referenceId: transferId,
+      unitCost: portion.unit_cost, batchId: destBatchId, userId, businessDate,
+      skipBatchConsumption: true, negativeStockOverrideApproved: true,
+    });
+  }
+  // لو وصل أكتر من إجمالي اللي كان مسجّل بالدفعات (نادر، خطأ إدخال مثلًا) - الباقي بيتسجل كحركة عادية
+  // من غير دفعة محددة، عشان مفيش كمية "تختفي" من السجل
+  if (remaining > 0) {
+    await postInventoryMovement(client, {
+      branchId: toBranchId, inventoryItemId, quantity: remaining,
+      movementType: "TRANSFER_IN", referenceType: "kitchen_transfer", referenceId: transferId,
+      userId, businessDate, negativeStockOverrideApproved: true,
+    });
+  }
+}
 
 // GET /api/kitchen-transfers?branchId=&date= - تحويلات سنتر كيتشن للفروع (مع تفاصيل الأصناف)
 router.get(
@@ -69,16 +169,16 @@ router.post("/", requireAuth, requireRole("admin"), async (req, res) => {
   }
 });
 
-// POST /api/kitchen-transfers/itemized - تحويل فعلي بأصناف وكميات محددة (بينزل من مخزون السنتر كيتشن
-// ويزود مخزون الفرع المستقبِل تلقائيًا)، ولو مربوط بطلبية فرع بيقفلها "fulfilled"
+// POST /api/kitchen-transfers/itemized - تحويل فوري بأصناف وكميات محددة (إصدار واستلام في نفس اللحظة،
+// من غير مراحل وسيطة). **أدمن بس** - ده استثناء يتخطى دورة الاعتماد الكاملة (request→approve→issue→
+// receive) بالكامل، فمقفول على الأدمن عشان مفيش موظف تشغيلي (مدير فرع/كاشير) يقدر يستخدمه يتخطى بيه
+// الموافقة. أي حد تاني (مدير فرع بما فيهم مدير السنتر كيتشن) لازم يستخدم /request → /approve → /issue
+// → /receive تحت. لو مربوط بطلبية فرع بيقفلها "fulfilled"
 // {fromBranchId, toBranchId, businessDate, items: [{inventoryItemId, quantity}], kitchenOrderId, notes}
-router.post("/itemized", requireAuth, requireRole("admin", "branch_manager"), async (req, res) => {
+router.post("/itemized", requireAuth, requireRole("admin"), async (req, res) => {
   const { fromBranchId, toBranchId, businessDate, items, kitchenOrderId, notes } = req.body;
   if (!fromBranchId || !toBranchId || !businessDate || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "بيانات ناقصة" });
-  }
-  if (!assertOwnBranch(req.user, fromBranchId)) {
-    return res.status(403).json({ error: "معندكش صلاحية تحوّل من الفرع/السنتر كيتشن ده" });
   }
 
   const client = await pool.connect();
@@ -101,9 +201,6 @@ router.post("/itemized", requireAuth, requireRole("admin", "branch_manager"), as
 
     await client.query("BEGIN");
 
-    // التحويل الفوري ده (زي ما كان دايمًا) بيسجل بحالة completed على طول - إصدار واستلام في نفس اللحظة،
-    // من غير مراحل وسيطة. لو حابب مراحل حقيقية (طلب→اعتماد→إصدار→استلام مع استلام جزئي) استخدم
-    // /request و/:id/issue و/:id/receive تحت
     const transferResult = await client.query(
       `INSERT INTO kitchen_transfers (from_branch_id, to_branch_id, business_date, amount_at_cost, notes, kitchen_order_id, status, issued_by, received_by, issued_at, received_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $7, now(), now()) RETURNING id`,
@@ -112,23 +209,19 @@ router.post("/itemized", requireAuth, requireRole("admin", "branch_manager"), as
     const transferId = transferResult.rows[0].id;
 
     for (const it of items) {
-      await client.query(
+      const inserted = await client.query(
         `INSERT INTO kitchen_transfer_items (kitchen_transfer_id, inventory_item_id, quantity, quantity_sent, quantity_received)
-         VALUES ($1, $2, $3, $3, $3)`,
+         VALUES ($1, $2, $3, $3, $3) RETURNING id`,
         [transferId, it.inventoryItemId, it.quantity]
       );
-
-      // ينزل من مخزون السنتر كيتشن
-      await postInventoryMovement(client, {
-        branchId: fromBranchId, inventoryItemId: it.inventoryItemId, quantity: -Number(it.quantity),
-        movementType: "TRANSFER_OUT", referenceType: "kitchen_transfer", referenceId: transferId,
-        notes: notes || null, userId: req.user.id, businessDate,
+      const kitchenTransferItemId = inserted.rows[0].id;
+      await issueTransferItem(client, {
+        kitchenTransferItemId, fromBranchId, inventoryItemId: it.inventoryItemId, quantity: it.quantity,
+        transferId, userId: req.user.id, businessDate, notes,
       });
-      // بيزود مخزون الفرع المستقبِل
-      await postInventoryMovement(client, {
-        branchId: toBranchId, inventoryItemId: it.inventoryItemId, quantity: Number(it.quantity),
-        movementType: "TRANSFER_IN", referenceType: "kitchen_transfer", referenceId: transferId,
-        notes: notes || null, userId: req.user.id, businessDate,
+      await receiveTransferItem(client, {
+        kitchenTransferItemId, toBranchId, inventoryItemId: it.inventoryItemId, quantityReceived: it.quantity,
+        transferId, userId: req.user.id, businessDate,
       });
     }
 
@@ -152,14 +245,15 @@ router.post("/itemized", requireAuth, requireRole("admin", "branch_manager"), as
   }
 });
 
-// ================= التحويل المرحلي (Staged Transfer Workflow) - إضافة اختيارية جديدة =================
-// إضافي فوق /itemized اللي فوق (لسه شغال زي ما هو للتحويل الفوري) - ده لمن يحتاج دورة حياة حقيقية:
-// requested → approved → issued (بينزل من مخزون المصدر) → partially_received/received (بيزود مخزون
-// الوجهة على قد اللي وصل فعلًا، مش المُرسل بالضرورة - الفرق (variance) بيتسجل صراحة، مايتفقدش)
+// ================= التحويل المرحلي (Staged Transfer Workflow) - المسار التشغيلي الأساسي =================
+// requested → approved → issued (بينزل من مخزون المصدر) → in_transit → partially_received/received
+// (بيزود مخزون الوجهة على قد اللي وصل فعلًا، مش المُرسل بالضرورة - الفرق (variance) بيتسجل صراحة)
 
 // POST /api/kitchen-transfers/request - طلب تحويل (بيسجل بس، لسه ملوش أي أثر على المخزون)
+// kitchenOrderId اختياري - لو التحويل ده تنفيذ لطلبية فرع، بتتقفل "fulfilled" تلقائيًا وقت الاستلام
+// (مش وقت الطلب - الطلبية تفضل pending لحد ما البضاعة توصل فعليًا للفرع الطالب)
 router.post("/request", requireAuth, requireRole("admin", "branch_manager"), async (req, res) => {
-  const { fromBranchId, toBranchId, businessDate, items, notes } = req.body;
+  const { fromBranchId, toBranchId, businessDate, items, notes, kitchenOrderId } = req.body;
   if (!fromBranchId || !toBranchId || !businessDate || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "بيانات ناقصة" });
   }
@@ -170,9 +264,9 @@ router.post("/request", requireAuth, requireRole("admin", "branch_manager"), asy
   try {
     await client.query("BEGIN");
     const transferResult = await client.query(
-      `INSERT INTO kitchen_transfers (from_branch_id, to_branch_id, business_date, amount_at_cost, notes, status, requested_by)
-       VALUES ($1,$2,$3,0,$4,'requested',$5) RETURNING *`,
-      [fromBranchId, toBranchId, businessDate, notes || null, req.user.id]
+      `INSERT INTO kitchen_transfers (from_branch_id, to_branch_id, business_date, amount_at_cost, notes, status, requested_by, kitchen_order_id)
+       VALUES ($1,$2,$3,0,$4,'requested',$5,$6) RETURNING *`,
+      [fromBranchId, toBranchId, businessDate, notes || null, req.user.id, kitchenOrderId || null]
     );
     const transferId = transferResult.rows[0].id;
     for (const it of items) {
@@ -195,8 +289,9 @@ router.post("/request", requireAuth, requireRole("admin", "branch_manager"), asy
   }
 });
 
-// POST /api/kitchen-transfers/:id/approve
-router.post("/:id/approve", requireAuth, stockManagers, async (req, res) => {
+// POST /api/kitchen-transfers/:id/approve - **أدمن بس**. مش مدير فرع، حتى لو مدير فرع مالك الطلب نفسه -
+// الاعتماد لازم يكون من طرف مستقل (أدمن) عشان مايبقاش نفس الشخص طالب ومعتمد لنفس التحويل
+router.post("/:id/approve", requireAuth, requireRole("admin"), async (req, res) => {
   try {
     const existing = await pool.query("SELECT * FROM kitchen_transfers WHERE id = $1", [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ error: "التحويل مش موجود" });
@@ -216,6 +311,7 @@ router.post("/:id/approve", requireAuth, stockManagers, async (req, res) => {
 });
 
 // POST /api/kitchen-transfers/:id/issue - بينزل الكمية فعليًا من مخزون فرع المصدر (لسه معدلش مخزون الوجهة)
+// - بيحافظ على هوية الدفعة (لو الصنف متتبّع بدفعات) عشان تتنقل صح وقت الاستلام
 router.post("/:id/issue", requireAuth, stockManagers, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -230,10 +326,9 @@ router.post("/:id/issue", requireAuth, stockManagers, async (req, res) => {
 
     await client.query("BEGIN");
     for (const it of items.rows) {
-      await postInventoryMovement(client, {
-        branchId: t.from_branch_id, inventoryItemId: it.inventory_item_id, quantity: -Number(it.quantity),
-        movementType: "TRANSFER_OUT", referenceType: "kitchen_transfer", referenceId: t.id,
-        userId: req.user.id, businessDate: t.business_date,
+      await issueTransferItem(client, {
+        kitchenTransferItemId: it.id, fromBranchId: t.from_branch_id, inventoryItemId: it.inventory_item_id,
+        quantity: it.quantity, transferId: t.id, userId: req.user.id, businessDate: t.business_date,
       });
       await client.query("UPDATE kitchen_transfer_items SET quantity_sent = $1 WHERE id = $2", [it.quantity, it.id]);
     }
@@ -255,7 +350,8 @@ router.post("/:id/issue", requireAuth, stockManagers, async (req, res) => {
   }
 });
 
-// POST /api/kitchen-transfers/:id/receive - بيزود مخزون فرع الوجهة على قد اللي فعلًا وصل (مش المُرسل بالضرورة)
+// POST /api/kitchen-transfers/:id/receive - بيزود مخزون فرع الوجهة على قد اللي فعلًا وصل (مش المُرسل
+// بالضرورة) - بنفس هوية الدفعة (لو موجودة) بدل ما تتحول لرصيد عام مجهول المصدر
 // {items: [{inventoryItemId, quantityReceived}]} - أي فرق عن quantity_sent بيتسجل كـvariance صراحة، مايختفيش
 router.post("/:id/receive", requireAuth, stockManagers, async (req, res) => {
   const { items: receivedItems } = req.body;
@@ -279,13 +375,10 @@ router.post("/:id/receive", requireAuth, stockManagers, async (req, res) => {
     for (const it of items.rows) {
       const qtyReceived = receivedByItem.get(it.inventory_item_id) ?? Number(it.quantity_sent ?? it.quantity);
       if (qtyReceived !== Number(it.quantity_sent ?? it.quantity)) anyVariance = true;
-      if (qtyReceived > 0) {
-        await postInventoryMovement(client, {
-          branchId: t.to_branch_id, inventoryItemId: it.inventory_item_id, quantity: qtyReceived,
-          movementType: "TRANSFER_IN", referenceType: "kitchen_transfer", referenceId: t.id,
-          userId: req.user.id, businessDate: t.business_date,
-        });
-      }
+      await receiveTransferItem(client, {
+        kitchenTransferItemId: it.id, toBranchId: t.to_branch_id, inventoryItemId: it.inventory_item_id,
+        quantityReceived: qtyReceived, transferId: t.id, userId: req.user.id, businessDate: t.business_date,
+      });
       await client.query("UPDATE kitchen_transfer_items SET quantity_received = $1 WHERE id = $2", [qtyReceived, it.id]);
     }
     const newStatus = anyVariance ? "partially_received" : "received";

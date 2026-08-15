@@ -3,6 +3,17 @@
 -- مبني على منطق التقرير اليومي الحالي (إكسل) — نفس الأعمدة والمفاهيم
 -- ============================================================
 
+-- سجل خفيف لتتبّع أي تحديث مستقبلي على القاعدة (اسم + وقت التطبيق) - مش migration runner كامل (ده
+-- محتاج إعادة تصميم أكبر لطريقة نشر التحديثات الحالية، وده مخاطرة مش لازمة دلوقتي)، بس بيضمن إن أي
+-- سكريبت تحديث جديد يقدر يتأكد "هل ده اتطبّق قبل كده؟" قبل ما يعمل ALTER تاني على نفس العمود/الجدول -
+-- الاستخدام: INSERT INTO schema_migrations (name) VALUES ('اسم-وصفي-فريد') ON CONFLICT (name) DO NOTHING
+-- في أول أي سكريبت تحديث جديد، وتتأكد من النتيجة قبل ما تكمل باقي الـALTER statements
+CREATE TABLE schema_migrations (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE branches (
   id            SERIAL PRIMARY KEY,
   name          TEXT NOT NULL,            -- محرم بك / الإبراهيمية / العصافرة
@@ -164,8 +175,13 @@ CREATE TABLE orders (
   void_reason       TEXT,
   created_at        TIMESTAMPTZ DEFAULT now(),
   sync_uuid         UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE, -- هوية ثابتة عبر الفروع لمزامنة السيرفر المركزي
-  synced_at         TIMESTAMPTZ -- NULL يعني لسه محتاج يترفع للمركزي
+  synced_at         TIMESTAMPTZ, -- NULL يعني لسه محتاج يترفع للمركزي
+  -- مفتاح idempotency اختياري من الكاشير/الموقع - لو نفس المفتاح اتبعت مرتين (retry شبكة أو ضغط زرار
+  -- مرتين) الطلب التاني مبيتسجلش تاني، بيترجع نفس نتيجة الأول. الحماية على مستوى الـUNIQUE INDEX
+  -- نفسه (partial، بيسمح بـNULL متكرر) عشان تفضل atomic حتى مع طلبين متزامنين بالظبط
+  idempotency_key   TEXT
 );
+CREATE UNIQUE INDEX idx_orders_idempotency_key ON orders(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- سجل كل تغيير في حالة الطلب (بديل "نقدر نرجع لكل سجل الأوردرات")
 CREATE TABLE order_status_log (
@@ -279,7 +295,11 @@ CREATE TABLE inventory_items (
   unit                  TEXT NOT NULL,               -- كيلو / لتر / قطعة (وحدة تتبّع الرصيد الأساسية)
   unit_cost             NUMERIC,                     -- تكلفة الوحدة (لحساب تكلفة الريسبي مستقبلًا) - اختياري
   item_type             TEXT NOT NULL DEFAULT 'raw' CHECK (item_type IN ('raw', 'manufactured')), -- خام (بيتشترى) أو مصنّع (بيتعمل في السنتر كيتشن)
-  allow_negative_stock  BOOLEAN NOT NULL DEFAULT FALSE, -- لو TRUE، الصنف ده يُسمح رصيده يبقى سالب (استثناء تشغيلي)
+  allow_negative_stock  BOOLEAN NOT NULL DEFAULT FALSE, -- (قديم، مش مستخدم في الكود الجديد) - استبدله negative_stock_policy تحت
+  -- سياسة الرصيد السالب: STRICT = ممنوع خالص مهما حصل (حتى لأدمن في نفس عملية البيع). ALLOW_WITH_APPROVAL =
+  -- ممنوع للكاشير لوحده، بس مسموح بموافقة مدير/أدمن (PIN) وقت البيع، أو للأدوار المخوّلة أصلًا
+  -- (تسوية/هالك/تحويل - دورهم نفسه هو الموافقة) - افتراضيًا STRICT لكل صنف جديد
+  negative_stock_policy TEXT NOT NULL DEFAULT 'STRICT' CHECK (negative_stock_policy IN ('STRICT', 'ALLOW_WITH_APPROVAL')),
   created_at            TIMESTAMPTZ DEFAULT now()
 );
 
@@ -388,6 +408,23 @@ CREATE TABLE inventory_batches (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_inventory_batches_item_branch ON inventory_batches(inventory_item_id, branch_id, status);
+
+-- لو الصنف المُحوَّل بين فرعين متتبّع بدفعات، كل جزء من الكمية بيتسجل هنا بهويته الأصلية (رقم الدفعة/
+-- الصلاحية/الإنتاج/التكلفة) - عشان الدفعة تفضل معروفة بنفس هويتها في الفرع المستلم بدل ما تتحول لرصيد
+-- عام مجهول المصدر. لو التحويل استهلك من أكتر من دفعة (FEFO/FIFO)، كل دفعة بتاخد صف منفصل هنا بالترتيب
+-- اللي اتصرفت بيه وقت الإصدار (issue) - وبيتحدد منها الدفعة (الدفعات) اللي بتتنشئ/تتزود في فرع الاستلام
+CREATE TABLE kitchen_transfer_item_batches (
+  id                        SERIAL PRIMARY KEY,
+  kitchen_transfer_item_id  INTEGER NOT NULL REFERENCES kitchen_transfer_items(id) ON DELETE CASCADE,
+  source_batch_id           INTEGER REFERENCES inventory_batches(id),
+  quantity                  NUMERIC NOT NULL,
+  batch_number              TEXT,
+  expiry_date               DATE,
+  production_date           DATE,
+  unit_cost                 NUMERIC,
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_kitchen_transfer_item_batches_item ON kitchen_transfer_item_batches(kitchen_transfer_item_id);
 
 -- تحويلات وحدات بسيطة بين وحدات مختلفة لنفس الصنف (مثلًا استلام من المورد بالكرتونة والرصيد متابَع
 -- بالكيلو) - factor: 1 من from_unit = factor من to_unit. اختيارية، مطلوبة بس لو حد استلم بوحدة مختلفة

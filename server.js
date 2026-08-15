@@ -34,4 +34,10 @@ app.use("/api/approvals", require("./routes/approvals"));
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Satamoni backend running on port ${PORT}`));
+// بيشتغل السيرفر فعليًا بس لو الملف ده اتشغل مباشرة (node server.js / npm start / npm run dev) - لو
+// ملف تاني عمله require (زي tests/) بيستخدم الـapp من غير ما يفتح بورت حقيقي، عشان supertest يقدر
+// يبعت طلبات للـapp في نفس الـprocess من غير سيرفر شغال فعليًا
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`Satamoni backend running on port ${PORT}`));
+}
+module.exports = app;

@@ -12,7 +12,8 @@
     "import-menu": "node db/import-menu-data.js",
     "import-talabat-prices": "node db/import-talabat-prices.js",
     "import-kitchen-data": "node db/import-central-kitchen-data.js",
-    "import-payroll-data": "node db/import-payroll-data.js"
+    "import-payroll-data": "node db/import-payroll-data.js",
+    "test": "jest --runInBand"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -23,6 +24,8 @@
     "pg": "^8.11.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "jest": "^30.4.2",
+    "nodemon": "^3.1.0",
+    "supertest": "^7.2.2"
   }
 }

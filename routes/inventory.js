@@ -65,7 +65,7 @@ router.patch("/items/:id", requireAuth, stockManagers, async (req, res) => {
   if (req.user.role !== "admin" && !req.user.isCentralKitchen) {
     return res.status(403).json({ error: "تعديل الكتالوج للأدمن أو مدير السنتر كيتشن بس" });
   }
-  const { name, unit, unitCost, itemType, allowNegativeStock } = req.body;
+  const { name, unit, unitCost, itemType, allowNegativeStock, negativeStockPolicy } = req.body;
   const fields = [];
   const values = [];
   let i = 1;
@@ -73,6 +73,12 @@ router.patch("/items/:id", requireAuth, stockManagers, async (req, res) => {
   if (unit !== undefined) { fields.push(`unit = $${i++}`); values.push(unit); }
   if (unitCost !== undefined) { fields.push(`unit_cost = $${i++}`); values.push(unitCost); }
   if (allowNegativeStock !== undefined) { fields.push(`allow_negative_stock = $${i++}`); values.push(!!allowNegativeStock); }
+  if (negativeStockPolicy !== undefined) {
+    if (!["STRICT", "ALLOW_WITH_APPROVAL"].includes(negativeStockPolicy)) {
+      return res.status(400).json({ error: "سياسة الرصيد السالب غير معروفة" });
+    }
+    fields.push(`negative_stock_policy = $${i++}`); values.push(negativeStockPolicy);
+  }
   if (itemType !== undefined) {
     if (!["raw", "manufactured"].includes(itemType)) return res.status(400).json({ error: "نوع الصنف غير معروف" });
     fields.push(`item_type = $${i++}`); values.push(itemType);
@@ -81,7 +87,7 @@ router.patch("/items/:id", requireAuth, stockManagers, async (req, res) => {
 
   values.push(req.params.id);
   try {
-    const before = await pool.query("SELECT unit_cost FROM inventory_items WHERE id = $1", [req.params.id]);
+    const before = await pool.query("SELECT unit_cost, negative_stock_policy FROM inventory_items WHERE id = $1", [req.params.id]);
     const result = await pool.query(
       `UPDATE inventory_items SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`,
       values
@@ -91,6 +97,12 @@ router.patch("/items/:id", requireAuth, stockManagers, async (req, res) => {
       await logAudit(pool, {
         userId: req.user.id, action: "COST_CHANGE", entityType: "inventory_item", entityId: Number(req.params.id),
         oldValues: { unitCost: before.rows[0].unit_cost }, newValues: { unitCost }, req,
+      });
+    }
+    if (negativeStockPolicy !== undefined && before.rows[0] && before.rows[0].negative_stock_policy !== negativeStockPolicy) {
+      await logAudit(pool, {
+        userId: req.user.id, action: "NEGATIVE_STOCK_POLICY_CHANGE", entityType: "inventory_item", entityId: Number(req.params.id),
+        oldValues: { negativeStockPolicy: before.rows[0].negative_stock_policy }, newValues: { negativeStockPolicy }, req,
       });
     }
     res.json(result.rows[0]);
@@ -144,7 +156,7 @@ router.post("/stock/adjust", requireAuth, stockManagers, async (req, res) => {
     await client.query("BEGIN");
     const { movement, duplicate } = await postInventoryMovement(client, {
       branchId, inventoryItemId, quantity, movementType: LEGACY_MOVEMENT_TYPE_MAP[movementType],
-      notes, userId: req.user.id, idempotencyKey,
+      notes, userId: req.user.id, idempotencyKey, negativeStockOverrideApproved: true,
     });
     if (!duplicate) {
       await logAudit(client, {
@@ -189,7 +201,7 @@ router.post("/reconcile", requireAuth, stockManagers, async (req, res) => {
       const reconcileNote = `جرد: كان ${previousQuantity}، الفعلي ${actualQuantity}` + (notes ? ` - ${notes}` : "");
       await postInventoryMovement(client, {
         branchId, inventoryItemId, quantity: variance, movementType: "STOCK_COUNT",
-        notes: reconcileNote, userId: req.user.id,
+        notes: reconcileNote, userId: req.user.id, negativeStockOverrideApproved: true,
       });
       await logAudit(client, {
         branchId, userId: req.user.id, action: "INVENTORY_COUNT", entityType: "inventory_item", entityId: inventoryItemId,
@@ -231,7 +243,7 @@ router.post("/waste", requireAuth, stockManagers, async (req, res) => {
     const { movement, duplicate } = await postInventoryMovement(client, {
       branchId, inventoryItemId, quantity: -Math.abs(Number(quantity)), movementType: "WASTE",
       reason: wasteReason || "UNKNOWN", notes: reason || null, businessDate: businessDate || null,
-      userId: req.user.id, idempotencyKey,
+      userId: req.user.id, idempotencyKey, negativeStockOverrideApproved: true,
     });
     if (!duplicate) {
       await logAudit(client, {
@@ -406,7 +418,7 @@ router.post("/produce", requireAuth, stockManagers, async (req, res) => {
         branchId, inventoryItemId: ing.input_item_id,
         quantity: -(Number(ing.quantity_per_unit) * Number(quantityProduced)),
         movementType: "PRODUCTION_OUT", referenceType: "production", notes: notes || null,
-        userId: req.user.id,
+        userId: req.user.id, negativeStockOverrideApproved: true,
       });
     }
 

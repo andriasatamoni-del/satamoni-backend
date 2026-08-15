@@ -535,7 +535,9 @@ async function loadPendingOrders() {
           .filter(it => it.quantity > 0);
         if (items.length === 0) { errBox.textContent = "لازم كمية أكبر من صفر على الأقل لصنف واحد"; return; }
         try {
-          await api("/api/kitchen-transfers/itemized", {
+          // التحويل الفوري (/itemized) بقى للأدمن بس (حماية إضافية ضد تخطي الاعتماد) - التنفيذ العادي
+          // دلوقتي بيبعت "طلب تحويل" يحتاج اعتماد الأدمن الأول، وبعدين إصدار من هنا واستلام في الفرع
+          const transfer = await api("/api/kitchen-transfers/request", {
             method: "POST",
             body: JSON.stringify({
               fromBranchId: auth.user.branchId,
@@ -545,9 +547,9 @@ async function loadPendingOrders() {
               kitchenOrderId: orderId,
             }),
           });
-          await loadPendingOrders();
-          await loadKitchenStock();
-        } catch (e) { errBox.textContent = e.message; }
+          errBox.style.color = "var(--green)";
+          errBox.textContent = `تم إرسال طلب التحويل (#${transfer.id}) - محتاج اعتماد الأدمن قبل ما البضاعة تتصرف`;
+        } catch (e) { errBox.style.color = ""; errBox.textContent = e.message; }
       };
     };
   });

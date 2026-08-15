@@ -103,7 +103,7 @@ router.post(
         await postInventoryMovement(client, {
           branchId: request.branch_id, inventoryItemId, quantity: Number(quantity), movementType: "ADJUSTMENT",
           referenceType: "approval_request", referenceId: request.id,
-          notes: notes || request.reason, userId: request.requested_by,
+          notes: notes || request.reason, userId: request.requested_by, negativeStockOverrideApproved: true,
         });
       }
 
