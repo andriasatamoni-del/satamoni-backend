@@ -55,6 +55,32 @@ router.get("/me", requireAuth, (req, res) => {
   res.json(req.user);
 });
 
+// حد محاولات الـ PIN الغلط - في الذاكرة بس (كل فرع بيشغّل عملية Node واحدة طويلة، مش محتاجين
+// تخزين دائم)، متتبّع بحساب الموظف اللي بيحاول (req.user.id) بغض النظر عن الفرع اللي بيبعته.
+// بعد 5 محاولات غلط بيتقفل 5 دقايق - عشان محدش يقدر يجرب كل الأرقام من 0000 لـ 9999.
+const pinAttempts = new Map(); // userId -> { count, lockedUntil }
+const MAX_PIN_ATTEMPTS = 5;
+const PIN_LOCKOUT_MS = 5 * 60 * 1000;
+
+function getPinLockoutSeconds(userId) {
+  const entry = pinAttempts.get(userId);
+  if (!entry || !entry.lockedUntil) return 0;
+  const remaining = entry.lockedUntil - Date.now();
+  return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
+}
+function recordPinFailure(userId) {
+  const entry = pinAttempts.get(userId) || { count: 0, lockedUntil: null };
+  entry.count += 1;
+  if (entry.count >= MAX_PIN_ATTEMPTS) {
+    entry.lockedUntil = Date.now() + PIN_LOCKOUT_MS;
+    entry.count = 0;
+  }
+  pinAttempts.set(userId, entry);
+}
+function recordPinSuccess(userId) {
+  pinAttempts.delete(userId);
+}
+
 // POST /api/auth/verify-override-pin - {pin, branchId?} -> {approverId, approverName}
 // موافقة مدير الفرع/الأدمن بـ PIN من غير ما يسجل خروج ودخول تاني على جهاز الكاشير - مستخدمة
 // للخصومات اللي فوق الحد المسموح واسترجاع الطلبات المكتملة (Void). أي موظف مسجل دخول يقدر يطلبها،
@@ -62,6 +88,12 @@ router.get("/me", requireAuth, (req, res) => {
 router.post("/verify-override-pin", requireAuth, async (req, res) => {
   const { pin, branchId } = req.body;
   if (!pin) return res.status(400).json({ error: "لازم تدخل PIN" });
+
+  const lockedSeconds = getPinLockoutSeconds(req.user.id);
+  if (lockedSeconds > 0) {
+    return res.status(429).json({ error: `محاولات كتير غلط - جرب تاني بعد ${lockedSeconds} ثانية` });
+  }
+
   try {
     const candidates = await pool.query(
       `SELECT id, name, pin_hash FROM users
@@ -71,9 +103,11 @@ router.post("/verify-override-pin", requireAuth, async (req, res) => {
     );
     for (const candidate of candidates.rows) {
       if (await bcrypt.compare(pin, candidate.pin_hash)) {
+        recordPinSuccess(req.user.id);
         return res.json({ approverId: candidate.id, approverName: candidate.name });
       }
     }
+    recordPinFailure(req.user.id);
     res.status(401).json({ error: "PIN غير صحيح" });
   } catch (err) {
     res.status(500).json({ error: err.message });

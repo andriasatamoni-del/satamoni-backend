@@ -24,6 +24,57 @@ function requirePosAuthIfNeeded(req, res, next) {
   next();
 }
 
+// بيتأكد من سعر كل سطر في الطلب من المنيو الحقيقي في قاعدة البيانات - مش بيصدّق unitPrice/priceDelta
+// الجايين من الواجهة خالص، عشان جهاز كاشير متلاعب فيه (أو نداء API مباشر) ميقدرش يبيع صنف بسعر
+// مزوّر أو يهرّب "خصم" مقنّع في هيئة مرفق بسعر سالب يتخطى نظام موافقة الخصومات بالكامل.
+// بيرجع {itemId, variantId, comboId, quantity, unitPrice, lineTotal, modifiers} لكل سطر، أو يرمي Error
+// برسالة عربي واضحة لو الصنف/الحجم/المرفق مش موجود أو متوقف.
+async function resolveOrderItems(client, items, source) {
+  const useTalabatPrice = source === "talabat";
+  const resolved = [];
+  for (const it of items) {
+    if (it.comboId) {
+      const combo = await client.query(
+        "SELECT price FROM combos WHERE id = $1 AND is_active = TRUE",
+        [it.comboId]
+      );
+      if (combo.rows.length === 0) throw new Error("العرض ده مش موجود أو متوقف حاليًا");
+      const unitPrice = Number(combo.rows[0].price);
+      resolved.push({ comboId: it.comboId, itemId: null, variantId: null, quantity: it.quantity, unitPrice, lineTotal: unitPrice * it.quantity, modifiers: [] });
+      continue;
+    }
+
+    const variant = await client.query(
+      `SELECT v.price, v.talabat_price, mi.is_active
+       FROM menu_item_variants v JOIN menu_items mi ON mi.id = v.item_id
+       WHERE v.id = $1 AND v.item_id = $2`,
+      [it.variantId, it.itemId]
+    );
+    if (variant.rows.length === 0) throw new Error("الصنف ده مش موجود في المنيو");
+    const row = variant.rows[0];
+    if (!row.is_active) throw new Error("الصنف ده متوقف حاليًا");
+    if (useTalabatPrice && row.talabat_price == null) throw new Error("الصنف ده مش متاح على طلبات");
+    const basePrice = Number(useTalabatPrice ? row.talabat_price : row.price);
+
+    const modifiers = [];
+    let modifierTotal = 0;
+    for (const mod of it.modifiers || []) {
+      const modRow = await client.query(
+        "SELECT id, name, price_delta FROM menu_item_modifiers WHERE id = $1 AND item_id = $2 AND is_active = TRUE",
+        [mod.id, it.itemId]
+      );
+      if (modRow.rows.length === 0) throw new Error("مرفق مش موجود أو متوقف حاليًا");
+      const delta = Number(modRow.rows[0].price_delta);
+      modifiers.push({ id: modRow.rows[0].id, name: modRow.rows[0].name, priceDelta: delta });
+      modifierTotal += delta;
+    }
+
+    const unitPrice = basePrice + modifierTotal;
+    resolved.push({ comboId: null, itemId: it.itemId, variantId: it.variantId, quantity: it.quantity, unitPrice, lineTotal: unitPrice * it.quantity, modifiers });
+  }
+  return resolved;
+}
+
 // POST /api/orders - إنشاء طلب جديد (من الموقع أو من شاشة الكاشير)
 // ده اللي هيستبدل window.storage في ملف الموقع الحالي
 router.post("/", requirePosAuthIfNeeded, async (req, res) => {
@@ -32,7 +83,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     const {
       branchId, source, orderType, tableNumber,
       deliveryAreaId, addressDetails, customerName, customerPhone, customerPhone2,
-      distinguishingMark, paymentMethodId, items, deliveryFee = 0, discount = 0,
+      distinguishingMark, paymentMethodId, items: rawItems, deliveryFee = 0, discount = 0,
       discountApprovedBy,
     } = req.body;
 
@@ -40,7 +91,14 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       return res.status(403).json({ error: "معندكش صلاحية تسجل طلب على فرع تاني" });
     }
 
-    const subtotal = items.reduce((s, it) => s + it.unitPrice * it.quantity, 0);
+    let items;
+    try {
+      items = await resolveOrderItems(client, rawItems, source || "website");
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    const subtotal = items.reduce((s, it) => s + it.lineTotal, 0);
 
     // خصم فوق النسبة المسموحة للكاشير لوحده لازم يبقى معاه موافقة مدير/أدمن اتاكدنا منها بـ PIN
     // (verify-override-pin) - بنتأكد من صحتها تاني هنا من السيرفر، مش بس بنصدّق الفرونت إند
@@ -124,14 +182,14 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       );
     }
 
-    // كل صنف ممكن يبقى معاه مرفقات مختارة (إضافة موتزريلا، بدون طماطم...) - unitPrice الجاي من الواجهة
-    // شامل بالفعل سعر المرفقات، وبنسجل اسم/سعر كل مرفق وقت البيع (snapshot) في order_item_modifiers
+    // كل صنف ممكن يبقى معاه مرفقات مختارة (إضافة موتزريلا، بدون طماطم...) - unitPrice/lineTotal ومرفقات
+    // it.modifiers هنا كلها متأكد منها من المنيو الحقيقي (resolveOrderItems فوق)، مش من الواجهة مباشرة
     for (const it of items) {
       const inserted = await client.query(
         `INSERT INTO order_items (order_id, item_id, variant_id, combo_id, quantity, unit_price, line_total)
          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
         [orderId, it.comboId ? null : it.itemId, it.comboId ? null : it.variantId, it.comboId || null,
-         it.quantity, it.unitPrice, it.unitPrice * it.quantity]
+         it.quantity, it.unitPrice, it.lineTotal]
       );
       const orderItemId = inserted.rows[0].id;
       for (const mod of it.modifiers || []) {
