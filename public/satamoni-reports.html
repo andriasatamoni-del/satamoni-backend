@@ -128,6 +128,9 @@
     <div class="tabbtn" data-tab="areas">مناطق التوصيل</div>
     <div class="tabbtn" data-tab="drivers">الطيارين</div>
     <div class="tabbtn" data-tab="delivery">خدمة الدليفري</div>
+    <div class="tabbtn" data-tab="peakhours">ساعات الذروة</div>
+    <div class="tabbtn" data-tab="customerspend">إنفاق العملاء</div>
+    <div class="tabbtn" data-tab="inventoryvaluation">قيمة المخزون</div>
   </div>
 
   <div id="loadingState" style="display:none">...جاري التحميل</div>
@@ -295,6 +298,42 @@
     </div>
     <div id="deliveryKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px"></div>
   </div>
+
+  <!-- ساعات الذروة -->
+  <div class="panel" id="panel-peakhours">
+    <div class="grid2">
+      <div class="box wide"><h3>حسب ساعة اليوم</h3><div id="peakHoursByHourWrap"></div></div>
+      <div class="box wide"><h3>حسب يوم الأسبوع</h3><div id="peakHoursByDowWrap"></div></div>
+    </div>
+  </div>
+
+  <!-- إنفاق العملاء -->
+  <div class="panel" id="panel-customerspend">
+    <div class="toolbar">
+      <label>عدد العملاء في القائمة</label>
+      <input id="customerSpendLimit" type="number" value="20" style="width:70px" />
+      <button id="customerspendRefresh">تحديث</button>
+    </div>
+    <div id="customerSpendKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>العميل</th><th>الموبايل</th><th>عدد الطلبات</th><th>إجمالي الإنفاق</th><th>متوسط الطلب</th><th>آخر طلب</th></tr></thead>
+      <tbody id="customerSpendBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- قيمة المخزون -->
+  <div class="panel" id="panel-inventoryvaluation">
+    <div class="toolbar">
+      <button id="inventoryvaluationRefresh">تحديث</button>
+      <span style="font-size:11px;color:var(--faint)">قيمة المخزون لحظيًا (مش مرتبطة بمدى التاريخ فوق)</span>
+    </div>
+    <div id="inventoryValuationKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px"></div>
+    <div class="box wide" style="margin-bottom:14px"><h3>حسب الفرع</h3><div id="inventoryValuationByBranchWrap"></div></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الفرع</th><th>المكوّن</th><th>الرصيد</th><th>تكلفة الوحدة</th><th>القيمة</th></tr></thead>
+      <tbody id="inventoryValuationBody"></tbody>
+    </table></div>
+  </div>
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية على مركز التقارير ده.</div>
@@ -418,7 +457,7 @@ function qsFromFilters(extra) {
 }
 
 const dirty = {}; // كل تاب لازم يتحمّل تاني لما الفلاتر تتغيّر
-const tabIds = ["sales", "items", "catalog", "recipes", "cost", "cancelled", "delays", "waste", "expenses", "purchases", "areas", "drivers", "delivery"];
+const tabIds = ["sales", "items", "catalog", "recipes", "cost", "cancelled", "delays", "waste", "expenses", "purchases", "areas", "drivers", "delivery", "peakhours", "customerspend", "inventoryvaluation"];
 function markAllDirty() { tabIds.forEach(t => dirty[t] = true); }
 
 document.querySelectorAll(".tabbtn").forEach(btn => {
@@ -459,9 +498,9 @@ const loaders = {
     ]);
     renderLineChart("salesTrendWrap", data.dailyTrend, r => r.date, r => r.revenue, r => `${String(r.date).slice(0,10)}: ${money(r.revenue)} (${r.ordersCount} طلب)`);
     renderBarChart("salesByPaymentWrap", data.byPaymentMethod, r => `${r.name}${r.kind ? " (" + r.kind + ")" : ""}`, r => r.amount, r => `${money(r.amount)} · ${r.count}`);
-    const sourceLabels = { pos: "كاشير", callcenter: "كول سنتر", talabat: "طلبات" };
+    const sourceLabels = { pos: "كاشير", callcenter: "كول سنتر", talabat: "طلبات", website: "الموقع" };
     renderBarChart("salesBySourceWrap", data.bySource, r => sourceLabels[r.source] || r.source, r => r.amount, r => `${money(r.amount)} · ${r.count}`);
-    const typeLabels = { dine_in: "صالة", takeaway: "تيك أواي", delivery: "دليفري" };
+    const typeLabels = { dinein: "صالة", takeaway: "تيك أواي", delivery: "دليفري" };
     renderBarChart("salesByOrderTypeWrap", data.byOrderType, r => typeLabels[r.orderType] || r.orderType, r => r.amount, r => `${money(r.amount)} · ${r.count}`);
   },
 
@@ -628,12 +667,50 @@ const loaders = {
       { label: `نسبة الالتزام بالخروج قبل ${data.thresholdMinutes} دقيقة`, value: pct(data.onTimeRate), cls: "green" },
     ]);
   },
+
+  async peakhours() {
+    const data = await api(`/api/reports/peak-hours?${qsFromFilters()}`);
+    renderBarChart("peakHoursByHourWrap", data.byHour, r => `الساعة ${String(r.hour).padStart(2, "0")}:00`, r => r.ordersCount, r => `${r.ordersCount} طلب · ${money(r.revenue)}`);
+    renderBarChart("peakHoursByDowWrap", data.byDayOfWeek, r => r.dayName, r => r.ordersCount, r => `${r.ordersCount} طلب · ${money(r.revenue)}`);
+  },
+
+  async customerspend() {
+    const limit = document.getElementById("customerSpendLimit").value || 20;
+    const data = await api(`/api/reports/customer-spend?${qsFromFilters({ limit })}`);
+    renderKpis("customerSpendKpi", [
+      { label: "عملاء جدد في الفترة دي", value: data.newCustomersCount, cls: "green" },
+      { label: "عدد العملاء في القائمة", value: data.topCustomers.length },
+    ]);
+    document.getElementById("customerSpendBody").innerHTML = data.topCustomers.map(c => `
+      <tr>
+        <td>${c.name || "—"}</td><td>${c.phone}</td><td>${c.ordersCount}</td>
+        <td>${money(c.totalSpent)}</td><td>${money(c.avgOrderValue)}</td><td>${dt(c.lastOrderAt)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6" class="empty">مفيش طلبات عملاء مسجّلة في الفترة دي</td></tr>`;
+  },
+
+  async inventoryvaluation() {
+    const branchId = document.getElementById("branchSelect").value;
+    const qs = branchId ? `?branchId=${branchId}` : "";
+    const data = await api(`/api/reports/inventory-valuation${qs}`);
+    renderKpis("inventoryValuationKpi", [
+      { label: "إجمالي قيمة المخزون الحالي", value: money(data.totalValue), cls: "gold" },
+    ]);
+    renderBarChart("inventoryValuationByBranchWrap", data.byBranch, r => r.branchName, r => r.totalValue, r => money(r.totalValue), r => r.totalValue < 0);
+    document.getElementById("inventoryValuationBody").innerHTML = data.items.map(i => `
+      <tr class="${i.value < 0 || i.costIncomplete ? "warnrow" : ""}">
+        <td>${i.branchName}</td><td>${i.itemName}${i.costIncomplete ? " ⚠" : ""}</td>
+        <td>${num(i.quantity)} ${i.unit}</td><td>${i.unitCost != null ? money(i.unitCost) : "—"}</td><td>${money(i.value)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="5" class="empty">مفيش مخزون مسجّل</td></tr>`;
+  },
 };
 
 const refreshButtonsByTab = {
   items: "itemsRefresh", catalog: "catalogRefresh", cost: "costRefresh",
   expenses: "expensesRefresh", purchases: "purchasesRefresh",
   delays: "delaysRefresh", delivery: "deliveryRefresh",
+  customerspend: "customerspendRefresh", inventoryvaluation: "inventoryvaluationRefresh",
 };
 Object.entries(refreshButtonsByTab).forEach(([tab, btnId]) => {
   const el = document.getElementById(btnId);

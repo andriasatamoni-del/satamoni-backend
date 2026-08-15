@@ -1047,4 +1047,135 @@ router.get("/waste", requireAuth, canSeeReports, async (req, res) => {
   }
 });
 
+// GET /api/reports/peak-hours?from=&to=&branchId= - ساعات الذروة (عدد الطلبات والإيراد حسب ساعة
+// اليوم ويوم الأسبوع) - يفيد في جدولة الشيفتات على الأوقات المزدحمة فعليًا
+router.get("/peak-hours", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const [byHour, byDow] = await Promise.all([
+      pool.query(
+        `SELECT EXTRACT(HOUR FROM o.created_at)::int AS hour, COUNT(*) AS orders_count, SUM(o.total) AS revenue
+         FROM orders o
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY hour ORDER BY hour`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT EXTRACT(DOW FROM o.created_at)::int AS dow, COUNT(*) AS orders_count, SUM(o.total) AS revenue
+         FROM orders o
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY dow ORDER BY dow`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+    const dayNames = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+    res.json({
+      from: range.from, to: range.to, branchId,
+      byHour: byHour.rows.map((r) => ({ hour: r.hour, ordersCount: Number(r.orders_count), revenue: Number(r.revenue) })),
+      byDayOfWeek: byDow.rows.map((r) => ({ dow: r.dow, dayName: dayNames[r.dow], ordersCount: Number(r.orders_count), revenue: Number(r.revenue) })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/customer-spend?from=&to=&branchId=&limit=20 - أعلى العملاء إنفاقًا وتكرار طلب
+// في الفترة، وعدد العملاء الجدد (أول طلب ليهم على الإطلاق وقع في الفترة دي)
+router.get("/customer-spend", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  const limit = Number(req.query.limit) || 20;
+
+  try {
+    const [topCustomers, newCustomers] = await Promise.all([
+      pool.query(
+        `SELECT o.customer_phone AS phone, COALESCE(c.name, o.customer_name) AS name,
+                COUNT(*) AS orders_count, SUM(o.total) AS total_spent, MAX(o.created_at) AS last_order_at
+         FROM orders o
+         LEFT JOIN customers c ON c.phone = o.customer_phone
+         WHERE o.status <> 'cancelled' AND o.customer_phone IS NOT NULL
+           AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY o.customer_phone, COALESCE(c.name, o.customer_name)
+         ORDER BY total_spent DESC LIMIT $4`,
+        [range.from, range.to, branchId, limit]
+      ),
+      pool.query(
+        `WITH first_orders AS (
+           SELECT customer_phone, MIN(created_at) AS first_order_at
+           FROM orders WHERE customer_phone IS NOT NULL GROUP BY customer_phone
+         )
+         SELECT COUNT(*) AS new_customers_count
+         FROM first_orders
+         WHERE first_order_at::date BETWEEN $1 AND $2`,
+        [range.from, range.to]
+      ),
+    ]);
+
+    res.json({
+      from: range.from, to: range.to, branchId,
+      newCustomersCount: Number(newCustomers.rows[0].new_customers_count),
+      topCustomers: topCustomers.rows.map((r) => ({
+        phone: r.phone, name: r.name, ordersCount: Number(r.orders_count),
+        totalSpent: Number(r.total_spent),
+        avgOrderValue: Number(r.total_spent) / Number(r.orders_count),
+        lastOrderAt: r.last_order_at,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/inventory-valuation?branchId= - قيمة المخزون الحالي (رصيد كل مكوّن × تكلفة
+// الوحدة) في لحظة معينة - مش بمدى تاريخ زي باقي التقارير، ده رصيد لحظي فعلي
+router.get("/inventory-valuation", requireAuth, canSeeReports, async (req, res) => {
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const result = await pool.query(
+      `SELECT b.id AS branch_id, b.name AS branch_name, ii.id AS inventory_item_id, ii.name AS item_name,
+              ii.unit, bis.quantity, ii.unit_cost,
+              (bis.quantity * COALESCE(ii.unit_cost, 0)) AS value
+       FROM branch_inventory_stock bis
+       JOIN branches b ON b.id = bis.branch_id
+       JOIN inventory_items ii ON ii.id = bis.inventory_item_id
+       WHERE bis.quantity <> 0 AND ($1::int IS NULL OR b.id = $1)
+       ORDER BY b.name, value DESC`,
+      [branchId]
+    );
+
+    const items = result.rows.map((r) => ({
+      branchId: r.branch_id, branchName: r.branch_name,
+      inventoryItemId: r.inventory_item_id, itemName: r.item_name, unit: r.unit,
+      quantity: Number(r.quantity), unitCost: r.unit_cost != null ? Number(r.unit_cost) : null,
+      value: Number(r.value), costIncomplete: r.unit_cost === null,
+    }));
+
+    const byBranchMap = {};
+    items.forEach((i) => {
+      if (!byBranchMap[i.branchId]) byBranchMap[i.branchId] = { branchId: i.branchId, branchName: i.branchName, totalValue: 0 };
+      byBranchMap[i.branchId].totalValue += i.value;
+    });
+
+    res.json({
+      branchId,
+      totalValue: items.reduce((s, i) => s + i.value, 0),
+      byBranch: Object.values(byBranchMap).sort((a, b) => b.totalValue - a.totalValue),
+      items,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
