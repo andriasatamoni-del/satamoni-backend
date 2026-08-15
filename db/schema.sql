@@ -36,7 +36,8 @@ CREATE TABLE pos_settings (
   id                             INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   max_unapproved_discount_percent NUMERIC NOT NULL DEFAULT 0.10, -- خصم لغاية 10% الكاشير يعمله لوحده، فوق كده لازم موافقة PIN
   discount_manager_max_percent   NUMERIC NOT NULL DEFAULT 0.15, -- خصم لغاية 15% مدير الفرع يقدر يوافق عليه، فوق كده لازم أدمن
-  loyalty_points_per_egp         NUMERIC NOT NULL DEFAULT 0.1 -- نقاط ولاء لكل جنيه يتصرف (افتراضيًا نقطة واحدة لكل 10 ج.م)
+  loyalty_points_per_egp         NUMERIC NOT NULL DEFAULT 0.1, -- نقاط ولاء لكل جنيه يتصرف (افتراضيًا نقطة واحدة لكل 10 ج.م)
+  batch_consumption_method       TEXT NOT NULL DEFAULT 'FEFO' CHECK (batch_consumption_method IN ('FEFO', 'FIFO')) -- طريقة الصرف من الدفعات: الأقرب انتهاءً أو الأقدم دخولًا
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -273,12 +274,13 @@ CREATE TABLE supplier_ledger_entries (
 
 -- ---------------- المخزون الفعلي ووصفات الأصناف (BOM) ----------------
 CREATE TABLE inventory_items (
-  id            SERIAL PRIMARY KEY,
-  name          TEXT NOT NULL UNIQUE,        -- دقيق / جبنة موتزاريلا / زيت ...
-  unit          TEXT NOT NULL,               -- كيلو / لتر / قطعة
-  unit_cost     NUMERIC,                     -- تكلفة الوحدة (لحساب تكلفة الريسبي مستقبلًا) - اختياري
-  item_type     TEXT NOT NULL DEFAULT 'raw' CHECK (item_type IN ('raw', 'manufactured')), -- خام (بيتشترى) أو مصنّع (بيتعمل في السنتر كيتشن)
-  created_at    TIMESTAMPTZ DEFAULT now()
+  id                    SERIAL PRIMARY KEY,
+  name                  TEXT NOT NULL UNIQUE,        -- دقيق / جبنة موتزاريلا / زيت ...
+  unit                  TEXT NOT NULL,               -- كيلو / لتر / قطعة (وحدة تتبّع الرصيد الأساسية)
+  unit_cost             NUMERIC,                     -- تكلفة الوحدة (لحساب تكلفة الريسبي مستقبلًا) - اختياري
+  item_type             TEXT NOT NULL DEFAULT 'raw' CHECK (item_type IN ('raw', 'manufactured')), -- خام (بيتشترى) أو مصنّع (بيتعمل في السنتر كيتشن)
+  allow_negative_stock  BOOLEAN NOT NULL DEFAULT FALSE, -- لو TRUE، الصنف ده يُسمح رصيده يبقى سالب (استثناء تشغيلي)
+  created_at            TIMESTAMPTZ DEFAULT now()
 );
 
 -- ---------------- الموردين (شركات المواد الخام) ----------------
@@ -328,11 +330,24 @@ CREATE TABLE kitchen_order_items (
 
 CREATE TABLE kitchen_transfers (
   id               SERIAL PRIMARY KEY,
+  from_branch_id   INTEGER REFERENCES branches(id), -- الفرع/المخزن المُرسِل (NULL على تحويلات قديمة قبل الحقل ده)
   to_branch_id     INTEGER REFERENCES branches(id),
   business_date    DATE NOT NULL,
   amount_at_cost   NUMERIC NOT NULL,
   notes            TEXT,
-  kitchen_order_id INTEGER REFERENCES kitchen_orders(id) -- لو التحويل ده تنفيذ لطلبية فرع (اختياري)
+  kitchen_order_id INTEGER REFERENCES kitchen_orders(id), -- لو التحويل ده تنفيذ لطلبية فرع (اختياري)
+  -- دورة حياة التحويل الكاملة (اختيارية) - التحويل الفوري القديم (POST /itemized) لسه بيسجّل الصف بحالة
+  -- 'completed' على طول زي الأول، أما لو حد استخدم الـworkflow الجديد (request→approve→issue→receive)
+  -- الحالة بتتدرّج فعليًا والرصيد بيزيد في الفرع المستلم بس وقت الاستلام مش وقت الإنشاء
+  status           TEXT NOT NULL DEFAULT 'completed'
+                   CHECK (status IN ('requested', 'approved', 'issued', 'in_transit', 'received', 'partially_received', 'completed', 'cancelled')),
+  requested_by     INTEGER REFERENCES users(id),
+  approved_by      INTEGER REFERENCES users(id),
+  issued_by        INTEGER REFERENCES users(id),
+  received_by      INTEGER REFERENCES users(id),
+  approved_at      TIMESTAMPTZ,
+  issued_at        TIMESTAMPTZ,
+  received_at      TIMESTAMPTZ
 );
 
 -- بنود التحويل بالتفصيل (أصناف وكميات) - amount_at_cost فوق بيتحسب من مجموعها
@@ -340,7 +355,9 @@ CREATE TABLE kitchen_transfer_items (
   id                    SERIAL PRIMARY KEY,
   kitchen_transfer_id   INTEGER REFERENCES kitchen_transfers(id) ON DELETE CASCADE,
   inventory_item_id     INTEGER REFERENCES inventory_items(id),
-  quantity              NUMERIC NOT NULL
+  quantity              NUMERIC NOT NULL,        -- الكمية المطلوبة/المخطط تحويلها
+  quantity_sent         NUMERIC,                 -- الكمية اللي فعلًا خرجت من فرع المصدر (وقت issue)
+  quantity_received     NUMERIC                  -- الكمية اللي فعلًا وصلت الفرع المستلم (وقت receive) - ممكن تقل عن المُرسل
 );
 
 CREATE TABLE branch_inventory_stock (
@@ -351,6 +368,53 @@ CREATE TABLE branch_inventory_stock (
   UNIQUE(branch_id, inventory_item_id)
 );
 
+-- تتبّع دفعات (Batch/Lot) اختياري بالصنف - لو الصنف اتستلم بدفعة (تاريخ إنتاج/صلاحية معروف)، بيتسجل هنا
+-- ويتصرف منها أولًا بالأقرب انتهاءً (FEFO) أو الأقدم دخولًا (FIFO) حسب pos_settings.batch_consumption_method.
+-- الأصناف اللي معندهاش دفعات مسجّلة أصلًا بتفضل شغالة زي الأول (بدون أي تتبّع دفعات - رصيد إجمالي بس)
+CREATE TABLE inventory_batches (
+  id                 SERIAL PRIMARY KEY,
+  batch_number       TEXT,
+  inventory_item_id  INTEGER NOT NULL REFERENCES inventory_items(id),
+  branch_id          INTEGER NOT NULL REFERENCES branches(id), -- الفرع/المخزن الحائز على الدفعة
+  supplier_id        INTEGER REFERENCES suppliers(id),
+  received_date      DATE,
+  production_date    DATE,
+  expiry_date        DATE,
+  original_quantity  NUMERIC NOT NULL,
+  remaining_quantity NUMERIC NOT NULL,
+  unit_cost          NUMERIC,
+  status             TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'depleted', 'expired')),
+  created_by         INTEGER REFERENCES users(id),
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_inventory_batches_item_branch ON inventory_batches(inventory_item_id, branch_id, status);
+
+-- تحويلات وحدات بسيطة بين وحدات مختلفة لنفس الصنف (مثلًا استلام من المورد بالكرتونة والرصيد متابَع
+-- بالكيلو) - factor: 1 من from_unit = factor من to_unit. اختيارية، مطلوبة بس لو حد استلم بوحدة مختلفة
+CREATE TABLE unit_conversions (
+  from_unit TEXT NOT NULL,
+  to_unit   TEXT NOT NULL,
+  factor    NUMERIC NOT NULL,
+  PRIMARY KEY (from_unit, to_unit)
+);
+
+-- لو رصيد فرع (branch_inventory_stock) اختلف عن مجموع حركاته المسجّلة في الليدجر (inventory_movements) -
+-- ده مؤشر خلل بيانات (تلاعب/باج قديم قبل ما كل الحركات تبقى بتعدي على postInventoryMovement) - بيتسجل
+-- هنا كتنبيه، وميتصلّحش تلقائي، محتاج مراجعة وتصحيح واعي (PATCH .../resolve) مسجّل في الـaudit
+CREATE TABLE inventory_discrepancies (
+  id                 SERIAL PRIMARY KEY,
+  branch_id          INTEGER NOT NULL REFERENCES branches(id),
+  inventory_item_id  INTEGER NOT NULL REFERENCES inventory_items(id),
+  ledger_sum         NUMERIC NOT NULL,
+  stock_balance      NUMERIC NOT NULL,
+  difference         NUMERIC NOT NULL,
+  detected_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at        TIMESTAMPTZ,
+  resolved_by        INTEGER REFERENCES users(id),
+  resolution_notes   TEXT
+);
+CREATE INDEX idx_inventory_discrepancies_open ON inventory_discrepancies(branch_id) WHERE resolved_at IS NULL;
+
 -- كام وحدة من كل مكوّن بتتاخد لما يتباع variant واحد (الوصفة/BOM)
 CREATE TABLE menu_item_variant_ingredients (
   id                  SERIAL PRIMARY KEY,
@@ -360,19 +424,44 @@ CREATE TABLE menu_item_variant_ingredients (
   UNIQUE(variant_id, inventory_item_id)
 );
 
--- سجل حركة المخزون (بديل الجرد اليدوي بالإكسل)
+-- سجل حركة المخزون - ده الـInventory Ledger: المصدر الأساسي لكل حركة مخزون، append-only، كل حركة
+-- بتتسجل من خلال db/inventory-ledger.js (postInventoryMovement) اللي بيقفل الصف (FOR UPDATE) ويحسب
+-- quantity_before/after بدقة عشان يمنع أي سباق بين حركتين على نفس الصنف/الفرع في نفس اللحظة، ويمنع
+-- أي تعديل مباشر على branch_inventory_stock من غير حركة مسجّلة. القيم القديمة lowercase (زي
+-- 'sale_deduction'/'adjustment') اتسيبت في الـCHECK للحفاظ على الحركات التاريخية زي ما هي (بدون
+-- إعادة كتابة تاريخ)؛ كل حركة جديدة بتستخدم القيم الكبيرة (SALE, ADJUSTMENT...) بس
 CREATE TABLE inventory_movements (
   id                SERIAL PRIMARY KEY,
-  branch_id         INTEGER REFERENCES branches(id),
+  branch_id         INTEGER REFERENCES branches(id),      -- = warehouse/فرع الحركة (مفيش جدول مخازن منفصل - الفرع نفسه هو "المخزن"، والسنتر كيتشن فرع بعلامة is_central_kitchen)
   inventory_item_id INTEGER REFERENCES inventory_items(id),
-  movement_type     TEXT NOT NULL CHECK (movement_type IN ('purchase', 'sale_deduction', 'transfer_in', 'transfer_out', 'adjustment', 'production_in', 'production_out', 'waste')),
+  movement_type     TEXT NOT NULL CHECK (movement_type IN (
+                      -- قيم تاريخية (قبل هذه المرحلة) - متسيبناش نلمسها عشان محافظين على دقة السجلات القديمة
+                      'purchase', 'sale_deduction', 'transfer_in', 'transfer_out', 'adjustment', 'production_in', 'production_out', 'waste',
+                      -- القيم القياسية الجديدة (كل حركة جديدة بتستخدم واحدة منها)
+                      'OPENING_BALANCE', 'PURCHASE_RECEIPT', 'PRODUCTION_IN', 'PRODUCTION_OUT', 'SALE', 'SALE_REVERSAL',
+                      'TRANSFER_OUT', 'TRANSFER_IN', 'WASTE', 'DAMAGE', 'EXPIRY', 'STOCK_COUNT', 'ADJUSTMENT',
+                      'RETURN_TO_SUPPLIER', 'RETURN_FROM_BRANCH'
+                     )),
   quantity          NUMERIC NOT NULL,        -- موجب = زيادة، سالب = نقصان
-  order_id          INTEGER REFERENCES orders(id),
+  unit              TEXT,                    -- وحدة الحركة (عادة نفس inventory_items.unit وقت الحركة)
+  unit_cost         NUMERIC,                 -- تكلفة الوحدة التاريخية وقت الحركة (مش سعر الصنف الحالي - محفوظة زي ما هي حتى لو التكلفة اتغيرت بعدين)
+  total_cost        NUMERIC,                 -- unit_cost × |quantity|
+  quantity_before   NUMERIC,                 -- رصيد الصنف في الفرع قبل الحركة مباشرة
+  quantity_after    NUMERIC,                 -- رصيد الصنف في الفرع بعد الحركة مباشرة
+  reference_type    TEXT,                    -- 'order' / 'kitchen_transfer' / 'approval_request' / 'production' / 'discrepancy' ...
+  reference_id      INTEGER,                 -- id السجل المرتبط حسب reference_type (مفيش FK واحد ثابت لاختلاف الجدول المرجعي)
+  batch_id          INTEGER REFERENCES inventory_batches(id), -- الدفعة اللي اتصرف منها/اتضافت ليها (لو الصنف متتبّع بدفعات)
+  reason            TEXT,                    -- سبب مقنّن (خصوصًا لحركات WASTE: EXPIRED/DAMAGED/BURNED...)
+  idempotency_key   TEXT,                    -- عشان لو نفس الطلب اتكرر بسبب retry شبكة/مزامنة أوفلاين ميتسجلش مرتين
+  order_id          INTEGER REFERENCES orders(id),  -- (قديم) لسه موجود لتوافق أي كود قديم بيقرأه مباشرة - reference_type='order' هو البديل العام
   business_date     DATE NOT NULL DEFAULT CURRENT_DATE,
   notes             TEXT,
   created_by        INTEGER REFERENCES users(id),
   created_at        TIMESTAMPTZ DEFAULT now()
 );
+CREATE UNIQUE INDEX idx_inventory_movements_idempotency ON inventory_movements(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_inventory_movements_item_branch_created ON inventory_movements(branch_id, inventory_item_id, created_at);
+CREATE INDEX idx_inventory_movements_reference ON inventory_movements(reference_type, reference_id);
 
 -- ---------------- العملاء (CRM) - لدعم كول سنتر وتاريخ الطلبات ----------------
 CREATE TABLE customers (

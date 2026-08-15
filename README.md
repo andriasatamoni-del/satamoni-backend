@@ -184,27 +184,54 @@ docker compose exec app npm run import-menu
 - `satamoni-menu.html` — تبويب "العروض": إضافة عرض جديد باختيار أصناف وكمياتها، تفعيل/تعطيل، وتعديل قائمة الأصناف لأي عرض موجود.
 - `satamoni-pos.html` — العروض النشطة بتظهر كقسم "🎁 العروض" في شاشة الكاشير (قناة بيع الفرع بس، مالهاش سعر طلبات منفصل)، وبتتضاف للسلة زي أي صنف عادي.
 
-## المخازن الفعلية (Inventory / BOM)
+## المخازن الفعلية (Inventory Ledger)
 
-- `inventory_items` — كتالوج المكونات الخام (دقيق، جبنة، ...) بوحدة القياس بتاعتها.
-- `menu_item_variant_ingredients` — وصفة كل صنف (BOM): كام وحدة من كل مكوّن بتتاخد لما يتباع variant واحد.
-- `branch_inventory_stock` — رصيد كل مكوّن في كل فرع لحظيًا.
-- `inventory_movements` — سجل حركة المخزون بالكامل (بيع/توريد/تحويل/تسوية) لأي مراجعة لاحقًا.
-- لما طلب POS يتسجل وله فرع، المخزون بينزل تلقائي حسب الوصفة (خصم في نفس الـ transaction بتاعة الطلب).
-- API: `GET /api/inventory/items`, `POST /api/inventory/items` (أدمن أو مدير السنتر كيتشن)، `GET /api/inventory/stock?branchId=`، `POST /api/inventory/stock/adjust` (توريد/تحويل/تسوية يدوي)، `GET|PUT /api/inventory/recipe/:variantId`.
+المرحلة الثانية من رفع مستوى الأمان (بعد المرحلة الأولى: سجل التدقيق والصلاحيات والموافقات) حوّلت
+المخزون من "رصيد بيتحدّث مباشرة" إلى **ليدجر حقيقي**: كل تغيير في المخزون، من غير استثناء، لازم يعدّي
+من `db/inventory-ledger.js` (`postInventoryMovement`) - مفيش أي route بيعدّل `branch_inventory_stock`
+مباشرة تاني.
 
-### جرد المخزون (تسوية الرصيد الفعلي)
+- `inventory_items` — كتالوج المكونات، فيها كمان `allow_negative_stock` (افتراضيًا `false`) - هل الصنف ده مسموح يوصل رصيده لأقل من صفر.
+- `menu_item_variant_ingredients` — وصفة كل صنف (BOM) زي ما كانت.
+- `branch_inventory_stock` — الرصيد الإجمالي الحالي (view سريع، مش مصدر الحقيقة).
+- **`inventory_movements` (الليدجر)** — مصدر الحقيقة الوحيد. كل صف فيه: `movement_type`، `quantity`، **`quantity_before`/`quantity_after`** (تاريخ الرصيد كامل قابل للمراجعة)، `unit_cost`/`total_cost` (التكلفة التاريخية وقت الحركة، مش سعر الصنف الحالي)، `reference_type`/`reference_id` (مرتبطة بإيه: طلب، تحويل، طلب موافقة...)، `batch_id` لو الصنف متتبّع بدفعات، و`idempotency_key` اختياري لمنع تكرار نفس العملية.
+- `movement_type` القياسية الجديدة: `PURCHASE_RECEIPT`, `SALE`, `SALE_REVERSAL`, `TRANSFER_OUT`, `TRANSFER_IN`, `PRODUCTION_IN`, `PRODUCTION_OUT`, `WASTE`, `STOCK_COUNT`, `ADJUSTMENT`, `OPENING_BALANCE` (القيم القديمة زي `sale_deduction`/`adjustment` لسه موجودة بس على الحركات القديمة قبل هذه المرحلة - مفيش إعادة كتابة للتاريخ).
+- **القفل ومنع السباق (Concurrency)**: `postInventoryMovement` بتقفل صف الرصيد (`SELECT ... FOR UPDATE`) قبل أي حساب، فحركتين على نفس الصنف/الفرع في نفس اللحظة (مثلًا بيعتين متزامنتين) بيتسلسلوا تلقائي، مفيش فرصة لخصم مزدوج أو ضياع تحديث.
+- **الرصيد السالب**: ممنوع افتراضيًا لأي حركة يدوية/إدارية (تسوية، هالك، تحويل...) إلا لو الصنف عليه `allow_negative_stock = true`. **البيع استثناء متعمّد**: البيع لازم يكمّل دايمًا حتى لو تتبّع المخزون ناقص (العميل دفع بالفعل) - زي سلوك النظام قبل هذه المرحلة بالظبط، والرصيد السالب لسه بيظهر في `GET /api/reports/negative-stock` كتنبيه.
+- API الأساسي زي الأول: `GET /api/inventory/items`, `GET /api/inventory/stock?branchId=`، `POST /api/inventory/stock/adjust`، `GET|PUT /api/inventory/recipe/:variantId` - كلهم دلوقتي بيعدّوا على الليدجر جوه.
 
-بديل شيت الجرد اليدوي — بدل ما تحسب الفرق بإيدك وتعمل قيد تسوية يدوي، بتدخّل الكمية الفعلية بعد العد وكل حاجة بتتحسب وتتسجل تلقائيًا:
+### الدفعات (Batch/Lot) وصرف FEFO/FIFO
 
-- **`POST /api/inventory/reconcile`** — بياخد `{branchId, inventoryItemId, actualQuantity, notes}`، يقارن بالرصيد الحالي في `branch_inventory_stock`، يحسب الفرق (`variance`)، يحدّث الرصيد لنفس القيمة الفعلية، ويسجل حركة `adjustment` في `inventory_movements` فيها الفرق ومذكرة توضح "كان X، الفعلي Y" (أدمن أو مدير فرع، على فرعه بس).
-- `satamoni-kitchen.html` — تبويب جديد "جرد المخزون" (أدمن/مدير فرع بس): جدول بكل الأصناف ورصيدها الحالي، خانة تدخّل فيها العدد الفعلي، وزرار تحديث لكل صف يعرض الفرق فورًا. الأدمن بيختار الفرع من قائمة منسدلة (بيشمل السنتر كيتشن)، ومدير الفرع مقفول على فرعه تلقائيًا.
+- **`POST /api/inventory/purchase-receipt`** — تسجيل استلام فعلي من مورد (منفصل عن السجل المالي الإجمالي في `routes/purchases.js` اللي لسه شغال زي ما هو). `{branchId, inventoryItemId, quantity, unit?, unitCost, supplierId?, batchNumber?, expiryDate?, ...}`. لو اتبعت `batchNumber` أو `expiryDate` بينشئ دفعة في `inventory_batches`.
+- أي حركة صرف (بيع، هالك، تحويل صادر...) على صنف عنده دفعات نشطة بتستهلك منها أولًا تلقائيًا حسب `pos_settings.batch_consumption_method` (`FEFO` الافتراضي = الأقرب انتهاءً الأول، أو `FIFO` = الأقدم دخولًا الأول) - وبتحدد تكلفة الحركة الفعلية من تكلفة الدفعة نفسها مش تكلفة الصنف العامة. الأصناف اللي مالهاش دفعات مسجّلة بتفضل شغالة زي الأول (رصيد إجمالي بس، من غير أي تغيير).
+- `GET /api/inventory/batches?branchId=&itemId=` و`GET /api/reports/expiring-batches?days=` (دفعات هتخلص قريب).
+
+### تحويل الوحدات
+
+`unit_conversions` (`GET/POST /api/inventory/unit-conversions`، أدمن للإضافة) - لو استلمت صنف بوحدة غير وحدة تتبّعه (مثلًا كرتونة بدل كيلو)، النظام بيحوّل الكمية **والتكلفة** تلقائيًا لوحدة الرصيد الأساسية قبل ما يسجلها.
+
+### التحويلات بين الفروع/السنتر كيتشن
+
+- **`POST /api/kitchen-transfers/itemized`** (زي الأول تمامًا) — تحويل فوري: بينزل من المصدر ويزود الوجهة في نفس اللحظة، بدون مراحل. لسه هو الافتراضي المستخدم في `satamoni-kitchen.html`.
+- **دورة حياة مرحلية جديدة (اختيارية)**: `POST /api/kitchen-transfers/request` → `POST /:id/approve` → `POST /:id/issue` (بينزل من المصدر بس) → `POST /:id/receive` (بيزود الوجهة على قد اللي **فعلًا وصل**، مش المُرسل بالضرورة). لو وصل أقل من المُرسل، الفرق (`variance`) بيتسجل صراحة في `kitchen_transfer_items.quantity_sent`/`quantity_received` - مايختفيش. متاحة في `GET /api/reports/transfers`.
+
+### مطابقة المخزون واكتشاف الفروقات (Reconciliation)
+
+- **`POST /api/inventory/reconcile`** (زي الأول) — جرد فعلي: بتدخّل الكمية الحقيقية، والفرق بيتسجل كحركة `STOCK_COUNT`.
+- **`POST /api/inventory/reconcile-check?branchId=`** (جديد) — بيقارن الرصيد الحالي بمجموع كل حركاته في الليدجر. أي فرق (متوقّع يكون صفر دايمًا للحركات الجديدة، بس ممكن يظهر من بيانات قديمة قبل هذه المرحلة أو أي تعديل مباشر في القاعدة) بيتسجل في `inventory_discrepancies` **من غير أي تصحيح تلقائي**.
+- **`PATCH /api/inventory/discrepancies/:id/resolve`** (أدمن بس) — تصحيح واعي بسبب موثّق، بيسجل حركة `OPENING_BALANCE` توثّق الفرق التاريخي في الليدجر (من غير ما يلمس الرصيد الفعلي، اللي أصلًا صحيح) + Audit كامل.
 
 ### تسجيل الهالك (تلف / انتهاء صلاحية / كسر)
 
-- **`POST /api/inventory/waste`** — بياخد `{branchId, inventoryItemId, quantity, reason, businessDate}`، بيخصم الكمية من `branch_inventory_stock` وبيسجل حركة `inventory_movements` بنوع `waste` منفصلة عن أي بيع أو تسوية (أدمن أو مدير فرع، على فرعه بس).
-- `satamoni-kitchen.html` — تبويب "تسجيل هالك" (أدمن/مدير فرع بس): فورم بسيط (صنف/كمية/تاريخ/سبب) + جدول بآخر عمليات الهالك المسجّلة للفرع في الشهر الحالي.
-- التقرير الكامل (قيمة الهالك حسب الصنف + كل العمليات) متاح في مركز التقارير (`GET /api/reports/waste`، تحت).
+- **`POST /api/inventory/waste`** — زي الأول، بالإضافة لسبب مقنّن اختياري `wasteReason` (`EXPIRED`/`DAMAGED`/`BURNED`/`PREPARATION_WASTE`/`OVERPRODUCTION`/`QUALITY_ISSUE`/`CUSTOMER_RETURN`/`UNKNOWN`) - النص الحر القديم (`reason`) لسه شغال زي ما هو.
+- `satamoni-kitchen.html` — تبويب "تسجيل هالك" زي ما كان.
+- التقرير الكامل: `GET /api/reports/waste`.
+
+### تقارير مخزون إضافية
+
+`GET /api/reports/stock-card?branchId=&itemId=` (كارت الصنف - كل حركة بالترتيب مع الرصيد قبل/بعد)، `GET /api/reports/negative-stock` (تنبيه الرصيد السالب)، `GET /api/reports/inventory-comparison?itemId=` (مقارنة رصيد صنف بين كل الفروع، أدمن/محاسب)، بالإضافة لـ`GET /api/reports/inventory-valuation` و`GET /api/reports/waste` الموجودين.
+
+**Idempotency**: أي حركة مخزون حساسة (تسوية، هالك، تصنيع) تقدر تبعتلها `idempotencyKey` اختياري - لو نفس المفتاح اتكرر (retry شبكة) هيرجّع نفس النتيجة من غير ما يسجل الحركة مرتين. ملحوظة: ده على مستوى حركة المخزون نفسها - إنشاء الطلب نفسه (`POST /api/orders`) لسه معندوش idempotency key على مستوى الطلب ذاته (خطر متبقّي، موضّح في تقرير المرحلة).
 
 ## السنتر كيتشن (خام → تصنيع → طلبيات فروع → تحويلات)
 

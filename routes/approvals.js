@@ -4,6 +4,7 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
+const { postInventoryMovement } = require("../db/inventory-ledger");
 
 // أنواع الطلبات المدعومة حاليًا - قابلة للتوسيع لاحقًا (مصروفات، مشتريات...) بإضافة حالة جديدة
 // في switch التنفيذ تحت (POST /:id/approve)
@@ -95,24 +96,15 @@ router.post(
       await client.query("BEGIN");
 
       if (request.type === "inventory_adjustment") {
-        const { inventoryItemId, quantity, movementType, notes } = request.payload || {};
+        const { inventoryItemId, quantity, notes } = request.payload || {};
         if (!inventoryItemId || !quantity) {
           throw new Error("بيانات طلب التسوية ناقصة");
         }
-        await client.query(
-          `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (branch_id, inventory_item_id)
-           DO UPDATE SET quantity = branch_inventory_stock.quantity + $3`,
-          [request.branch_id, inventoryItemId, quantity]
-        );
-        await client.query(
-          `INSERT INTO inventory_movements
-            (branch_id, inventory_item_id, movement_type, quantity, business_date, notes, created_by)
-           VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6)`,
-          [request.branch_id, inventoryItemId, movementType || "adjustment", quantity,
-           notes || request.reason, request.requested_by]
-        );
+        await postInventoryMovement(client, {
+          branchId: request.branch_id, inventoryItemId, quantity: Number(quantity), movementType: "ADJUSTMENT",
+          referenceType: "approval_request", referenceId: request.id,
+          notes: notes || request.reason, userId: request.requested_by,
+        });
       }
 
       const updated = await client.query(
@@ -132,6 +124,7 @@ router.post(
       res.json(updated.rows[0]);
     } catch (err) {
       await client.query("ROLLBACK");
+      if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message });
       res.status(500).json({ error: err.message });
     } finally {
       client.release();

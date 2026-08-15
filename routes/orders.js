@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
+const { postInventoryMovement } = require("../db/inventory-ledger");
 
 // طلبات الموقع (source=website) عامة من غير تسجيل دخول.
 // طلبات الكاشير (source=pos) وطلبات طلبات (source=talabat، بتتسجل يدويًا بعد التنفيذ
@@ -302,19 +303,14 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
           );
           for (const ing of recipe.rows) {
             // الضرب بيحصل جوه Postgres (NUMERIC) عشان نتجنب أخطاء دقة الأرقام العشرية في JS
-            await client.query(
-              `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
-               VALUES ($1, $2, -($3::numeric * $4::numeric))
-               ON CONFLICT (branch_id, inventory_item_id)
-               DO UPDATE SET quantity = branch_inventory_stock.quantity - ($3::numeric * $4::numeric)`,
-              [branchId, ing.inventory_item_id, ing.quantity_per_unit, v.multiplier]
+            const deduction = await client.query(
+              "SELECT ($1::numeric * $2::numeric) AS qty", [ing.quantity_per_unit, v.multiplier]
             );
-            await client.query(
-              `INSERT INTO inventory_movements
-                (branch_id, inventory_item_id, movement_type, quantity, order_id, business_date)
-               VALUES ($1, $2, 'sale_deduction', -($3::numeric * $4::numeric), $5, CURRENT_DATE)`,
-              [branchId, ing.inventory_item_id, ing.quantity_per_unit, v.multiplier, orderId]
-            );
+            await postInventoryMovement(client, {
+              branchId, inventoryItemId: ing.inventory_item_id, quantity: -Number(deduction.rows[0].qty),
+              movementType: "SALE", referenceType: "order", referenceId: orderId,
+              userId: createdBy, enforceNegativeStockPolicy: false,
+            });
           }
         }
       }
@@ -585,20 +581,17 @@ router.post(
           JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = ci.variant_id
           WHERE oi.order_id = $1 AND oi.combo_id IS NOT NULL`;
 
-        await client.query(
-          `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
-           SELECT $2, sub.inventory_item_id, SUM(sub.qty) FROM (${reversalIngredients}) sub
-           GROUP BY sub.inventory_item_id
-           ON CONFLICT (branch_id, inventory_item_id)
-           DO UPDATE SET quantity = branch_inventory_stock.quantity + EXCLUDED.quantity`,
-          [order.id, order.branch_id]
+        const grouped = await client.query(
+          `SELECT sub.inventory_item_id, SUM(sub.qty) AS qty FROM (${reversalIngredients}) sub GROUP BY sub.inventory_item_id`,
+          [order.id]
         );
-        await client.query(
-          `INSERT INTO inventory_movements (branch_id, inventory_item_id, movement_type, quantity, order_id, business_date)
-           SELECT $2, sub.inventory_item_id, 'adjustment', SUM(sub.qty), $1, CURRENT_DATE FROM (${reversalIngredients}) sub
-           GROUP BY sub.inventory_item_id`,
-          [order.id, order.branch_id]
-        );
+        for (const row of grouped.rows) {
+          await postInventoryMovement(client, {
+            branchId: order.branch_id, inventoryItemId: row.inventory_item_id, quantity: Number(row.qty),
+            movementType: "SALE_REVERSAL", referenceType: "order", referenceId: order.id,
+            userId: req.user.id,
+          });
+        }
       }
 
       // إرجاع نقاط الولاء اللي كانت اتضافت للعميل وقت البيع - نفس منطق إرجاع المخزون بالظبط

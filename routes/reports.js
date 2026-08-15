@@ -1010,7 +1010,7 @@ router.get("/waste", requireAuth, canSeeReports, async (req, res) => {
                 BOOL_OR(ii.unit_cost IS NULL) AS cost_incomplete
          FROM inventory_movements im
          JOIN inventory_items ii ON ii.id = im.inventory_item_id
-         WHERE im.movement_type = 'waste' AND im.business_date BETWEEN $1 AND $2
+         WHERE im.movement_type IN ('waste', 'WASTE') AND im.business_date BETWEEN $1 AND $2
            AND ($3::int IS NULL OR im.branch_id = $3)
          GROUP BY ii.id, ii.name, ii.unit
          ORDER BY value_wasted DESC`,
@@ -1023,7 +1023,7 @@ router.get("/waste", requireAuth, canSeeReports, async (req, res) => {
          JOIN inventory_items ii ON ii.id = im.inventory_item_id
          LEFT JOIN branches b ON b.id = im.branch_id
          LEFT JOIN users u ON u.id = im.created_by
-         WHERE im.movement_type = 'waste' AND im.business_date BETWEEN $1 AND $2
+         WHERE im.movement_type IN ('waste', 'WASTE') AND im.business_date BETWEEN $1 AND $2
            AND ($3::int IS NULL OR im.branch_id = $3)
          ORDER BY im.business_date DESC, im.id DESC`,
         [range.from, range.to, branchId]
@@ -1173,6 +1173,139 @@ router.get("/inventory-valuation", requireAuth, canSeeReports, async (req, res) 
       byBranch: Object.values(byBranchMap).sort((a, b) => b.totalValue - a.totalValue),
       items,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/stock-card?branchId=&itemId=&from=&to= - "كارت الصنف": كل حركة اتسجلت عليه
+// بالترتيب الزمني مع الرصيد قبل وبعد كل حركة (من الليدجر مباشرة - مش حساب متجدد)
+router.get("/stock-card", requireAuth, canSeeReports, async (req, res) => {
+  const { itemId } = req.query;
+  const range = resolveDateRange(req.query);
+  if (!itemId) return res.status(400).json({ error: "لازم تحدد itemId" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  if (!branchId) return res.status(400).json({ error: "لازم تحدد branchId" });
+
+  try {
+    const result = await pool.query(
+      `SELECT im.id, im.movement_type, im.quantity, im.unit, im.unit_cost, im.total_cost,
+              im.quantity_before, im.quantity_after, im.reference_type, im.reference_id,
+              im.reason, im.notes, im.business_date, im.created_at, u.name AS created_by_name
+       FROM inventory_movements im
+       LEFT JOIN users u ON u.id = im.created_by
+       WHERE im.branch_id = $1 AND im.inventory_item_id = $2
+         AND ($3::date IS NULL OR im.business_date >= $3) AND ($4::date IS NULL OR im.business_date <= $4)
+       ORDER BY im.created_at ASC, im.id ASC`,
+      [branchId, itemId, range?.from || null, range?.to || null]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/transfers?branchId=&from=&to= - تقرير التحويلات (فوري أو مرحلي) مع الفرق بين
+// المُرسل والمُستلم (variance) لو موجود
+router.get("/transfers", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const transfers = await pool.query(
+      `SELECT kt.*, fb.name AS from_branch_name, tb.name AS to_branch_name
+       FROM kitchen_transfers kt
+       LEFT JOIN branches fb ON fb.id = kt.from_branch_id
+       JOIN branches tb ON tb.id = kt.to_branch_id
+       WHERE kt.business_date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR kt.to_branch_id = $3 OR kt.from_branch_id = $3)
+       ORDER BY kt.business_date DESC, kt.id DESC`,
+      [range.from, range.to, branchId]
+    );
+    const ids = transfers.rows.map((t) => t.id);
+    const items = ids.length
+      ? (await pool.query(
+          `SELECT kti.*, ii.name AS item_name, ii.unit FROM kitchen_transfer_items kti
+           JOIN inventory_items ii ON ii.id = kti.inventory_item_id WHERE kti.kitchen_transfer_id = ANY($1)`,
+          [ids]
+        )).rows
+      : [];
+    res.json(transfers.rows.map((t) => ({
+      ...t,
+      items: items.filter((it) => it.kitchen_transfer_id === t.id).map((it) => ({
+        ...it,
+        variance: it.quantity_sent != null && it.quantity_received != null
+          ? Number(it.quantity_sent) - Number(it.quantity_received) : null,
+      })),
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/expiring-batches?days=7&branchId= - دفعات هتنتهي صلاحيتها قريب
+router.get("/expiring-batches", requireAuth, canSeeReports, async (req, res) => {
+  const days = Number(req.query.days) || 7;
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `SELECT b.*, ii.name AS item_name, ii.unit, br.name AS branch_name
+       FROM inventory_batches b
+       JOIN inventory_items ii ON ii.id = b.inventory_item_id
+       JOIN branches br ON br.id = b.branch_id
+       WHERE b.status = 'active' AND b.remaining_quantity > 0
+         AND b.expiry_date IS NOT NULL AND b.expiry_date <= (CURRENT_DATE + ($1 || ' days')::interval)
+         AND ($2::int IS NULL OR b.branch_id = $2)
+       ORDER BY b.expiry_date ASC`,
+      [days, branchId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/negative-stock?branchId= - أي صنف رصيده سالب دلوقتي (تنبيه - يحتاج مراجعة)
+router.get("/negative-stock", requireAuth, canSeeReports, async (req, res) => {
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `SELECT bis.branch_id, b.name AS branch_name, bis.inventory_item_id, ii.name AS item_name,
+              ii.unit, bis.quantity, ii.allow_negative_stock
+       FROM branch_inventory_stock bis
+       JOIN branches b ON b.id = bis.branch_id
+       JOIN inventory_items ii ON ii.id = bis.inventory_item_id
+       WHERE bis.quantity < 0 AND ($1::int IS NULL OR bis.branch_id = $1)
+       ORDER BY bis.quantity ASC`,
+      [branchId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/inventory-comparison?itemId= - رصيد صنف معيّن في كل الفروع جنب بعض (أدمن بس -
+// مقارنة بين فروع محتاجة رؤية على كل الفروع مش فرع واحد)
+router.get("/inventory-comparison", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
+  const { itemId } = req.query;
+  try {
+    const result = await pool.query(
+      `SELECT b.id AS branch_id, b.name AS branch_name, ii.id AS inventory_item_id, ii.name AS item_name,
+              ii.unit, COALESCE(bis.quantity, 0) AS quantity
+       FROM branches b
+       CROSS JOIN inventory_items ii
+       LEFT JOIN branch_inventory_stock bis ON bis.branch_id = b.id AND bis.inventory_item_id = ii.id
+       WHERE b.is_central_kitchen = FALSE AND ($1::int IS NULL OR ii.id = $1)
+       ORDER BY ii.name, b.name`,
+      [itemId || null]
+    );
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
