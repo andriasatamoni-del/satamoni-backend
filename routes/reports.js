@@ -3,7 +3,7 @@ const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
-const { explodeRecipeConsumption } = require("../db/recipe-engine");
+const { computeConsumptionBreakdown, aggregateBreakdown } = require("../db/food-cost-engine");
 const {
   computeFingerprintPayroll,
   computeManualPayroll,
@@ -1354,163 +1354,106 @@ router.get("/production-variance", requireAuth, canSeeReports, requirePermission
   }
 });
 
-// النظرية = فك الوصفة (recipe_version_id اللي كان نشط فعليًا وقت البيع/التصنيع) × الكمية المباعة/المخططة،
-// عن طريق نفس محرك الفك المستخدم وقت الإنتاج والتفعيل (مصدر واحد للحقيقة، من غير تكرار منطق). الفعلية
-// دايمًا من حركات المخزون الحقيقية بس (SALE / PRODUCTION_OUT) - أبدًا مش بتقدير من المبيعات
-async function computeTheoreticalConsumption(range, branchId) {
-  const theoretical = new Map(); // inventoryItemId -> quantity
-
-  const saleRows = await pool.query(
-    `SELECT oi.recipe_version_id, oi.quantity
-     FROM order_items oi JOIN orders o ON o.id = oi.order_id
-     WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
-       AND ($3::int IS NULL OR o.branch_id = $3) AND oi.recipe_version_id IS NOT NULL`,
-    [range.from, range.to, branchId]
-  );
-  for (const row of saleRows.rows) {
-    const { raw } = await explodeRecipeConsumption(pool, row.recipe_version_id, Number(row.quantity), new Set());
-    for (const [itemId, data] of raw) {
-      theoretical.set(itemId, (theoretical.get(itemId) || 0) + data.quantity);
-    }
-  }
-
-  const productionRows = await pool.query(
-    `SELECT recipe_version_id, planned_quantity
-     FROM production_orders
-     WHERE status IN ('IN_PROGRESS', 'COMPLETED', 'CANCELLED') AND started_at::date BETWEEN $1 AND $2
-       AND ($3::int IS NULL OR branch_id = $3)`,
-    [range.from, range.to, branchId]
-  );
-  for (const row of productionRows.rows) {
-    const { raw } = await explodeRecipeConsumption(pool, row.recipe_version_id, Number(row.planned_quantity), new Set());
-    for (const [itemId, data] of raw) {
-      theoretical.set(itemId, (theoretical.get(itemId) || 0) + data.quantity);
-    }
-  }
-
-  return theoretical;
+// المرحلة 3.1: كل شكل من أشكال "استهلاك/تكلفة الطعام" بيتحسب دلوقتي من db/food-cost-engine.js -
+// مصدر واحد للتصنيف والتسعير التاريخي، مش منطق منفصل مكرر في كل endpoint (كان كده قبل كده، وكان فيه
+// باج حقيقي: التكلفة النظرية كانت بتتحسب بسعر النهارده الحالي مش بالسعر التاريخي وقت الحدث - اتصلح).
+async function itemNamesById(itemIds) {
+  if (itemIds.length === 0) return new Map();
+  const result = await pool.query("SELECT id, name, unit FROM inventory_items WHERE id = ANY($1)", [itemIds]);
+  return new Map(result.rows.map((r) => [r.id, r]));
 }
 
-async function fetchActualConsumption(range, branchId) {
-  const result = await pool.query(
-    `SELECT inventory_item_id, SUM(ABS(quantity)) AS qty, SUM(total_cost) AS cost
-     FROM inventory_movements
-     WHERE movement_type IN ('SALE', 'PRODUCTION_OUT') AND business_date BETWEEN $1 AND $2
-       AND ($3::int IS NULL OR branch_id = $3)
-     GROUP BY inventory_item_id`,
-    [range.from, range.to, branchId]
-  );
-  const actual = new Map();
-  for (const row of result.rows) {
-    actual.set(row.inventory_item_id, { qty: Number(row.qty), cost: row.cost != null ? Number(row.cost) : null });
-  }
-  return actual;
-}
-
-// GET /api/reports/theoretical-vs-actual-consumption?branchId=&from=&to= - استهلاك نظري (من فك الوصفات
-// المُفعّلة وقتها) مقابل استهلاك فعلي (من حركات المخزون الحقيقية بس) لكل صنف خام - بيكشف تسريب/هالك غير مسجّل
+// GET /api/reports/theoretical-vs-actual-consumption?branchId=&from=&to= - كميات كل فئة استهلاك لكل صنف
+// خام على حدة (نظري/بيع/تصنيع/هالك/تسوية/تحويل صادر/تحويل وارد/مرتجعات/إجمالي استهلاك/فرق تشغيلي) -
+// من غير خلط الهالك أو التسوية جوه رقم "المبيعات" (كان كده قبل كده)
 router.get("/theoretical-vs-actual-consumption", requireAuth, canSeeReports, requirePermission("food_cost.view"), async (req, res) => {
   const range = resolveDateRange(req.query);
   if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
   let branchId = req.query.branchId ? Number(req.query.branchId) : null;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
   try {
-    const [theoretical, actual] = await Promise.all([
-      computeTheoreticalConsumption(range, branchId),
-      fetchActualConsumption(range, branchId),
-    ]);
-    const itemIds = new Set([...theoretical.keys(), ...actual.keys()]);
-    if (itemIds.size === 0) return res.json([]);
-    const items = await pool.query("SELECT id, name, unit FROM inventory_items WHERE id = ANY($1)", [[...itemIds]]);
-    const itemById = new Map(items.rows.map((r) => [r.id, r]));
-
-    const rows = [...itemIds].map((itemId) => {
-      const theoreticalQty = theoretical.get(itemId) || 0;
-      const actualQty = actual.get(itemId)?.qty || 0;
-      const variance = actualQty - theoreticalQty;
-      return {
-        inventoryItemId: itemId, itemName: itemById.get(itemId)?.name || null, unit: itemById.get(itemId)?.unit || null,
-        theoreticalQty, actualQty, variance,
-        variancePercent: theoreticalQty > 0 ? (variance / theoreticalQty) * 100 : null,
-      };
-    }).sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance));
+    const byItem = await computeConsumptionBreakdown(pool, { branchId, from: range.from, to: range.to });
+    const names = await itemNamesById([...byItem.keys()]);
+    const rows = [...byItem.entries()].map(([itemId, b]) => ({
+      inventoryItemId: itemId, itemName: names.get(itemId)?.name || null, unit: names.get(itemId)?.unit || null,
+      theoreticalQty: b.theoretical.qty, theoreticalIncomplete: b.theoretical.incomplete,
+      salesQty: b.sales.qty, productionQty: b.production.qty, wasteQty: b.waste.qty, adjustmentQty: b.adjustment.qty,
+      transferOutQty: b.transferOut.qty, transferInQty: b.transferIn.qty, returnsQty: b.returns.qty,
+      totalUsageQty: b.totalUsage.qty,
+      operationalVarianceQty: b.operationalVarianceQty, operationalVarianceQtyPercent: b.operationalVarianceQtyPercent,
+    })).sort((a, b) => Math.abs(b.operationalVarianceQty) - Math.abs(a.operationalVarianceQty));
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/reports/food-cost-variance?branchId=&from=&to= - نفس مقارنة الاستهلاك، بس بالتكلفة كمان:
-// التكلفة النظرية = الكمية النظرية × تكلفة الوحدة الحالية، التكلفة الفعلية = من حركات المخزون الحقيقية
-// (unit_cost التاريخي وقت كل حركة، مش سعر النهارده) - بيفرّق فرق الكمية عن فرق السعر
+// GET /api/reports/food-cost-variance?branchId=&from=&to= - نفس التصنيف بس بالتكلفة، حسب التعريفات:
+// A) Theoretical Food Cost - تكلفة الوصفة مسعّرة بسعر لحظة الحدث (مجمّدة، مش سعر النهارده)
+// B) Sales Food Cost - القيمة الفعلية اللي طلعت من المخزون بسبب البيع (من حركات SALE الحقيقية)
+// C) Waste Cost, D) Adjustment Cost - من حركات WASTE/ADJUSTMENT الحقيقية
+// E) Total Inventory Usage Cost = B + Production + C + D (من غير تحويلات/مرتجعات)
+// F) Food Cost Variance = E − A, G) Food Cost Variance % = F ÷ A × 100
 router.get("/food-cost-variance", requireAuth, canSeeReports, requirePermission("food_cost.view"), async (req, res) => {
   const range = resolveDateRange(req.query);
   if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
   let branchId = req.query.branchId ? Number(req.query.branchId) : null;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
   try {
-    const [theoretical, actual] = await Promise.all([
-      computeTheoreticalConsumption(range, branchId),
-      fetchActualConsumption(range, branchId),
-    ]);
-    const itemIds = new Set([...theoretical.keys(), ...actual.keys()]);
-    if (itemIds.size === 0) return res.json([]);
-    const items = await pool.query("SELECT id, name, unit, unit_cost FROM inventory_items WHERE id = ANY($1)", [[...itemIds]]);
-    const itemById = new Map(items.rows.map((r) => [r.id, r]));
-
-    const rows = [...itemIds].map((itemId) => {
-      const item = itemById.get(itemId);
-      const currentUnitCost = item?.unit_cost != null ? Number(item.unit_cost) : null;
-      const theoreticalQty = theoretical.get(itemId) || 0;
-      const actualQty = actual.get(itemId)?.qty || 0;
-      const actualCost = actual.get(itemId)?.cost ?? null;
-      const theoreticalCost = currentUnitCost != null ? theoreticalQty * currentUnitCost : null;
-      const costVariance = actualCost != null && theoreticalCost != null ? actualCost - theoreticalCost : null;
-      return {
-        inventoryItemId: itemId, itemName: item?.name || null, unit: item?.unit || null,
-        theoreticalQty, actualQty, quantityVariance: actualQty - theoreticalQty,
-        quantityVariancePercent: theoreticalQty > 0 ? ((actualQty - theoreticalQty) / theoreticalQty) * 100 : null,
-        theoreticalCost, actualCost, costVariance,
-        costVariancePercent: theoreticalCost ? (costVariance / theoreticalCost) * 100 : null,
-      };
-    }).sort((a, b) => Math.abs(b.costVariance || 0) - Math.abs(a.costVariance || 0));
+    const byItem = await computeConsumptionBreakdown(pool, { branchId, from: range.from, to: range.to });
+    const names = await itemNamesById([...byItem.keys()]);
+    const rows = [...byItem.entries()].map(([itemId, b]) => ({
+      inventoryItemId: itemId, itemName: names.get(itemId)?.name || null, unit: names.get(itemId)?.unit || null,
+      theoreticalFoodCost: b.theoretical.cost, theoreticalIncomplete: b.theoretical.incomplete,
+      salesFoodCost: b.sales.cost, productionCost: b.production.cost, wasteCost: b.waste.cost, adjustmentCost: b.adjustment.cost,
+      transferOutCost: b.transferOut.cost, transferInCost: b.transferIn.cost, returnsCost: b.returns.cost,
+      totalInventoryUsageCost: b.totalUsage.cost,
+      foodCostVariance: b.foodCostVariance, foodCostVariancePercent: b.foodCostVariancePercent,
+    })).sort((a, b) => Math.abs(b.foodCostVariance) - Math.abs(a.foodCostVariance));
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/reports/branch-food-cost?branchId=&from=&to= - نسبة تكلفة الطعام لكل فرع (تكلفة البيع
-// التاريخية الحقيقية cost_at_sale مقسومة على الإيراد) - بدون branchId بيرجّع مقارنة كل الفروع جنب بعض
+// GET /api/reports/branch-food-cost?branchId=&from=&to= - نفس التعريفات A-G بس مجمّعة على مستوى
+// الفرع/الفترة كامل + الإيراد ونسبة تكلفة الطعام - بدون branchId بيرجّع مقارنة كل الفروع جنب بعض
 router.get("/branch-food-cost", requireAuth, canSeeReports, requirePermission("food_cost.view"), async (req, res) => {
   const range = resolveDateRange(req.query);
   if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
   let branchId = req.query.branchId ? Number(req.query.branchId) : null;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
   try {
-    const result = await pool.query(
-      `SELECT o.branch_id, b.name AS branch_name,
-              COALESCE(SUM(o.total), 0) AS revenue,
-              COALESCE(SUM(oi.cost_at_sale), 0) AS food_cost,
-              BOOL_OR(oi.cost_at_sale_incomplete) AS incomplete
-       FROM orders o
-       JOIN branches b ON b.id = o.branch_id
-       LEFT JOIN order_items oi ON oi.order_id = o.id
-       WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
-         AND ($3::int IS NULL OR o.branch_id = $3)
-       GROUP BY o.branch_id, b.name
-       ORDER BY revenue DESC`,
+    const branchesRes = await pool.query(
+      `SELECT DISTINCT o.branch_id, b.name AS branch_name
+       FROM orders o JOIN branches b ON b.id = o.branch_id
+       WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR o.branch_id = $3)`,
       [range.from, range.to, branchId]
     );
-    res.json(result.rows.map((r) => {
-      const revenue = Number(r.revenue);
-      const foodCost = Number(r.food_cost);
-      return {
-        branchId: r.branch_id, branchName: r.branch_name, revenue, foodCost,
-        foodCostPercent: revenue > 0 ? (foodCost / revenue) * 100 : null,
-        incomplete: r.incomplete,
-      };
-    }));
+    const versionCache = new Map(); // مشترك بين كل الفروع في نفس التقرير - وصفة واحدة بتتفكّ مرة واحدة بس
+    const rows = [];
+    for (const branchRow of branchesRes.rows) {
+      const revenueRes = await pool.query(
+        `SELECT COALESCE(SUM(total), 0) AS revenue FROM orders
+         WHERE status <> 'cancelled' AND created_at::date BETWEEN $1 AND $2 AND branch_id = $3`,
+        [range.from, range.to, branchRow.branch_id]
+      );
+      const byItem = await computeConsumptionBreakdown(pool, { branchId: branchRow.branch_id, from: range.from, to: range.to }, versionCache);
+      const totals = aggregateBreakdown(byItem);
+      const revenue = Number(revenueRes.rows[0].revenue);
+      rows.push({
+        branchId: branchRow.branch_id, branchName: branchRow.branch_name, revenue,
+        theoreticalFoodCost: totals.theoretical.cost, theoreticalIncomplete: totals.theoretical.incomplete,
+        salesFoodCost: totals.sales.cost, productionCost: totals.production.cost,
+        wasteCost: totals.waste.cost, adjustmentCost: totals.adjustment.cost,
+        totalInventoryUsageCost: totals.totalUsage.cost,
+        foodCostVariance: totals.foodCostVariance, foodCostVariancePercent: totals.foodCostVariancePercent,
+        foodCostPercent: revenue > 0 ? (totals.totalUsage.cost / revenue) * 100 : null,
+        theoreticalFoodCostPercent: revenue > 0 ? (totals.theoretical.cost / revenue) * 100 : null,
+      });
+    }
+    rows.sort((a, b) => b.revenue - a.revenue);
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

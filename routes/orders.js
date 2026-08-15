@@ -321,6 +321,32 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
          WHERE oi.id = sub.order_item_id`,
         [orderId]
       );
+
+      // المرحلة 3.1: تجميد التكلفة النظرية **لكل مكوّن على حدة** (مش إجمالي بس زي cost_at_sale) وقت
+      // البيع بالظبط - نفس المصدر ونفس الـtransaction بالظبط اللي حسب cost_at_sale فوق (الجدول المسطّح +
+      // unit_cost لحظة البيع)، مش حساب مستقل، عشان الاتنين يفضلوا متطابقين رياضيًا للأبد ومينفعش يختلفوا
+      // بصمت. التقارير بعدين بتقرا من هنا بدل ما تعيد الحساب بسعر النهارده الحالي (كان الباج قبل كده)
+      await client.query(
+        `INSERT INTO order_item_ingredient_costs (order_item_id, ingredient_item_id, quantity, unit_cost, total_cost)
+         SELECT oi2.id, mvi.inventory_item_id, mvi.quantity_per_unit::numeric * oi2.quantity::numeric,
+                ii.unit_cost, mvi.quantity_per_unit::numeric * oi2.quantity::numeric * ii.unit_cost::numeric
+         FROM order_items oi2
+         JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi2.variant_id
+         JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+         WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL`,
+        [orderId]
+      );
+      await client.query(
+        `INSERT INTO order_item_ingredient_costs (order_item_id, ingredient_item_id, quantity, unit_cost, total_cost)
+         SELECT oi2.id, mvi.inventory_item_id, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi2.quantity::numeric,
+                ii.unit_cost, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi2.quantity::numeric * ii.unit_cost::numeric
+         FROM order_items oi2
+         JOIN combo_items ci ON ci.combo_id = oi2.combo_id
+         JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = ci.variant_id
+         JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+         WHERE oi2.order_id = $1 AND oi2.combo_id IS NOT NULL`,
+        [orderId]
+      );
     }
 
     // خصم المخزون تلقائيًا حسب وصفة كل صنف (BOM) - لو الطلب مربوط بفرع

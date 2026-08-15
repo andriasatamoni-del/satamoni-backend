@@ -328,6 +328,12 @@ CREATE TABLE inventory_item_suppliers (
 );
 
 -- وصفة تصنيع صنف مصنّع من مكونات خام/مصنّعة تانية (كام وحدة من كل مكوّن داخل عشان تنتج وحدة واحدة من الناتج)
+-- المرحلة 3: زي menu_item_variant_ingredients بالظبط - "جدول قراءة توافقي" (compatibility read model)،
+-- مش مصدر حقيقة. المصدر الوحيد للحقيقة هو recipes/recipe_versions/recipe_ingredients؛ الجدول ده بيتكتب
+-- تلقائيًا بس من projectVersionToLegacyTable() وقت تفعيل نسخة (routes/recipes.js activate)، ومفيش أي
+-- endpoint تاني يعدّل عليه مباشرة. لو حصل تعارض بينه وبين الوصفة النشطة الحقيقية، ده باج لازم يتصلح في
+-- projectVersionToLegacyTable مش في الجدول - اختبار phase3-1-costing.test.js بيتأكد إن الاتنين متطابقين
+-- دايمًا لأي نسخة ACTIVE
 CREATE TABLE manufacturing_recipe_items (
   id                 SERIAL PRIMARY KEY,
   output_item_id     INTEGER REFERENCES inventory_items(id) ON DELETE CASCADE, -- الصنف المصنّع الناتج
@@ -548,6 +554,25 @@ CREATE TABLE recipe_ingredients (
 CREATE INDEX idx_recipe_ingredients_version ON recipe_ingredients(recipe_version_id);
 CREATE INDEX idx_recipe_ingredients_item ON recipe_ingredients(ingredient_item_id);
 
+-- المرحلة 3.1: تجميد "التكلفة النظرية لكل مكوّن" لحظة البيع بالظبط - قبل كده كان محفوظ إجمالي بس
+-- (order_items.cost_at_sale)، مش مفصّل لكل مكوّن، فأي تقرير بعدين كان مضطر يعيد حساب التكلفة النظرية
+-- بسعر اليوم الحالي (خطأ - سعر المكوّن بيتغيّر). الجدول ده بيتكتب مرة واحدة بس، في نفس transaction
+-- تسجيل الطلب (routes/orders.js)، وبيستخدم explodeRecipeConsumption (نفس محرك الوصفات، مش حساب منفصل)
+-- + inventory_items.unit_cost **لحظة البيع دي بالظبط** - قيمة مجمّدة للأبد زي cost_at_sale تمامًا.
+-- SUM(total_cost) هنا لازم يساوي order_items.cost_at_sale لنفس السطر (اختبار consistency بيتأكد من كده).
+-- الطلبات القديمة (قبل المرحلة 3.1) مفيهاش صفوف هنا - قيود بيانات تاريخية حقيقية، مش باج.
+CREATE TABLE order_item_ingredient_costs (
+  id                  SERIAL PRIMARY KEY,
+  order_item_id       INTEGER NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
+  ingredient_item_id  INTEGER NOT NULL REFERENCES inventory_items(id),
+  quantity            NUMERIC NOT NULL,  -- الكمية النظرية (من الوصفة) بوحدة تخزين الصنف
+  unit_cost           NUMERIC,           -- تكلفة الوحدة وقت البيع بالظبط (NULL لو الصنف كان بلا تكلفة وقتها)
+  total_cost          NUMERIC,           -- quantity × unit_cost (NULL لو unit_cost NULL)
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_order_item_ingredient_costs_item ON order_item_ingredient_costs(order_item_id);
+CREATE INDEX idx_order_item_ingredient_costs_ingredient ON order_item_ingredient_costs(ingredient_item_id);
+
 -- ============================================================
 -- المرحلة 3: أوامر التصنيع (Production Orders) - دورة حياة كاملة فوق /api/inventory/produce الحالي
 -- (اللي لسه شغال زي ما هو للتصنيع الفوري البسيط) - للحالات اللي محتاجة اعتماد وتتبّع دفعات وanomaly
@@ -632,6 +657,9 @@ CREATE TABLE inventory_movements (
 CREATE UNIQUE INDEX idx_inventory_movements_idempotency ON inventory_movements(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX idx_inventory_movements_item_branch_created ON inventory_movements(branch_id, inventory_item_id, created_at);
 CREATE INDEX idx_inventory_movements_reference ON inventory_movements(reference_type, reference_id);
+-- المرحلة 3.1: تقارير تصنيف الاستهلاك (نظري/فعلي/هالك/تسوية/تحويل...) بتفلتر دايمًا بـ(فرع + مدى تاريخ
+-- + نوع الحركة) لكل حركات الفترة مرة واحدة - من غيره كانت هتعمل sequential scan على كل حركات الفرع
+CREATE INDEX idx_inventory_movements_branch_date_type ON inventory_movements(branch_id, business_date, movement_type);
 
 -- ---------------- العملاء (CRM) - لدعم كول سنتر وتاريخ الطلبات ----------------
 CREATE TABLE customers (

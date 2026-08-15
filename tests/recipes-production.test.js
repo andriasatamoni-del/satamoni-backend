@@ -420,7 +420,7 @@ describe("Food cost / traceability reports", () => {
     const flourRow = res.body.find((r) => r.inventoryItemId === flourId);
     expect(flourRow).toBeTruthy();
     expect(flourRow.theoreticalQty).toBeGreaterThan(0);
-    expect(flourRow.actualQty).toBeGreaterThan(0);
+    expect(flourRow.salesQty).toBeGreaterThan(0);
   });
 
   test("food-cost-variance بيرجّع فرق الكمية والتكلفة لكل مكوّن", async () => {

@@ -21,7 +21,27 @@ function effectiveQuantityPerUnit(ingredient, recipeVersion) {
 // بيرجع {raw: Map(inventoryItemId -> {quantity, unit}), incomplete: bool} - raw فيها مكونات خام بس
 // (بعد ما أي مكوّن مصنّع له وصفة نشطة اتفكّ لمكوناته هو كمان، متكرر لحد ما يوصل لخام). incomplete=true
 // لو أي مكوّن مصنّع في السلسلة معندوش وصفة نشطة (مينفعش نفكّه، بنعامله كخام بالغلط - تنبيه في الاستهلاك)
-async function explodeRecipeConsumption(client, recipeVersionId, quantityProduced, visitedRecipeIds = new Set()) {
+//
+// المرحلة 3.1: versionCache اختياري (Map) - نسخة وصفة اتستخدمت فعليًا (APPROVED/ACTIVE/ARCHIVED) غير
+// قابلة للتعديل إطلاقًا، يعني فكّها لمكوناته الخام بالنسبة لوحدة واحدة ثابت للأبد ومينفعش يتغيّر - الفك
+// خطي تمامًا في quantityProduced (كل حساباته ضرب/قسمة بس)، فبدل ما تقارير كتير تنادي عليه لكل أوردر/أمر
+// تصنيع لوحده (N+1 حقيقي)، نخزن نتيجة "لكل وحدة واحدة" مرة واحدة لكل نسخة ونضربها في أي كمية مطلوبة -
+// من غير ما نلمس أي كولر قديم (كل الكولرز الحاليين بيمرروا null، يعني سلوكهم زي ما هو بالظبط)
+async function explodeRecipeConsumption(client, recipeVersionId, quantityProduced, visitedRecipeIds = new Set(), versionCache = null) {
+  if (versionCache && versionCache.has(recipeVersionId)) {
+    const cached = versionCache.get(recipeVersionId);
+    if (visitedRecipeIds.has(cached.recipeId)) {
+      const err = new Error("الوصفة دي بترجع لنفسها في السلسلة (Recipe A → B → A) - دورة ممنوعة");
+      err.code = "CIRCULAR_RECIPE";
+      throw err;
+    }
+    const raw = new Map();
+    for (const [itemId, data] of cached.rawPerUnit) {
+      raw.set(itemId, { quantity: data.quantity * Number(quantityProduced), unit: data.unit });
+    }
+    return { raw, incomplete: cached.incomplete };
+  }
+
   const versionRes = await client.query("SELECT * FROM recipe_versions WHERE id = $1", [recipeVersionId]);
   if (versionRes.rows.length === 0) throw new Error("نسخة الوصفة مش موجودة");
   const recipeVersion = versionRes.rows[0];
@@ -61,7 +81,7 @@ async function explodeRecipeConsumption(client, recipeVersionId, quantityProduce
     }
 
     if (subActiveVersionId) {
-      const sub = await explodeRecipeConsumption(client, subActiveVersionId, totalInStockUnit, nextVisited);
+      const sub = await explodeRecipeConsumption(client, subActiveVersionId, totalInStockUnit, nextVisited, versionCache);
       if (sub.incomplete) incomplete = true;
       for (const [itemId, data] of sub.raw) {
         const existing = raw.get(itemId);
@@ -72,6 +92,14 @@ async function explodeRecipeConsumption(client, recipeVersionId, quantityProduce
       const existing = raw.get(ing.ingredient_item_id);
       raw.set(ing.ingredient_item_id, { quantity: (existing?.quantity || 0) + totalInStockUnit, unit: ing.item_unit });
     }
+  }
+
+  if (versionCache && Number(quantityProduced) > 0) {
+    const rawPerUnit = new Map();
+    for (const [itemId, data] of raw) {
+      rawPerUnit.set(itemId, { quantity: data.quantity / Number(quantityProduced), unit: data.unit });
+    }
+    versionCache.set(recipeVersionId, { recipeId: recipeVersion.recipe_id, rawPerUnit, incomplete });
   }
 
   return { raw, incomplete };
