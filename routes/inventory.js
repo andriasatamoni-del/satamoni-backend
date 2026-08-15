@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
+const { logAudit } = require("../db/audit");
 
 const staffRoles = requireRole("admin", "branch_manager", "accountant", "cashier");
 const stockManagers = requireRole("admin", "branch_manager");
@@ -125,6 +126,10 @@ router.post("/stock/adjust", requireAuth, stockManagers, async (req, res) => {
        VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6)`,
       [branchId, inventoryItemId, movementType, quantity, notes || null, req.user.id]
     );
+    await logAudit(client, {
+      branchId, userId: req.user.id, action: "INVENTORY_ADJUSTMENT", entityType: "inventory_item", entityId: inventoryItemId,
+      newValues: { quantity, movementType }, metadata: { notes }, req,
+    });
     await client.query("COMMIT");
     res.status(201).json({ ok: true });
   } catch (err) {
@@ -171,6 +176,11 @@ router.post("/reconcile", requireAuth, stockManagers, async (req, res) => {
          VALUES ($1, $2, 'adjustment', $3, CURRENT_DATE, $4, $5)`,
         [branchId, inventoryItemId, variance, reconcileNote, req.user.id]
       );
+      await logAudit(client, {
+        branchId, userId: req.user.id, action: "INVENTORY_COUNT", entityType: "inventory_item", entityId: inventoryItemId,
+        oldValues: { quantity: previousQuantity }, newValues: { quantity: Number(actualQuantity) },
+        metadata: { variance, notes }, req,
+      });
     }
     await client.query("COMMIT");
     res.status(201).json({ previousQuantity, actualQuantity: Number(actualQuantity), variance });
@@ -247,6 +257,10 @@ router.put("/recipe/:variantId", requireAuth, requireRole("admin"), async (req, 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const before = await client.query(
+      `SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1`,
+      [variantId]
+    );
     await client.query("DELETE FROM menu_item_variant_ingredients WHERE variant_id = $1", [variantId]);
     for (const ing of ingredients) {
       await client.query(
@@ -255,6 +269,10 @@ router.put("/recipe/:variantId", requireAuth, requireRole("admin"), async (req, 
         [variantId, ing.inventoryItemId, ing.quantityPerUnit]
       );
     }
+    await logAudit(client, {
+      userId: req.user.id, action: "RECIPE_CHANGE", entityType: "menu_variant", entityId: Number(variantId),
+      oldValues: { ingredients: before.rows }, newValues: { ingredients }, req,
+    });
     await client.query("COMMIT");
     res.json({ ok: true });
   } catch (err) {
@@ -297,6 +315,10 @@ router.put("/manufacturing-recipe/:itemId", requireAuth, stockManagers, async (r
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const before = await client.query(
+      `SELECT input_item_id, quantity_per_unit FROM manufacturing_recipe_items WHERE output_item_id = $1`,
+      [itemId]
+    );
     await client.query("DELETE FROM manufacturing_recipe_items WHERE output_item_id = $1", [itemId]);
     for (const ing of ingredients) {
       await client.query(
@@ -305,6 +327,10 @@ router.put("/manufacturing-recipe/:itemId", requireAuth, stockManagers, async (r
         [itemId, ing.inputItemId, ing.quantityPerUnit]
       );
     }
+    await logAudit(client, {
+      userId: req.user.id, action: "RECIPE_CHANGE", entityType: "inventory_item", entityId: Number(itemId),
+      oldValues: { ingredients: before.rows }, newValues: { ingredients }, req,
+    });
     await client.query("COMMIT");
     res.json({ ok: true });
   } catch (err) {

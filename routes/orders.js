@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
+const { logAudit } = require("../db/audit");
 
 // طلبات الموقع (source=website) عامة من غير تسجيل دخول.
 // طلبات الكاشير (source=pos) وطلبات طلبات (source=talabat، بتتسجل يدويًا بعد التنفيذ
@@ -105,23 +106,35 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     const subtotal = items.reduce((s, it) => s + it.lineTotal, 0);
 
     // خصم فوق النسبة المسموحة للكاشير لوحده لازم يبقى معاه موافقة مدير/أدمن اتاكدنا منها بـ PIN
-    // (verify-override-pin) - بنتأكد من صحتها تاني هنا من السيرفر، مش بس بنصدّق الفرونت إند
+    // (verify-override-pin) - بنتأكد من صحتها تاني هنا من السيرفر، مش بس بنصدّق الفرونت إند.
+    // فوق حد تاني (discount_manager_max_percent) الموافقة لازم تبقى أدمن بس، مدير الفرع مبيكفيش.
+    let discountApprover = null;
     if (discount > 0 && subtotal > 0) {
-      const settings = await client.query("SELECT max_unapproved_discount_percent FROM pos_settings WHERE id = 1");
+      const settings = await client.query(
+        "SELECT max_unapproved_discount_percent, discount_manager_max_percent FROM pos_settings WHERE id = 1"
+      );
       const maxUnapproved = Number(settings.rows[0]?.max_unapproved_discount_percent ?? 0.1);
-      if (discount / subtotal > maxUnapproved) {
+      const managerMax = Number(settings.rows[0]?.discount_manager_max_percent ?? 0.15);
+      const discountRatio = discount / subtotal;
+      if (discountRatio > maxUnapproved) {
         if (!discountApprovedBy) {
           return res.status(400).json({ error: "الخصم ده محتاج موافقة مدير الفرع أو الأدمن" });
         }
+        const requiresAdminOnly = discountRatio > managerMax;
         const approver = await client.query(
-          `SELECT id FROM users
+          `SELECT id, name, role FROM users
            WHERE id = $1 AND is_active = TRUE
-             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
-          [discountApprovedBy, branchId]
+             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2 AND NOT $3))`,
+          [discountApprovedBy, branchId, requiresAdminOnly]
         );
         if (approver.rows.length === 0) {
-          return res.status(400).json({ error: "الموافقة على الخصم غير صالحة" });
+          return res.status(400).json({
+            error: requiresAdminOnly
+              ? "الخصم ده كبير جدًا، محتاج موافقة الأدمن بس"
+              : "الموافقة على الخصم غير صالحة",
+          });
         }
+        discountApprover = approver.rows[0];
       }
     }
 
@@ -173,6 +186,13 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, 'إنشاء الطلب')`,
       [orderId, initialStatus, createdBy]
     );
+
+    if (discountApprover) {
+      await logAudit(client, {
+        branchId, userId: createdBy, action: "ORDER_DISCOUNT_APPROVED", entityType: "order", entityId: orderId,
+        newValues: { discount, subtotal }, metadata: { approverId: discountApprover.id, approverName: discountApprover.name }, req,
+      });
+    }
 
     // تسجيل/تحديث العميل في سجل CRM المركزي عشان الكول سنتر يشوف تاريخه - بيانات الدليفري
     // (رقم تليفون تاني، عنوان تفصيلي، منطقة، علامة مميزة) بتتسجل هنا لو الطلب دليفري
@@ -445,6 +465,14 @@ router.patch(
         );
       }
 
+      if (status === "cancelled") {
+        await logAudit(pool, {
+          branchId: current.branch_id, userId: req.user.id, action: "ORDER_CANCELLED",
+          entityType: "order", entityId: Number(req.params.id),
+          oldValues: { status: current.status }, newValues: { status }, metadata: { notes }, req,
+        });
+      }
+
       res.json(result.rows[0]);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -580,6 +608,13 @@ router.post(
           [order.loyalty_points_earned, order.customer_phone]
         );
       }
+
+      await logAudit(client, {
+        branchId: order.branch_id, userId: req.user.id, action: "ORDER_VOID",
+        entityType: "order", entityId: order.id,
+        oldValues: { status: order.status }, newValues: { status: "cancelled", voided: true },
+        metadata: { reason, approverId: finalApproverId }, req,
+      });
 
       await client.query("COMMIT");
       const updated = await pool.query("SELECT * FROM orders WHERE id = $1", [order.id]);

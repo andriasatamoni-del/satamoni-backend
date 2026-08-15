@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require("bcryptjs");
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { logAudit } = require("../db/audit");
 
 router.use(requireAuth);
 
@@ -49,6 +50,11 @@ router.post("/", requireRole("admin"), async (req, res) => {
        RETURNING id, name, email, role, branch_id, is_active, created_at`,
       [name, email, passwordHash, role, branchId || null]
     );
+    await logAudit(pool, {
+      branchId: branchId || null, userId: req.user.id, action: "USER_CREATED",
+      entityType: "user", entityId: result.rows[0].id,
+      newValues: { name, email, role, branchId: branchId || null }, req,
+    });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === "23505") {
@@ -90,13 +96,49 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
 
   values.push(id);
   try {
+    const before = await pool.query("SELECT role, is_active, branch_id FROM users WHERE id = $1", [id]);
     const result = await pool.query(
       `UPDATE users SET ${fields.join(", ")} WHERE id = $${i}
        RETURNING id, name, email, role, branch_id, is_active, created_at, (pin_hash IS NOT NULL) AS has_pin`,
       values
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "المستخدم مش موجود" });
-    res.json(result.rows[0]);
+    const updated = result.rows[0];
+    const prev = before.rows[0];
+
+    if (role !== undefined && prev && prev.role !== role) {
+      await logAudit(pool, {
+        branchId: updated.branch_id, userId: req.user.id, action: "ROLE_CHANGE",
+        entityType: "user", entityId: updated.id,
+        oldValues: { role: prev.role }, newValues: { role }, req,
+      });
+    }
+    if (isActive === false && prev && prev.is_active !== false) {
+      await logAudit(pool, {
+        branchId: updated.branch_id, userId: req.user.id, action: "USER_DEACTIVATED",
+        entityType: "user", entityId: updated.id, req,
+      });
+    }
+    if (isActive === true && prev && prev.is_active === false) {
+      await logAudit(pool, {
+        branchId: updated.branch_id, userId: req.user.id, action: "USER_REACTIVATED",
+        entityType: "user", entityId: updated.id, req,
+      });
+    }
+    if (pin !== undefined) {
+      await logAudit(pool, {
+        branchId: updated.branch_id, userId: req.user.id,
+        action: pin === null ? "PIN_CLEARED" : "PIN_CHANGED",
+        entityType: "user", entityId: updated.id, req,
+      });
+    }
+    if (password) {
+      await logAudit(pool, {
+        branchId: updated.branch_id, userId: req.user.id, action: "PASSWORD_CHANGE",
+        entityType: "user", entityId: updated.id, req,
+      });
+    }
+    res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

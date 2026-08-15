@@ -35,6 +35,7 @@ CREATE TABLE users (
 CREATE TABLE pos_settings (
   id                             INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   max_unapproved_discount_percent NUMERIC NOT NULL DEFAULT 0.10, -- خصم لغاية 10% الكاشير يعمله لوحده، فوق كده لازم موافقة PIN
+  discount_manager_max_percent   NUMERIC NOT NULL DEFAULT 0.15, -- خصم لغاية 15% مدير الفرع يقدر يوافق عليه، فوق كده لازم أدمن
   loyalty_points_per_egp         NUMERIC NOT NULL DEFAULT 0.1 -- نقاط ولاء لكل جنيه يتصرف (افتراضيًا نقطة واحدة لكل 10 ج.م)
 );
 INSERT INTO pos_settings (id) VALUES (1);
@@ -566,3 +567,50 @@ SELECT
 FROM orders
 WHERE customer_phone IS NOT NULL
 GROUP BY customer_phone;
+
+-- ============================================================
+-- سجل تدقيق مركزي (Audit Log) - append-only، بيسجل كل عملية حساسة
+-- (دخول/خروج فاشل، تعديل سعر أو وصفة، تسوية مخزون، موافقة على خصم/استرجاع، تغيير دور موظف...)
+-- ============================================================
+CREATE TABLE audit_logs (
+  id           BIGSERIAL PRIMARY KEY,
+  branch_id    INTEGER REFERENCES branches(id),
+  user_id      INTEGER REFERENCES users(id),
+  action       TEXT NOT NULL,        -- LOGIN, LOGIN_FAILED, PRICE_CHANGE, RECIPE_CHANGE, INVENTORY_ADJUSTMENT, ...
+  entity_type  TEXT,                 -- order, menu_variant, inventory_item, user, approval_request ...
+  entity_id    INTEGER,
+  old_values   JSONB,
+  new_values   JSONB,
+  metadata     JSONB,
+  ip_address   TEXT,
+  user_agent   TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
+CREATE INDEX idx_audit_logs_user ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_branch_created ON audit_logs(branch_id, created_at DESC);
+
+-- ============================================================
+-- محرك موافقات عام (Approval Requests) - لطلبات مش لازم تتحسم فورًا وقت البيع
+-- (زي تسوية مخزون يطلبها كاشير ويعتمدها مدير الفرع) - يكمّل نظام الـPIN اللحظي، ما يستبدلوش
+-- ============================================================
+CREATE TABLE approval_requests (
+  id                SERIAL PRIMARY KEY,
+  type              TEXT NOT NULL,   -- inventory_adjustment, ... (قابل للتوسيع لاحقًا)
+  entity_type       TEXT,
+  entity_id         INTEGER,
+  requested_by      INTEGER NOT NULL REFERENCES users(id),
+  branch_id         INTEGER REFERENCES branches(id),
+  amount            NUMERIC,
+  reason            TEXT,
+  payload           JSONB,           -- تفاصيل الإجراء المطلوب تنفيذه لو اتوافق عليه
+  status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+  approved_by       INTEGER REFERENCES users(id),
+  rejected_by       INTEGER REFERENCES users(id),
+  approved_at       TIMESTAMPTZ,
+  rejected_at       TIMESTAMPTZ,
+  rejection_reason  TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_approval_requests_status ON approval_requests(status);
+CREATE INDEX idx_approval_requests_branch ON approval_requests(branch_id);

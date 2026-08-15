@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { logAudit } = require("../db/audit");
 
 // GET /api/menu - المنيو النشط بس مع الأصناف والأسعار (شكل جاهز للموقع/الكاشير)
 // كل صنف بييجي بمرفقاته المتاحة (modifiers) عشان شاشة البيع تعرضها وقت الإضافة للسلة
@@ -187,11 +188,18 @@ router.patch("/variants/:id", requireAuth, requireRole("admin"), async (req, res
 
   values.push(id);
   try {
+    const before = await pool.query("SELECT label, price, talabat_price FROM menu_item_variants WHERE id = $1", [id]);
     const result = await pool.query(
       `UPDATE menu_item_variants SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`,
       values
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "الحجم مش موجود" });
+    if (price !== undefined && before.rows[0] && Number(before.rows[0].price) !== Number(price)) {
+      await logAudit(pool, {
+        userId: req.user.id, action: "PRICE_CHANGE", entityType: "menu_variant", entityId: Number(id),
+        oldValues: { price: before.rows[0].price }, newValues: { price }, req,
+      });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });

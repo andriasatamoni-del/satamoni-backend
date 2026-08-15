@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — سجل التدقيق والموافقات</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  #tabs { display: flex; gap: 6px; margin: 0 0 16px; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .formbox button.secondary { background: transparent; border: 1px solid var(--line); color: var(--faint); }
+  .formbox label.small { flex: 0; white-space: nowrap; font-size: 12px; color: var(--faint); }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .tablewrap { overflow-x: auto; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .pill.pending { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .pill.approved { background: rgba(63,163,77,.15); color: var(--green); }
+  .pill.rejected { background: rgba(194,42,36,.15); color: #F08A83; }
+  .smallbtn { padding: 5px 10px; border: none; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 11px; margin-inline-end: 4px; }
+  .smallbtn.approve { background: var(--green); color: #fff; }
+  .smallbtn.reject { background: var(--red); color: #fff; }
+  .detailsToggle { color: var(--gold-bright); cursor: pointer; font-size: 11px; text-decoration: underline; }
+  pre.detailsBox { display: none; background: var(--bg-alt); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-size: 11px; white-space: pre-wrap; word-break: break-all; margin: 6px 0 0; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🛡️ ساتاموني — سجل التدقيق والموافقات</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🛡️ تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn" id="auditTabBtn" data-tab="audit" style="display:none">سجل التدقيق</div>
+    <div class="tabbtn active" data-tab="approvals">طلبات الموافقة</div>
+  </div>
+
+  <!-- سجل التدقيق -->
+  <div class="panel" id="panel-audit">
+    <div class="formbox">
+      <div class="row">
+        <select id="auditActionFilter"><option value="">كل الأحداث</option></select>
+        <input id="auditFromFilter" type="date" />
+        <input id="auditToFilter" type="date" />
+        <button id="auditFilterBtn">فلترة</button>
+        <button id="auditClearBtn" class="secondary">مسح الفلاتر</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الوقت</th><th>المستخدم</th><th>الفرع</th><th>الحدث</th><th>الكيان</th><th>تفاصيل</th></tr></thead>
+      <tbody id="auditBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- طلبات الموافقة -->
+  <div class="panel active" id="panel-approvals">
+    <h1>طلب تسوية مخزون جديد</h1>
+    <div class="formbox">
+      <div style="font-size:12px;color:var(--faint);margin-bottom:10px">لو معندكش صلاحية تعدّل المخزون مباشرة، ابعت طلب هنا ومدير الفرع أو الأدمن يوافق عليه.</div>
+      <div class="row" id="reqBranchRow" style="display:none">
+        <label class="small">الفرع</label>
+        <select id="reqBranch"></select>
+      </div>
+      <div class="row">
+        <label class="small">الصنف</label>
+        <select id="reqItem"></select>
+        <label class="small">الاتجاه</label>
+        <select id="reqDirection"><option value="1">زيادة (توريد)</option><option value="-1">نقصان (عجز)</option></select>
+        <label class="small">الكمية</label>
+        <input id="reqQuantity" type="number" min="0" step="0.001" style="max-width:110px" />
+      </div>
+      <div class="row">
+        <input id="reqReason" placeholder="سبب الطلب (إلزامي)" />
+      </div>
+      <button id="reqSubmitBtn">ابعت الطلب</button>
+      <div class="err" id="reqErr"></div>
+      <div class="ok" id="reqOk"></div>
+    </div>
+
+    <h1>الطلبات</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="approvalStatusFilter">
+          <option value="pending">قيد الانتظار</option>
+          <option value="">الكل</option>
+          <option value="approved">اتوافق عليها</option>
+          <option value="rejected">اترفضت</option>
+        </select>
+        <button id="approvalsRefreshBtn">تحديث</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الوقت</th><th>الفرع</th><th>مين طلب</th><th>النوع</th><th>السبب</th><th>الحالة</th><th></th></tr></thead>
+      <tbody id="approvalsBody"></tbody>
+    </table></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الشاشة دي.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "accountant", "cashier"];
+const auditRoles = ["admin", "branch_manager", "accountant"];
+const decideRoles = ["admin", "branch_manager"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    if (btn.dataset.tab === "audit") loadAuditLogs();
+    if (btn.dataset.tab === "approvals") loadApprovals();
+  };
+});
+
+const dt = (s) => s ? new Date(s).toLocaleString("ar-EG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+const statusLabel = { pending: "قيد الانتظار", approved: "اتوافق عليها", rejected: "اترفضت", cancelled: "اتلغت" };
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  if (auditRoles.includes(auth.user.role)) {
+    document.getElementById("auditTabBtn").style.display = "block";
+    await loadAuditActions();
+  }
+  await loadRequestFormOptions();
+  await loadApprovals();
+}
+
+// ---------------- سجل التدقيق ----------------
+async function loadAuditActions() {
+  try {
+    const actions = await api("/api/audit-logs/actions");
+    const sel = document.getElementById("auditActionFilter");
+    sel.innerHTML = `<option value="">كل الأحداث</option>` + actions.map(a => `<option value="${a}">${a}</option>`).join("");
+  } catch (e) { /* لو مفيش صلاحية */ }
+}
+async function loadAuditLogs() {
+  const body = document.getElementById("auditBody");
+  body.innerHTML = `<tr><td colspan="6">...جاري التحميل</td></tr>`;
+  const params = new URLSearchParams();
+  const action = document.getElementById("auditActionFilter").value;
+  const from = document.getElementById("auditFromFilter").value;
+  const to = document.getElementById("auditToFilter").value;
+  if (action) params.set("action", action);
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  try {
+    const logs = await api(`/api/audit-logs?${params.toString()}`);
+    body.innerHTML = logs.map(l => `
+      <tr>
+        <td>${dt(l.created_at)}</td>
+        <td>${l.user_name || "—"}</td>
+        <td>${l.branch_name || "—"}</td>
+        <td>${l.action}</td>
+        <td>${l.entity_type || "—"}${l.entity_id ? " #" + l.entity_id : ""}</td>
+        <td>
+          <span class="detailsToggle" data-id="log-${l.id}">عرض</span>
+          <pre class="detailsBox" id="log-${l.id}">${escapeHtml(JSON.stringify({ old: l.old_values, new: l.new_values, meta: l.metadata }, null, 2))}</pre>
+        </td>
+      </tr>
+    `).join("") || `<tr><td colspan="6">مفيش سجلات مطابقة</td></tr>`;
+    body.querySelectorAll(".detailsToggle").forEach(t => {
+      t.onclick = () => {
+        const box = document.getElementById(t.dataset.id);
+        box.style.display = box.style.display === "block" ? "none" : "block";
+      };
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6">${e.message}</td></tr>`;
+  }
+}
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+document.getElementById("auditFilterBtn").onclick = loadAuditLogs;
+document.getElementById("auditClearBtn").onclick = () => {
+  document.getElementById("auditActionFilter").value = "";
+  document.getElementById("auditFromFilter").value = "";
+  document.getElementById("auditToFilter").value = "";
+  loadAuditLogs();
+};
+
+// ---------------- طلب تسوية مخزون جديد ----------------
+async function loadRequestFormOptions() {
+  if (!auth.user.branchId) {
+    document.getElementById("reqBranchRow").style.display = "flex";
+    try {
+      const branches = await api("/api/branches");
+      document.getElementById("reqBranch").innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    } catch (e) { /* تجاهل */ }
+  }
+  try {
+    const items = await api("/api/inventory/items");
+    document.getElementById("reqItem").innerHTML = items.map(i => `<option value="${i.id}">${i.name} (${i.unit})</option>`).join("");
+  } catch (e) {
+    document.getElementById("reqItem").innerHTML = `<option>تعذّر تحميل الأصناف</option>`;
+  }
+}
+document.getElementById("reqSubmitBtn").onclick = async () => {
+  const errBox = document.getElementById("reqErr");
+  const okBox = document.getElementById("reqOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const reason = document.getElementById("reqReason").value.trim();
+  const inventoryItemId = Number(document.getElementById("reqItem").value);
+  const direction = Number(document.getElementById("reqDirection").value);
+  const rawQty = Number(document.getElementById("reqQuantity").value);
+  if (!reason) return (errBox.textContent = "لازم سبب الطلب");
+  if (!inventoryItemId || !rawQty || rawQty <= 0) return (errBox.textContent = "لازم تختار صنف وكمية أكبر من صفر");
+  const branchId = auth.user.branchId || Number(document.getElementById("reqBranch").value);
+  try {
+    await api("/api/approvals", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "inventory_adjustment", branchId, reason,
+        payload: { inventoryItemId, quantity: rawQty * direction, movementType: "adjustment", notes: reason },
+      }),
+    });
+    okBox.textContent = "اتبعت الطلب، في انتظار موافقة مدير الفرع أو الأدمن";
+    document.getElementById("reqReason").value = "";
+    document.getElementById("reqQuantity").value = "";
+    loadApprovals();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- قايمة طلبات الموافقة ----------------
+async function loadApprovals() {
+  const body = document.getElementById("approvalsBody");
+  body.innerHTML = `<tr><td colspan="7">...جاري التحميل</td></tr>`;
+  const status = document.getElementById("approvalStatusFilter").value;
+  try {
+    const params = status ? `?status=${status}` : "";
+    const list = await api(`/api/approvals${params}`);
+    const canDecide = decideRoles.includes(auth.user.role);
+    body.innerHTML = list.map(r => `
+      <tr>
+        <td>${dt(r.created_at)}</td>
+        <td>${r.branch_name || "—"}</td>
+        <td>${r.requested_by_name || "—"}</td>
+        <td>${r.type}</td>
+        <td>${r.reason || "—"}</td>
+        <td><span class="pill ${r.status}">${statusLabel[r.status] || r.status}</span></td>
+        <td>
+          ${canDecide && r.status === "pending" ? `
+            <button class="smallbtn approve" data-id="${r.id}" data-act="approve">موافقة</button>
+            <button class="smallbtn reject" data-id="${r.id}" data-act="reject">رفض</button>
+          ` : ""}
+        </td>
+      </tr>
+    `).join("") || `<tr><td colspan="7">مفيش طلبات</td></tr>`;
+    body.querySelectorAll("[data-act]").forEach(btn => {
+      btn.onclick = () => decideApproval(btn.dataset.id, btn.dataset.act);
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="7">${e.message}</td></tr>`;
+  }
+}
+async function decideApproval(id, act) {
+  if (act === "approve") {
+    if (!confirm("متأكد إنك عايز توافق على الطلب ده؟ هيتنفذ فورًا على المخزون.")) return;
+    try {
+      await api(`/api/approvals/${id}/approve`, { method: "POST" });
+      loadApprovals();
+    } catch (e) { alert(e.message); }
+  } else {
+    const rejectionReason = prompt("سبب الرفض؟");
+    if (!rejectionReason) return;
+    try {
+      await api(`/api/approvals/${id}/reject`, { method: "POST", body: JSON.stringify({ rejectionReason }) });
+      loadApprovals();
+    } catch (e) { alert(e.message); }
+  }
+}
+document.getElementById("approvalsRefreshBtn").onclick = loadApprovals;
+document.getElementById("approvalStatusFilter").addEventListener("change", loadApprovals);
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

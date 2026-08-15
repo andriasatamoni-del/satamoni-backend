@@ -4,6 +4,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const pool = require("../db/pool");
 const { requireAuth } = require("../middleware/auth");
+const { ROLE_PERMISSIONS } = require("../middleware/permissions");
+const { logAudit } = require("../db/audit");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_TTL = "12h";
@@ -23,10 +25,19 @@ router.post("/login", async (req, res) => {
       [email]
     );
     const user = result.rows[0];
-    if (!user) return res.status(401).json({ error: "بيانات الدخول غلط" });
+    if (!user) {
+      await logAudit(pool, { action: "LOGIN_FAILED", metadata: { email }, req });
+      return res.status(401).json({ error: "بيانات الدخول غلط" });
+    }
 
     const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: "بيانات الدخول غلط" });
+    if (!ok) {
+      await logAudit(pool, {
+        branchId: user.branch_id, userId: user.id, action: "LOGIN_FAILED", metadata: { email }, req,
+      });
+      return res.status(401).json({ error: "بيانات الدخول غلط" });
+    }
+    await logAudit(pool, { branchId: user.branch_id, userId: user.id, action: "LOGIN", req });
 
     const payload = {
       sub: user.id,
@@ -50,9 +61,9 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// GET /api/auth/me - بيانات المستخدم المسجل دخوله حاليًا
+// GET /api/auth/me - بيانات المستخدم المسجل دخوله حاليًا + قايمة صلاحياته الدقيقة (permissions)
 router.get("/me", requireAuth, (req, res) => {
-  res.json(req.user);
+  res.json({ ...req.user, permissions: ROLE_PERMISSIONS[req.user.role] || [] });
 });
 
 // حد محاولات الـ PIN الغلط - في الذاكرة بس (كل فرع بيشغّل عملية Node واحدة طويلة، مش محتاجين

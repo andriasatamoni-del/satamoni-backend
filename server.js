@@ -28,6 +28,8 @@ app.use("/api/reports", require("./routes/reports"));
 app.use("/api/payroll", require("./routes/payroll"));
 app.use("/api/config", require("./routes/config"));
 app.use("/api/pos-settings", require("./routes/pos-settings"));
+app.use("/api/audit-logs", require("./routes/audit"));
+app.use("/api/approvals", require("./routes/approvals"));
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
