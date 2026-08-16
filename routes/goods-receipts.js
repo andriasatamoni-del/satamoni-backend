@@ -9,6 +9,7 @@ const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { convertQuantity } = require("../db/unit-conversion");
+const { postJournalEntry, reverseJournalEntry, getAccountByCode } = require("../db/accounting-engine");
 
 const RECEIVABLE_PO_STATUSES = ["APPROVED", "PARTIALLY_RECEIVED"];
 
@@ -208,6 +209,8 @@ router.post("/:id/post", requireAuth, requirePermission("purchasing.create", "pu
       [req.params.id]
     );
 
+    let totalAcceptedValue = 0;
+    let valueIncomplete = false;
     for (const item of itemsRes.rows) {
       if (Number(item.accepted_quantity) <= 0) continue; // مفيش حركة مخزون للمرفوض خالص
 
@@ -236,7 +239,8 @@ router.post("/:id/post", requireAuth, requirePermission("purchasing.create", "pu
         unit: stockUnit, unitCost: unitCostInStockUnit, batchId, userId: req.user.id,
         idempotencyKey: `grn-item-${item.id}`,
       });
-      void movement;
+      if (movement.total_cost != null) totalAcceptedValue += Number(movement.total_cost);
+      else valueIncomplete = true;
 
       if (batchId) {
         await client.query("UPDATE goods_receipt_items SET batch_id = $1 WHERE id = $2", [batchId, item.id]);
@@ -253,6 +257,23 @@ router.post("/:id/post", requireAuth, requirePermission("purchasing.create", "pu
           metadata: { inventoryItemId: item.inventory_item_id, rejectedQuantity: item.rejected_quantity, reason: item.rejection_reason }, req,
         });
       }
+    }
+
+    // المرحلة 4B: DR المخزون (1400) / CR الموردون (2100، reference=المورد ده بالتحديد) - في نفس
+    // transaction الترحيل بالظبط (نفس row-lock وnamiuة idempotency بتاعة FOR UPDATE فوق، فمينفعش
+    // القيد يتكرر لو نفس /post اتكرر - النتيجة idempotent زي حركات المخزون بالظبط)
+    if (totalAcceptedValue > 0) {
+      const inventoryAccount = await getAccountByCode(client, "1400");
+      const apAccount = await getAccountByCode(client, "2100");
+      await postJournalEntry(client, {
+        entryDate: new Date().toISOString().slice(0, 10), description: `استلام بضاعة - GRN #${grn.rows[0].id}`,
+        sourceType: "goods_receipt", sourceId: grn.rows[0].id, branchId: grn.rows[0].branch_id,
+        lines: [
+          { accountId: inventoryAccount.id, debit: totalAcceptedValue, description: valueIncomplete ? "تكلفة جزئية (تكلفة ناقصة لبعض الأصناف)" : null },
+          { accountId: apAccount.id, credit: totalAcceptedValue, referenceType: "supplier", referenceId: grn.rows[0].supplier_id },
+        ],
+        idempotencyKey: `goods-receipt-${grn.rows[0].id}`, userId: req.user.id,
+      });
     }
 
     const posted = await client.query(
@@ -345,6 +366,20 @@ router.post("/:id/cancel", requireAuth, requirePermission("purchasing.cancel"), 
         `UPDATE purchase_orders SET status = $1, updated_at = now() WHERE id = $2 AND status NOT IN ('CLOSED', 'CANCELLED')`,
         [recomputedStatus, grn.rows[0].purchase_order_id]
       );
+    }
+
+    // المرحلة 4B: عكس قيد الاستلام الأصلي محاسبيًا (لو كان GRN فعلًا POSTED وله قيد) - نفس مبدأ عكس
+    // قيد البيع عند الـvoid بالظبط، قيد جديد معكوس مش تعديل للأصلي
+    const originalEntry = await client.query(
+      "SELECT id FROM journal_entries WHERE source_type = 'goods_receipt' AND source_id = $1 AND status = 'POSTED'",
+      [grn.rows[0].id]
+    );
+    if (originalEntry.rows.length > 0) {
+      await reverseJournalEntry(client, {
+        originalEntryId: originalEntry.rows[0].id, entryDate: new Date().toISOString().slice(0, 10),
+        reason: `إلغاء سند استلام - ${reason || ""}`, userId: req.user.id,
+        idempotencyKey: `goods-receipt-cancel-${grn.rows[0].id}`,
+      });
     }
 
     const result = await client.query(

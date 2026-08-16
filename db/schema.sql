@@ -250,23 +250,46 @@ CREATE TABLE expense_categories (
   id              SERIAL PRIMARY KEY,
   name            TEXT NOT NULL UNIQUE,   -- رواتب / إيجار / مرافق / صيانة / أخرى ...
   is_active       BOOLEAN DEFAULT TRUE,
-  alert_threshold NUMERIC -- لو مصروف من البند ده تجاوز المبلغ ده، يتعلّم كـ"غريب" في تقرير المصروفات (اختياري)
+  alert_threshold NUMERIC, -- لو مصروف من البند ده تجاوز المبلغ ده، يتعلّم كـ"غريب" في تقرير المصروفات (اختياري)
+  -- المرحلة 4B: حساب دفتر الأستاذ اللي المصروف ده بيترحّل عليه محاسبيًا - accounts معرّف في آخر الملف
+  -- (قسم المحاسبة)، الـFK بيتضاف بـALTER TABLE هناك. NULL = يترحّل على "6900 مصروفات تشغيل أخرى" افتراضيًا
+  account_id      INTEGER
 );
 
 INSERT INTO expense_categories (name) VALUES
   ('إيجار'), ('مرافق (كهرباء/مياه/غاز)'), ('صيانة'), ('نقل ومواصلات'),
   ('تسويق وإعلانات'), ('أدوات ومستلزمات'), ('رسوم وضرائب'), ('أخرى');
 
+-- المرحلة 4B: بقت مربوطة اختياريًا بمورد/طريقة دفع وبدورة حياة محاسبية (DRAFT→SUBMITTED→APPROVED→
+-- POSTED→CANCELLED) - المسار القديم (POST /api/expenses من غير أي حقل جديد) لسه شغال زي ما هو بالظبط
+-- (status بيتسجل POSTED فورًا + قيد محاسبي تلقائي، مش DRAFT) عشان مفيش أي كسر لأي كود قديم بينادي عليه
 CREATE TABLE expenses (
-  id            SERIAL PRIMARY KEY,
-  branch_id     INTEGER REFERENCES branches(id),
-  business_date DATE NOT NULL,
-  category_id   INTEGER NOT NULL REFERENCES expense_categories(id),
-  amount        NUMERIC NOT NULL,
-  notes         TEXT,
-  sync_uuid     UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  synced_at     TIMESTAMPTZ
+  id                SERIAL PRIMARY KEY,
+  branch_id         INTEGER REFERENCES branches(id),
+  business_date     DATE NOT NULL,
+  category_id       INTEGER NOT NULL REFERENCES expense_categories(id),
+  amount            NUMERIC NOT NULL,
+  notes             TEXT,
+  payment_method_id INTEGER REFERENCES payment_methods(id),
+  -- supplier_id: suppliers معرّف بعد كدة في الملف - الـFK بيتضاف بـALTER TABLE هناك
+  supplier_id       INTEGER,
+  status            TEXT NOT NULL DEFAULT 'POSTED'
+                    CHECK (status IN ('DRAFT', 'SUBMITTED', 'APPROVED', 'POSTED', 'CANCELLED')),
+  created_by        INTEGER REFERENCES users(id),
+  approved_by       INTEGER REFERENCES users(id),
+  posted_by         INTEGER REFERENCES users(id),
+  posted_at         TIMESTAMPTZ,
+  cancelled_by      INTEGER REFERENCES users(id),
+  cancelled_at      TIMESTAMPTZ,
+  -- journal_entry_id: journal_entries معرّف في آخر الملف - الـFK بيتضاف هناك
+  journal_entry_id  INTEGER,
+  idempotency_key   TEXT,
+  sync_uuid         UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  synced_at         TIMESTAMPTZ
 );
+CREATE UNIQUE INDEX idx_expenses_idempotency_key ON expenses(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_expenses_status ON expenses(status);
+CREATE INDEX idx_expenses_supplier ON expenses(supplier_id);
 
 -- ---------------- المشتريات والتحويلات ----------------
 CREATE TABLE purchases (
@@ -332,6 +355,9 @@ CREATE TABLE suppliers (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- expenses.supplier_id اتعرّف قبل كدة في الملف (expenses جاي قبل suppliers) - الـFK بيتضاف هنا
+ALTER TABLE expenses ADD CONSTRAINT fk_expenses_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id);
 
 -- سعر كل مكوّن عند كل مورد بيبيعه (لمقارنة الأسعار واختيار الأرخص) - جدول قديم بيتحدّث بالسعر الأحدث
 -- بس (ON CONFLICT DO UPDATE)، مالوش تاريخ. لسه شغال زي ما هو لأي كود قديم بيقرأه - مش متضاف عليه أي حاجة
@@ -1075,6 +1101,231 @@ CREATE TABLE audit_logs (
 CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX idx_audit_logs_user ON audit_logs(user_id);
 CREATE INDEX idx_audit_logs_branch_created ON audit_logs(branch_id, created_at DESC);
+
+-- ============================================================
+-- المرحلة 4B: المحاسبة والدفتر العام (Double-Entry Accounting Ledger)
+-- المصدر الوحيد لأي تمثيل محاسبي رسمي (Trial Balance/GL/P&L مرحّل) - بيترحّل تلقائيًا من الأحداث
+-- التشغيلية الموجودة (بيع/استلام بضاعة/مصروف/هالك/تصنيع...) من غير ما يعيد حساب أي تكلفة أو يلمس
+-- المخزون الفعلي مباشرة - db/inventory-ledger.js يفضل المصدر الوحيد للمخزون الفعلي،
+-- و/api/reports/income-statement يفضل زي ما هو (تقرير تشغيلي خفيف مش مبني على القيود) - تقرير
+-- المطابقة الجديد (accounting-reconciliation) بيقارن الاتنين، مش بيوحّدهم في مصدر واحد
+-- ============================================================
+
+-- شجرة الحسابات - account_type بمستوياته الستة الأساسية بس (CHECK enum، زي كل الحالات المشابهة
+-- في المشروع ده، مش جدول منفصل). branch_id = NULL يعني حساب مشترك على مستوى الشركة كلها (زي 1400
+-- المخزون أو 2100 الموردين)؛ لو محدد، الحساب ده خاص بفرع معيّن بس (زي 1100-N كاش كل فرع)
+CREATE TABLE accounts (
+  id                SERIAL PRIMARY KEY,
+  code              TEXT NOT NULL UNIQUE,
+  name              TEXT NOT NULL,
+  account_type      TEXT NOT NULL CHECK (account_type IN ('ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'COGS', 'EXPENSE')),
+  parent_account_id INTEGER REFERENCES accounts(id),
+  branch_id         INTEGER REFERENCES branches(id),
+  is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+  is_system_account BOOLEAN NOT NULL DEFAULT FALSE, -- حسابات افتراضية أساسية (زي 1400/2100/4100) محمية من الحذف
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_accounts_type ON accounts(account_type);
+CREATE INDEX idx_accounts_branch ON accounts(branch_id);
+CREATE INDEX idx_accounts_parent ON accounts(parent_account_id);
+
+-- ترحيل شهري - قفل شهر بيمنع أي قيد جديد أو عكسي عليه؛ التصحيحات بعد القفل لازم تتسجل في الشهر
+-- المفتوح الحالي (بقيد تصحيحي واضح السبب)، مش بإعادة فتح الشهر المقفول
+CREATE TABLE accounting_periods (
+  id          SERIAL PRIMARY KEY,
+  year        INTEGER NOT NULL,
+  month       INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+  status      TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED')),
+  closed_by   INTEGER REFERENCES users(id),
+  closed_at   TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (year, month)
+);
+
+-- مصدر رقم القيد (JE-000001...) - sequence منفصلة (مش SERIAL id الجدول نفسه) عشان الرقم يتحسب مرة واحدة
+-- قبل الإدخال مباشرة (nextval آمن ومتزامن أصلًا في Postgres)، من غير أي UPDATE لاحق على عمود entry_number
+-- بعد الإدخال (كان هيتصادم مع trigger عدم قابلية التعديل بعد الترحيل تحت لو القيد اتعمل POSTED فورًا)
+CREATE SEQUENCE journal_entry_number_seq START 1;
+
+-- رأس القيد - كل حدث محاسبي (بيع/استلام بضاعة/مصروف/هالك...) بينشئ قيد واحد بكل سطوره، مش قيد منفصل
+-- لكل طرف. status: DRAFT (قيد يدوي لسه ما اتترحلش) → POSTED (مرحّل، غير قابل للتعديل إطلاقًا بعد كده -
+-- محمي بـtrigger على مستوى القاعدة نفسها مش تطبيقي بس) → REVERSED (اتعكس بقيد تاني، بيفضل هو نفسه
+-- POSTED وموجود للأبد، بس معلّم إنه اتعكس). القيود التلقائية (من الأحداث التشغيلية) بتتنشئ POSTED
+-- مباشرة لأن الحدث نفسه أصلًا معتمد (بيع اتحصل، GRN اتاعتمد قبل الاستلام...) - القيد اليدوي بس هو اللي
+-- بيمر بـDRAFT فعليًا
+CREATE TABLE journal_entries (
+  id                    SERIAL PRIMARY KEY,
+  entry_number          TEXT NOT NULL UNIQUE,
+  entry_date            DATE NOT NULL,
+  description           TEXT,
+  source_type           TEXT NOT NULL, -- 'order_sale' | 'order_void' | 'goods_receipt' | 'goods_receipt_cancel' |
+                                        -- 'supplier_payment' | 'expense' | 'waste' | 'adjustment' | 'production' |
+                                        -- 'production_cancel' | 'manual' | 'reversal'
+  source_id             INTEGER,
+  branch_id             INTEGER REFERENCES branches(id),
+  status                TEXT NOT NULL DEFAULT 'POSTED' CHECK (status IN ('DRAFT', 'POSTED', 'REVERSED')),
+  created_by            INTEGER REFERENCES users(id),
+  posted_by             INTEGER REFERENCES users(id),
+  posted_at             TIMESTAMPTZ,
+  reversed_by           INTEGER REFERENCES users(id),
+  reversed_at           TIMESTAMPTZ,
+  reversal_of_entry_id  INTEGER REFERENCES journal_entries(id),
+  reversal_reason       TEXT,
+  idempotency_key       TEXT,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_journal_entries_idempotency_key ON journal_entries(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_journal_entries_source ON journal_entries(source_type, source_id);
+CREATE INDEX idx_journal_entries_branch_date ON journal_entries(branch_id, entry_date);
+CREATE INDEX idx_journal_entries_status ON journal_entries(status);
+
+-- سطور القيد - سطر واحد إما مدين أو دائن، مش الاتنين (CHECK تحت). reference_type/reference_id بيسمحوا
+-- بدفتر أستاذ مساعد (subsidiary ledger) - زي رصيد مورد معيّن = مجموع سطور 2100 اللي reference_type='supplier'
+-- AND reference_id = المورد ده، من غير ما نحتاج حساب GL منفصل لكل مورد
+CREATE TABLE journal_entry_lines (
+  id                SERIAL PRIMARY KEY,
+  journal_entry_id  INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+  account_id        INTEGER NOT NULL REFERENCES accounts(id),
+  debit             NUMERIC NOT NULL DEFAULT 0 CHECK (debit >= 0),
+  credit            NUMERIC NOT NULL DEFAULT 0 CHECK (credit >= 0),
+  description       TEXT,
+  branch_id         INTEGER REFERENCES branches(id),
+  reference_type    TEXT,
+  reference_id      INTEGER,
+  CHECK (NOT (debit > 0 AND credit > 0))
+);
+CREATE INDEX idx_journal_entry_lines_entry ON journal_entry_lines(journal_entry_id);
+CREATE INDEX idx_journal_entry_lines_account ON journal_entry_lines(account_id);
+CREATE INDEX idx_journal_entry_lines_reference ON journal_entry_lines(reference_type, reference_id);
+
+-- تحقق مزدوج (DB-level، مش تطبيقي بس) إن كل قيد متزن: مجموع المدين = مجموع الدائن بالظبط. Deferred
+-- Constraint Trigger عشان يتأكد بعد ما كل سطور القيد (INSERT متعددة) تتحط، وقت الـCOMMIT بالظبط -
+-- مش بعد كل سطر لوحده (كان هيرفض أي قيد وسط إدخاله)
+CREATE OR REPLACE FUNCTION check_journal_entry_balanced() RETURNS TRIGGER AS $$
+DECLARE
+  target_entry_id INTEGER;
+  total_debit NUMERIC;
+  total_credit NUMERIC;
+BEGIN
+  target_entry_id := COALESCE(NEW.journal_entry_id, OLD.journal_entry_id);
+  SELECT COALESCE(SUM(debit), 0), COALESCE(SUM(credit), 0) INTO total_debit, total_credit
+  FROM journal_entry_lines WHERE journal_entry_id = target_entry_id;
+  IF total_debit <> total_credit THEN
+    RAISE EXCEPTION 'القيد رقم % غير متزن: مدين % ≠ دائن % - لازم يتساووا بالظبط', target_entry_id, total_debit, total_credit;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER trg_journal_entry_lines_balanced
+  AFTER INSERT OR UPDATE OR DELETE ON journal_entry_lines
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION check_journal_entry_balanced();
+
+-- عدم قابلية التعديل بعد الترحيل (DB-level) - قيد POSTED مينفعش أي سطر فيه يتضاف/يتعدّل/يتمسح خالص.
+-- التصحيح الوحيد المسموح: قيد عكسي جديد منفصل (reversal)، مش لمس القيد الأصلي
+CREATE OR REPLACE FUNCTION block_posted_journal_entry_line_changes() RETURNS TRIGGER AS $$
+DECLARE
+  entry_status TEXT;
+BEGIN
+  SELECT status INTO entry_status FROM journal_entries WHERE id = COALESCE(NEW.journal_entry_id, OLD.journal_entry_id);
+  IF entry_status = 'POSTED' THEN
+    RAISE EXCEPTION 'القيد ده مرحّل (POSTED) بالفعل - غير قابل للتعديل، اعمل قيد عكسي (reversal) بدل ما تعدّله';
+  END IF;
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_block_posted_lines_write
+  BEFORE INSERT OR UPDATE OR DELETE ON journal_entry_lines
+  FOR EACH ROW EXECUTE FUNCTION block_posted_journal_entry_line_changes();
+
+-- نفس الحماية على رأس القيد نفسه - بعد POSTED، الحقول التانية كلها محمية، مسموح بس بانتقال
+-- status: POSTED→REVERSED (وتسجيل reversed_by/reversed_at) عشان الإلغاء يفضل ممكن
+CREATE OR REPLACE FUNCTION block_posted_journal_entry_changes() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'DELETE' AND OLD.status IN ('POSTED', 'REVERSED') THEN
+    RAISE EXCEPTION 'القيد ده مرحّل بالفعل - مينفعش يتمسح خالص';
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status = 'POSTED' THEN
+    IF NEW.status NOT IN ('POSTED', 'REVERSED')
+       OR NEW.entry_number <> OLD.entry_number OR NEW.entry_date <> OLD.entry_date
+       OR COALESCE(NEW.description, '') <> COALESCE(OLD.description, '')
+       OR NEW.source_type <> OLD.source_type OR COALESCE(NEW.source_id, -1) <> COALESCE(OLD.source_id, -1)
+       OR COALESCE(NEW.branch_id, -1) <> COALESCE(OLD.branch_id, -1)
+    THEN
+      RAISE EXCEPTION 'القيد ده مرحّل (POSTED) بالفعل - غير قابل للتعديل، اعمل قيد عكسي (reversal) بدل ما تعدّله';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_block_posted_entry_changes
+  BEFORE UPDATE OR DELETE ON journal_entries
+  FOR EACH ROW EXECUTE FUNCTION block_posted_journal_entry_changes();
+
+-- سداد مورد - Accounts Payable (مدين) مقابل Cash/Bank (دائن)، مربوط بقيد محاسبي حقيقي. رصيد المورد
+-- = مجموع سطور 2100 المرتبطة بيه (من GRN كدائن، من السداد كمدين) - مفيش عمود "رصيد" مخزّن منفصل
+-- (كان هيعمل drift) - بيتحسب دايمًا من القيود وقت القراءة
+CREATE TABLE supplier_payments (
+  id                SERIAL PRIMARY KEY,
+  supplier_id       INTEGER NOT NULL REFERENCES suppliers(id),
+  branch_id         INTEGER NOT NULL REFERENCES branches(id),
+  payment_date      DATE NOT NULL DEFAULT CURRENT_DATE,
+  amount            NUMERIC NOT NULL CHECK (amount > 0),
+  payment_method_id INTEGER REFERENCES payment_methods(id),
+  reference_number  TEXT,
+  notes             TEXT,
+  journal_entry_id  INTEGER REFERENCES journal_entries(id),
+  idempotency_key   TEXT,
+  created_by        INTEGER REFERENCES users(id),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_supplier_payments_idempotency_key ON supplier_payments(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_supplier_payments_supplier ON supplier_payments(supplier_id);
+CREATE INDEX idx_supplier_payments_branch ON supplier_payments(branch_id);
+
+-- expense_categories.account_id وexpenses.journal_entry_id اتعرّفوا قبل كدة في الملف - الـFKs بتتضاف
+-- هنا بعد ما accounts/journal_entries يتعرّفوا فعليًا
+ALTER TABLE expense_categories ADD CONSTRAINT fk_expense_categories_account FOREIGN KEY (account_id) REFERENCES accounts(id);
+ALTER TABLE expenses ADD CONSTRAINT fk_expenses_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
+
+-- شجرة الحسابات الافتراضية لساتاموني - حسابات مشتركة على مستوى الشركة (branch_id = NULL). حسابات الكاش
+-- الفرعية (1100-N لكل فرع) بتتنشئ تلقائيًا أول مرة تتحتاج (db/accounting-engine.js) مش هنا، لأن الفروع
+-- ديناميكية. ON CONFLICT DO NOTHING عشان السكريبت ده آمن يتشغّل تاني على قاعدة فيها الحسابات دي بالفعل
+INSERT INTO accounts (code, name, account_type, is_system_account) VALUES
+  ('1100', 'الكاش', 'ASSET', TRUE),
+  ('1200', 'البنك', 'ASSET', TRUE),
+  ('1300', 'عملاء (ذمم مدينة)', 'ASSET', TRUE),
+  ('1350', 'مستحقات تطبيقات التوصيل', 'ASSET', TRUE),
+  ('1400', 'المخزون', 'ASSET', TRUE),
+  ('1500', 'مصروفات مدفوعة مقدمًا', 'ASSET', TRUE),
+  ('2100', 'موردون (ذمم دائنة)', 'LIABILITY', TRUE),
+  ('2200', 'مصروفات مستحقة', 'LIABILITY', TRUE),
+  ('2300', 'ضرائب مستحقة', 'LIABILITY', TRUE),
+  ('2400', 'رواتب مستحقة', 'LIABILITY', TRUE),
+  ('3100', 'رأس مال المالك', 'EQUITY', TRUE),
+  ('3200', 'أرباح مرحّلة', 'EQUITY', TRUE),
+  ('3300', 'صافي ربح السنة الحالية', 'EQUITY', TRUE),
+  ('4100', 'مبيعات الطعام', 'REVENUE', TRUE),
+  ('4200', 'مبيعات التوصيل', 'REVENUE', TRUE),
+  ('4300', 'مبيعات أخرى', 'REVENUE', TRUE),
+  ('4900', 'خصومات المبيعات', 'REVENUE', TRUE),
+  ('4950', 'مرتجعات المبيعات', 'REVENUE', TRUE),
+  ('5100', 'تكلفة الطعام', 'COGS', TRUE),
+  ('5200', 'تكلفة مستلزمات التغليف', 'COGS', TRUE),
+  ('5300', 'تكلفة بضاعة مباعة أخرى', 'COGS', TRUE),
+  ('6100', 'الرواتب', 'EXPENSE', TRUE),
+  ('6200', 'الإيجار', 'EXPENSE', TRUE),
+  ('6300', 'الكهرباء', 'EXPENSE', TRUE),
+  ('6400', 'المياه', 'EXPENSE', TRUE),
+  ('6500', 'الغاز', 'EXPENSE', TRUE),
+  ('6600', 'عمولات تطبيقات التوصيل', 'EXPENSE', TRUE),
+  ('6700', 'التسويق', 'EXPENSE', TRUE),
+  ('6800', 'الصيانة', 'EXPENSE', TRUE),
+  ('6900', 'مصروفات تشغيل أخرى', 'EXPENSE', TRUE)
+ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================
 -- محرك موافقات عام (Approval Requests) - لطلبات مش لازم تتحسم فورًا وقت البيع

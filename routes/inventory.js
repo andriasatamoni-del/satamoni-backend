@@ -5,6 +5,7 @@ const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/aut
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { convertQuantity } = require("../db/unit-conversion");
+const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
 
 const WASTE_REASONS = ["EXPIRED", "DAMAGED", "BURNED", "PREPARATION_WASTE", "OVERPRODUCTION", "QUALITY_ISSUE", "CUSTOMER_RETURN", "UNKNOWN"];
 
@@ -143,6 +144,23 @@ router.post("/stock/adjust", requireAuth, stockManagers, async (req, res) => {
       notes, userId: req.user.id, idempotencyKey, negativeStockOverrideApproved: true,
     });
     if (!duplicate) {
+      // المرحلة 4B: تسوية يدوية (adjustment) بس بترحّل محاسبيًا - عجز (سالب) بيزوّد 5300، زيادة (موجب)
+      // بتقلل 5300 (اكتشاف مخزون أكتر مما هو مسجّل بيعوّض تكلفة سابقة). purchase/transfer_in/out هنا
+      // مسارات قديمة/يدوية بديلة (المشتريات الحقيقية بقت من خلال GRN، والتحويلات مالهاش أثر محاسبي عمومًا
+      // لأنها بين نفس حساب المخزون 1400 المشترك) - ملهومش قيد هنا عمدًا، مش سهو
+      if (movementType === "adjustment" && movement.total_cost != null && Number(movement.total_cost) > 0) {
+        const adjustmentAccount = await getAccountByCode(client, "5300");
+        const inventoryAccount = await getAccountByCode(client, "1400");
+        const isIncrease = Number(quantity) > 0;
+        await postJournalEntry(client, {
+          entryDate: movement.business_date, description: "تسوية مخزون يدوية",
+          sourceType: "adjustment", sourceId: movement.id, branchId,
+          lines: isIncrease
+            ? [{ accountId: inventoryAccount.id, debit: Number(movement.total_cost) }, { accountId: adjustmentAccount.id, credit: Number(movement.total_cost) }]
+            : [{ accountId: adjustmentAccount.id, debit: Number(movement.total_cost) }, { accountId: inventoryAccount.id, credit: Number(movement.total_cost) }],
+          idempotencyKey: `adjustment-${movement.id}`, userId: req.user.id,
+        });
+      }
       await logAudit(client, {
         branchId, userId: req.user.id, action: "INVENTORY_ADJUSTMENT", entityType: "inventory_item", entityId: inventoryItemId,
         newValues: { quantity, movementType: movement.movement_type }, metadata: { notes }, req,
@@ -224,10 +242,25 @@ router.post("/reconcile", requireAuth, stockManagers, async (req, res) => {
 
     if (variance !== 0) {
       const reconcileNote = `جرد: كان ${previousQuantity}، الفعلي ${actualQuantity}` + (notes ? ` - ${notes}` : "");
-      await postInventoryMovement(client, {
+      const { movement } = await postInventoryMovement(client, {
         branchId, inventoryItemId, quantity: variance, movementType: "STOCK_COUNT",
         notes: reconcileNote, userId: req.user.id, negativeStockOverrideApproved: true,
       });
+      // المرحلة 4B: فرق الجرد الفعلي بيترحّل بنفس منطق التسوية اليدوية (5300/1400) - عجز (سالب)
+      // بيزوّد 5300، وجود زيادة فعلية عن المسجّل (موجب) بيقلل 5300
+      if (movement.total_cost != null && Number(movement.total_cost) > 0) {
+        const adjustmentAccount = await getAccountByCode(client, "5300");
+        const inventoryAccount = await getAccountByCode(client, "1400");
+        const isIncrease = variance > 0;
+        await postJournalEntry(client, {
+          entryDate: movement.business_date, description: "فرق جرد فعلي",
+          sourceType: "stock_count", sourceId: movement.id, branchId,
+          lines: isIncrease
+            ? [{ accountId: inventoryAccount.id, debit: Number(movement.total_cost) }, { accountId: adjustmentAccount.id, credit: Number(movement.total_cost) }]
+            : [{ accountId: adjustmentAccount.id, debit: Number(movement.total_cost) }, { accountId: inventoryAccount.id, credit: Number(movement.total_cost) }],
+          idempotencyKey: `stock-count-${movement.id}`, userId: req.user.id,
+        });
+      }
       await logAudit(client, {
         branchId, userId: req.user.id, action: "INVENTORY_COUNT", entityType: "inventory_item", entityId: inventoryItemId,
         oldValues: { quantity: previousQuantity }, newValues: { quantity: Number(actualQuantity) },
@@ -271,6 +304,21 @@ router.post("/waste", requireAuth, stockManagers, async (req, res) => {
       userId: req.user.id, idempotencyKey, negativeStockOverrideApproved: true,
     });
     if (!duplicate) {
+      // المرحلة 4B: DR تكلفة بضاعة أخرى (5300) / CR المخزون (1400) - بنفس تكلفة الحركة الحقيقية اللي
+      // الليدجر حسبها فوق بالظبط (movement.total_cost)، مش تقدير مستقل
+      if (movement.total_cost != null && Number(movement.total_cost) > 0) {
+        const wasteAccount = await getAccountByCode(client, "5300");
+        const inventoryAccount = await getAccountByCode(client, "1400");
+        await postJournalEntry(client, {
+          entryDate: movement.business_date, description: `هالك: ${wasteReason || "UNKNOWN"}`,
+          sourceType: "waste", sourceId: movement.id, branchId,
+          lines: [
+            { accountId: wasteAccount.id, debit: Number(movement.total_cost) },
+            { accountId: inventoryAccount.id, credit: Number(movement.total_cost) },
+          ],
+          idempotencyKey: `waste-${movement.id}`, userId: req.user.id,
+        });
+      }
       await logAudit(client, {
         branchId, userId: req.user.id, action: "WASTE_RECORDED", entityType: "inventory_item", entityId: inventoryItemId,
         newValues: { quantity, wasteReason: wasteReason || "UNKNOWN" }, metadata: { reason }, req,

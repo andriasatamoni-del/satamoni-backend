@@ -4,6 +4,7 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
+const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
 
 // طلبات الموقع (source=website) عامة من غير تسجيل دخول.
 // طلبات الكاشير (source=pos) وطلبات طلبات (source=talabat، بتتسجل يدويًا بعد التنفيذ
@@ -402,6 +403,47 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       });
     }
 
+    // المرحلة 4B: ترحيل قيد البيع محاسبيًا - في نفس transaction إنشاء الأوردر بالظبط (ذرّي: يا كله ينجح
+    // يا كله يترجع)، مش خطوة منفصلة بعد كده. التكلفة (COGS) بتتاخد من cost_at_sale اللي اتجمّد فوق -
+    // مفيش إعادة حساب مستقلة. total = subtotal + deliveryFee - discount بالظبط، فالقيد متزن تلقائيًا
+    // من غير أي تسوية يدوية: مدين (كاش/عميل/مستحقات تطبيق) = دائن (مبيعات طعام + توصيل) - مدين خصومات
+    if (branchId && total > 0) {
+      const costRes = await client.query(
+        `SELECT COALESCE(SUM(cost_at_sale), 0) AS total_cost, BOOL_OR(cost_at_sale_incomplete) AS incomplete
+         FROM order_items WHERE order_id = $1`,
+        [orderId]
+      );
+      const costTotal = Number(costRes.rows[0].total_cost);
+      const costIncomplete = costRes.rows[0].incomplete;
+
+      let debitAccount;
+      if (source === "talabat") {
+        debitAccount = await getAccountByCode(client, "1350");
+      } else if (paymentKind === "cash" && initialPaymentStatus === "collected") {
+        debitAccount = await getOrCreateBranchCashAccount(client, branchId);
+      } else if (initialPaymentStatus === "pending_collection") {
+        debitAccount = await getAccountByCode(client, "1300");
+      } else {
+        debitAccount = await getAccountByCode(client, "1200");
+      }
+
+      const revenueLines = [{ accountId: debitAccount.id, debit: total, description: "قيمة الطلب" }];
+      if (subtotal > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4100")).id, credit: subtotal });
+      if (deliveryFee > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4200")).id, credit: deliveryFee });
+      if (discount > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: discount });
+
+      if (costTotal > 0) {
+        revenueLines.push({ accountId: (await getAccountByCode(client, "5100")).id, debit: costTotal, description: costIncomplete ? "تكلفة جزئية (بيانات تكلفة ناقصة لبعض الأصناف)" : null });
+        revenueLines.push({ accountId: (await getAccountByCode(client, "1400")).id, credit: costTotal });
+      }
+
+      await postJournalEntry(client, {
+        entryDate: new Date().toISOString().slice(0, 10), description: `بيع - طلب #${orderId}`,
+        sourceType: "order_sale", sourceId: orderId, branchId,
+        lines: revenueLines, idempotencyKey: `order-sale-${orderId}`, userId: createdBy,
+      });
+    }
+
     await client.query("COMMIT");
     res.status(201).json({ orderId, subtotal, total });
   } catch (err) {
@@ -706,6 +748,20 @@ router.post(
           `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
           [order.loyalty_points_earned, order.customer_phone]
         );
+      }
+
+      // المرحلة 4B: عكس قيد البيع الأصلي محاسبيًا (لو كان موجود أصلًا - طلبات قبل تفعيل المرحلة 4B أو
+      // بدون فرع مفيهاش قيد خالص، عادي نتجاهله). عكس حقيقي (قيد جديد بمدين/دائن معكوسين)، مش تعديل أو
+      // مسح للقيد الأصلي - هو نفسه بيفضل موجود للأبد بعلامة REVERSED بس
+      const originalEntry = await client.query(
+        "SELECT id FROM journal_entries WHERE source_type = 'order_sale' AND source_id = $1 AND status = 'POSTED'",
+        [order.id]
+      );
+      if (originalEntry.rows.length > 0) {
+        await reverseJournalEntry(client, {
+          originalEntryId: originalEntry.rows[0].id, entryDate: new Date().toISOString().slice(0, 10),
+          reason: `استرجاع (Void) - ${reason}`, userId: req.user.id, idempotencyKey: `order-void-${order.id}`,
+        });
       }
 
       await logAudit(client, {

@@ -17,6 +17,8 @@ const ROLE_PERMISSIONS = {
     "users.view",
     "approvals.create", "approvals.decide",
     "audit.view.branch",
+    // المرحلة 4B: رؤية مالية تشغيلية لفرعه بس - مفيش تعديل على قيد مرحّل ولا قفل شهر خالص (زي ما اتحدد صراحة)
+    "accounting.view",
   ],
   accountant: [
     "inventory.view", "recipes.view",
@@ -26,6 +28,9 @@ const ROLE_PERMISSIONS = {
     "purchasing.view", "purchasing.export",
     "approvals.create",
     "audit.view.branch",
+    // المرحلة 4B: إنشاء/تعديل/اعتماد/ترحيل + تقارير - بدون عكس قيود (accounting.reverse) ولا قفل شهر
+    // (accounting.close_period) - الاتنين دول أدمن بس عمدًا (زي ما اتحدد صراحة في المواصفات)
+    "accounting.view", "accounting.create", "accounting.edit", "accounting.approve", "accounting.post", "accounting.export",
   ],
   cashier: [
     "orders.create", "orders.discount.request", "orders.void.request",

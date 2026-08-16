@@ -1946,4 +1946,655 @@ router.get("/purchasing-recommendations", requireAuth, canSeePurchasing, async (
   }
 });
 
+// ============================================================
+// المرحلة 4B: تقارير المحاسبة (Ledger-Based Accounting Reports)
+// ============================================================
+// كل التقارير دي مصدرها الوحيد journal_entries/journal_entry_lines (دفتر الأستاذ الرسمي) - مختلفة عن
+// التقارير التشغيلية الأقدم فوق (زي income-statement) اللي مصدرها جداول العمليات مباشرة. مفيش دمج بين
+// المصدرين هنا عمدًا - تقرير accounting-reconciliation في الآخر بيقارن الاتنين ويطلع أي فرق (drift)
+// صراحة للمراجعة، بدل ما يتم تجاهله أو "تصحيحه" تلقائيًا.
+
+const canSeeAccounting = requirePermission("accounting.view");
+const canSeeSupplierAccounting = requirePermission("purchasing.view", "accounting.view");
+
+// مدير الفرع (branch_manager) له رؤية فرعه بس في كل تقارير المحاسبة - زي ما اتحدد صراحة في المواصفات
+function scopeBranchId(req, branchId) {
+  return req.user.role === "branch_manager" ? req.user.branchId : branchId;
+}
+
+// كل سطور القيود اللي اترحّلت فعليًا في تاريخها (status <> 'DRAFT') في مدى تاريخ/فرع معيّن، مجمّعة على
+// مستوى الحساب - أساس تقارير القوائم المالية تحت دي. القيد المعكوس (REVERSED) بيفضل متضمّن عمدًا (مش
+// POSTED بس) لأن سطوره حصلت فعلًا وقت ترحيله؛ قيد العكس نفسه (POSTED منفصل) بيلغي أثره بالظبط - استبعاد
+// الاتنين مع بعض هو الغلط (هيسيب أثر قيد العكس لوحده من غير ما ينلغي)، واستبعاد الأصلي بس (POSTED فقط)
+// هيسيب الرصيد بعد أي عكس مش صفر زي ما المفروض
+async function fetchPostedLines({ from, to, branchId }) {
+  const result = await pool.query(
+    `SELECT jel.branch_id, a.id AS account_id, a.code, a.name, a.account_type,
+            COALESCE(SUM(jel.debit),0) AS total_debit, COALESCE(SUM(jel.credit),0) AS total_credit
+     FROM journal_entry_lines jel
+     JOIN journal_entries je ON je.id = jel.journal_entry_id
+     JOIN accounts a ON a.id = jel.account_id
+     WHERE je.status <> 'DRAFT'
+       AND ($1::date IS NULL OR je.entry_date >= $1)
+       AND ($2::date IS NULL OR je.entry_date <= $2)
+       AND ($3::int IS NULL OR jel.branch_id = $3)
+     GROUP BY jel.branch_id, a.id, a.code, a.name, a.account_type`,
+    [from || null, to || null, branchId || null]
+  );
+  return result.rows;
+}
+
+// بيطوي سطور حسابات مجمّعة (من fetchPostedLines) لقائمة دخل واحدة: صافي مبيعات (الخصومات/المرتجعات
+// بالفعل متضمنة جوه نوع REVENUE نفسه زي ما اتوضّح وقت ترحيل قيد البيع)، تكلفة بضاعة مباعة، مصروفات
+// تشغيل بالتفصيل
+function foldProfitAndLoss(rows) {
+  let netSales = 0, cogs = 0, opex = 0;
+  const opexLines = [];
+  for (const r of rows) {
+    const debit = Number(r.total_debit);
+    const credit = Number(r.total_credit);
+    if (r.account_type === "REVENUE") netSales += credit - debit;
+    else if (r.account_type === "COGS") cogs += debit - credit;
+    else if (r.account_type === "EXPENSE") {
+      const amount = debit - credit;
+      opex += amount;
+      if (amount !== 0) opexLines.push({ code: r.code, name: r.name, amount });
+    }
+  }
+  const grossProfit = netSales - cogs;
+  const operatingProfit = grossProfit - opex;
+  return {
+    netSales, cogs, grossProfit,
+    grossMarginPercent: netSales !== 0 ? grossProfit / netSales : null,
+    opex, opexLines: opexLines.sort((a, b) => b.amount - a.amount),
+    operatingProfit,
+    operatingMarginPercent: netSales !== 0 ? operatingProfit / netSales : null,
+  };
+}
+
+// FIFO aging: بياخد كل سطور حساب مورد معيّن (دائن = فاتورة/GRN زوّدت المديونية، مدين = سداد قلّلها) مرتبة
+// بالتاريخ، وبيطفي كل سداد على أقدم فاتورة لسه فيها رصيد - زي ما بيحصل فعليًا مع أغلب الموردين (مفيش ربط
+// فاتورة بسداد بعينه في النظام الحالي - المورد بياخد سداد إجمالي مش لسداد GRN معيّن)
+function computeApAgingBuckets(rows, asOfDate) {
+  const bySupplier = {};
+  for (const r of rows) {
+    if (!bySupplier[r.supplier_id]) bySupplier[r.supplier_id] = { supplierId: r.supplier_id, supplierName: r.supplier_name, queue: [] };
+    const entry = bySupplier[r.supplier_id];
+    const debit = Number(r.debit);
+    const credit = Number(r.credit);
+    if (credit > 0) entry.queue.push({ date: r.entry_date, remaining: credit });
+    if (debit > 0) {
+      let toConsume = debit;
+      while (toConsume > 1e-7 && entry.queue.length > 0) {
+        const front = entry.queue[0];
+        const consumed = Math.min(front.remaining, toConsume);
+        front.remaining -= consumed;
+        toConsume -= consumed;
+        if (front.remaining <= 1e-7) entry.queue.shift();
+      }
+    }
+  }
+  const asOf = new Date(asOfDate);
+  const buckets = [];
+  for (const supplierId in bySupplier) {
+    const entry = bySupplier[supplierId];
+    let current = 0, days31to60 = 0, days61to90 = 0, over90 = 0;
+    for (const item of entry.queue) {
+      if (item.remaining <= 1e-7) continue;
+      const days = Math.floor((asOf - new Date(item.date)) / 86400000);
+      if (days <= 30) current += item.remaining;
+      else if (days <= 60) days31to60 += item.remaining;
+      else if (days <= 90) days61to90 += item.remaining;
+      else over90 += item.remaining;
+    }
+    const total = current + days31to60 + days61to90 + over90;
+    if (total > 1e-7) {
+      buckets.push({ supplierId: Number(supplierId), supplierName: entry.supplierName, current, days31to60, days61to90, over90, total });
+    }
+  }
+  return buckets.sort((a, b) => b.total - a.total);
+}
+
+// GET /api/reports/trial-balance?asOf=&branchId= - ميزان المراجعة: كل حساب ورصيده حتى تاريخ معيّن
+router.get("/trial-balance", requireAuth, canSeeAccounting, async (req, res) => {
+  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const result = await pool.query(
+      `WITH filtered_lines AS (
+         SELECT jel.account_id, jel.debit, jel.credit
+         FROM journal_entry_lines jel
+         JOIN journal_entries je ON je.id = jel.journal_entry_id
+         WHERE je.status <> 'DRAFT' AND je.entry_date <= $1
+           AND ($2::int IS NULL OR jel.branch_id = $2)
+       )
+       SELECT a.id, a.code, a.name, a.account_type,
+              COALESCE(SUM(fl.debit),0) AS total_debit, COALESCE(SUM(fl.credit),0) AS total_credit
+       FROM accounts a
+       LEFT JOIN filtered_lines fl ON fl.account_id = a.id
+       GROUP BY a.id, a.code, a.name, a.account_type
+       HAVING COALESCE(SUM(fl.debit),0) <> 0 OR COALESCE(SUM(fl.credit),0) <> 0
+       ORDER BY a.code`,
+      [asOf, branchId]
+    );
+    const rows = result.rows.map((r) => {
+      const debit = Number(r.total_debit);
+      const credit = Number(r.total_credit);
+      const normalDebit = ["ASSET", "COGS", "EXPENSE"].includes(r.account_type);
+      const balance = normalDebit ? debit - credit : credit - debit;
+      return { accountId: r.id, code: r.code, name: r.name, accountType: r.account_type, totalDebit: debit, totalCredit: credit, balance };
+    });
+    const totalDebit = rows.reduce((s, r) => s + r.totalDebit, 0);
+    const totalCredit = rows.reduce((s, r) => s + r.totalCredit, 0);
+    res.json({ asOf, branchId, accounts: rows, totalDebit, totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/general-ledger?accountId=&from=&to=&branchId= - كشف حساب واحد بالتفصيل مع رصيد جاري
+router.get("/general-ledger", requireAuth, canSeeAccounting, async (req, res) => {
+  const { accountId } = req.query;
+  if (!accountId) return res.status(400).json({ error: "لازم تحدد accountId" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const accountRes = await pool.query("SELECT * FROM accounts WHERE id = $1", [accountId]);
+    if (accountRes.rows.length === 0) return res.status(404).json({ error: "الحساب مش موجود" });
+    const account = accountRes.rows[0];
+    const normalDebit = ["ASSET", "COGS", "EXPENSE"].includes(account.account_type);
+
+    const result = await pool.query(
+      `SELECT je.entry_number, je.entry_date, je.description AS entry_description, je.source_type, je.source_id,
+              jel.debit, jel.credit, jel.description AS line_description, jel.branch_id
+       FROM journal_entry_lines jel
+       JOIN journal_entries je ON je.id = jel.journal_entry_id
+       WHERE jel.account_id = $1 AND je.status <> 'DRAFT'
+         AND ($2::date IS NULL OR je.entry_date >= $2)
+         AND ($3::date IS NULL OR je.entry_date <= $3)
+         AND ($4::int IS NULL OR jel.branch_id = $4)
+       ORDER BY je.entry_date, je.id, jel.id`,
+      [accountId, req.query.from || null, req.query.to || null, branchId]
+    );
+
+    let running = 0;
+    const lines = result.rows.map((r) => {
+      const debit = Number(r.debit);
+      const credit = Number(r.credit);
+      running += normalDebit ? debit - credit : credit - debit;
+      return {
+        entryNumber: r.entry_number, entryDate: r.entry_date, entryDescription: r.entry_description,
+        sourceType: r.source_type, sourceId: r.source_id, lineDescription: r.line_description,
+        branchId: r.branch_id, debit, credit, runningBalance: running,
+      };
+    });
+
+    res.json({
+      account: { id: account.id, code: account.code, name: account.name, accountType: account.account_type },
+      from: req.query.from || null, to: req.query.to || null, branchId,
+      lines, closingBalance: running,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/journal-entries-report?from=&to=&branchId=&sourceType=&status= - قائمة القيود
+// كتقرير (مع إجماليات حسب مصدر القيد) - بديل reporting-محور لـGET /api/accounting/journal-entries
+router.get("/journal-entries-report", requireAuth, canSeeAccounting, async (req, res) => {
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  const { sourceType, status } = req.query;
+  try {
+    const result = await pool.query(
+      `SELECT je.id, je.entry_number, je.entry_date, je.description, je.source_type, je.source_id, je.status,
+              je.branch_id, b.name AS branch_name,
+              COALESCE((SELECT SUM(debit) FROM journal_entry_lines WHERE journal_entry_id = je.id), 0) AS total_amount
+       FROM journal_entries je
+       LEFT JOIN branches b ON b.id = je.branch_id
+       WHERE ($1::date IS NULL OR je.entry_date >= $1)
+         AND ($2::date IS NULL OR je.entry_date <= $2)
+         AND ($3::int IS NULL OR je.branch_id = $3)
+         AND ($4::text IS NULL OR je.source_type = $4)
+         AND ($5::text IS NULL OR je.status = $5)
+       ORDER BY je.entry_date DESC, je.id DESC LIMIT 1000`,
+      [req.query.from || null, req.query.to || null, branchId, sourceType || null, status || null]
+    );
+    const bySourceType = {};
+    for (const r of result.rows) {
+      bySourceType[r.source_type] = bySourceType[r.source_type] || { count: 0, total: 0 };
+      bySourceType[r.source_type].count += 1;
+      bySourceType[r.source_type].total += Number(r.total_amount);
+    }
+    res.json({
+      entries: result.rows.map((r) => ({
+        id: r.id, entryNumber: r.entry_number, entryDate: r.entry_date, description: r.description,
+        sourceType: r.source_type, sourceId: r.source_id, status: r.status,
+        branchId: r.branch_id, branchName: r.branch_name, totalAmount: Number(r.total_amount),
+      })),
+      count: result.rows.length,
+      bySourceType,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/profit-and-loss?from=&to=&year=&month=&branchId= - قائمة دخل من دفتر الأستاذ
+// (منفصلة عن /income-statement التشغيلي الأقدم فوق - قارن الاتنين عن طريق accounting-reconciliation)
+router.get("/profit-and-loss", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const rows = await fetchPostedLines({ from: range.from, to: range.to, branchId });
+    res.json({ from: range.from, to: range.to, branchId, ...foldProfitAndLoss(rows) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/branch-profit-and-loss?from=&to=&year=&month= - مقارنة قائمة دخل كل الفروع (من دفتر
+// الأستاذ) - أدمن/محاسب بس (زي income-statement/by-branch بالظبط لنفس السبب: مقارنة بين فروع تانية)
+router.get("/branch-profit-and-loss", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  try {
+    const rows = await fetchPostedLines({ from: range.from, to: range.to });
+    const byBranch = {};
+    rows.forEach((r) => { const k = r.branch_id || "unassigned"; (byBranch[k] = byBranch[k] || []).push(r); });
+    const branchesRes = await pool.query("SELECT id, name FROM branches");
+    const names = {};
+    branchesRes.rows.forEach((b) => { names[b.id] = b.name; });
+
+    const branches = Object.entries(byBranch).map(([key, branchRows]) => ({
+      branchId: key === "unassigned" ? null : Number(key),
+      branchName: key === "unassigned" ? "غير محدد" : (names[key] || `فرع ${key}`),
+      ...foldProfitAndLoss(branchRows),
+    })).sort((a, b) => b.netSales - a.netSales);
+
+    res.json({ from: range.from, to: range.to, branches, consolidated: foldProfitAndLoss(rows) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// عامل مشترك لتقارير "مقياس واحد لكل الفروع" (إيراد/تكلفة بضاعة/مصروفات تشغيل) - نفس منطق
+// branch-profit-and-loss بس مركّز على رقم واحد بس عشان الشاشة تكون أبسط
+function makeByBranchMetricReport(metricKey) {
+  return async (req, res) => {
+    const range = resolveDateRange(req.query);
+    if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+    try {
+      const rows = await fetchPostedLines({ from: range.from, to: range.to });
+      const byBranch = {};
+      rows.forEach((r) => { const k = r.branch_id || "unassigned"; (byBranch[k] = byBranch[k] || []).push(r); });
+      const branchesRes = await pool.query("SELECT id, name FROM branches");
+      const names = {};
+      branchesRes.rows.forEach((b) => { names[b.id] = b.name; });
+
+      const branches = Object.entries(byBranch).map(([key, branchRows]) => {
+        const pl = foldProfitAndLoss(branchRows);
+        return {
+          branchId: key === "unassigned" ? null : Number(key),
+          branchName: key === "unassigned" ? "غير محدد" : (names[key] || `فرع ${key}`),
+          [metricKey]: pl[metricKey],
+          ...(metricKey === "opex" ? { opexLines: pl.opexLines } : {}),
+        };
+      }).sort((a, b) => b[metricKey] - a[metricKey]);
+
+      res.json({ from: range.from, to: range.to, branches, total: branches.reduce((s, b) => s + b[metricKey], 0) });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+}
+// GET /api/reports/revenue-by-branch?from=&to=&year=&month=
+router.get("/revenue-by-branch", requireAuth, requireRole("admin", "accountant"), makeByBranchMetricReport("netSales"));
+// GET /api/reports/cogs-by-branch?from=&to=&year=&month=
+router.get("/cogs-by-branch", requireAuth, requireRole("admin", "accountant"), makeByBranchMetricReport("cogs"));
+// GET /api/reports/opex-by-branch?from=&to=&year=&month=
+router.get("/opex-by-branch", requireAuth, requireRole("admin", "accountant"), makeByBranchMetricReport("opex"));
+
+// GET /api/reports/cash-report?asOf=&branchId= - أرصدة حسابات الكاش (المركزي + كل فرع) حتى تاريخ معيّن
+router.get("/cash-report", requireAuth, canSeeAccounting, async (req, res) => {
+  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const accountsRes = await pool.query(
+      `WITH filtered_lines AS (
+         SELECT jel.account_id, jel.debit, jel.credit
+         FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
+         WHERE je.status <> 'DRAFT' AND je.entry_date <= $1
+       )
+       SELECT a.id, a.code, a.name, a.branch_id,
+              COALESCE(SUM(fl.debit),0) - COALESCE(SUM(fl.credit),0) AS balance
+       FROM accounts a
+       LEFT JOIN filtered_lines fl ON fl.account_id = a.id
+       WHERE (a.code = '1100' OR a.code LIKE '1100-%')
+         AND ($2::int IS NULL OR a.branch_id = $2)
+       GROUP BY a.id, a.code, a.name, a.branch_id
+       ORDER BY a.code`,
+      [asOf, branchId]
+    );
+    const accounts = accountsRes.rows.map((r) => ({
+      accountId: r.id, code: r.code, name: r.name, branchId: r.branch_id, balance: Number(r.balance),
+    }));
+    res.json({ asOf, branchId, accounts, totalCash: accounts.reduce((s, a) => s + a.balance, 0) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/supplier-balances?includeZero=true - رصيد كل مورد (مدين/دائن) من سطور حساب 2100
+// المرتبطة بيه - بديل تجميعي لـGET /api/supplier-payments/balance/:id اللي بيجيب مورد واحد بس
+router.get("/supplier-balances", requireAuth, canSeeSupplierAccounting, async (req, res) => {
+  const includeZero = req.query.includeZero === "true";
+  try {
+    const result = await pool.query(
+      `WITH ap_lines AS (
+         SELECT jel.reference_id AS supplier_id, jel.debit, jel.credit
+         FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
+         WHERE jel.reference_type = 'supplier' AND je.status <> 'DRAFT'
+       )
+       SELECT s.id, s.name, s.status,
+              COALESCE(SUM(al.credit),0) - COALESCE(SUM(al.debit),0) AS balance
+       FROM suppliers s
+       LEFT JOIN ap_lines al ON al.supplier_id = s.id
+       GROUP BY s.id, s.name, s.status
+       ORDER BY balance DESC`
+    );
+    const rows = result.rows
+      .map((r) => ({ supplierId: r.id, supplierName: r.name, status: r.status, balance: Number(r.balance) }))
+      .filter((r) => includeZero || Math.abs(r.balance) > 0.0001);
+    res.json({ suppliers: rows, totalOutstanding: rows.reduce((s, r) => s + r.balance, 0) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/ap-aging?asOf= - أعمار ديون الموردين (Accounts Payable Aging) - FIFO بين
+// الفواتير (GRN) والسدادات لكل مورد، مقسّمة على 0-30/31-60/61-90/90+ يوم
+router.get("/ap-aging", requireAuth, canSeeSupplierAccounting, async (req, res) => {
+  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  try {
+    const result = await pool.query(
+      `SELECT jel.reference_id AS supplier_id, s.name AS supplier_name, je.entry_date, jel.debit, jel.credit
+       FROM journal_entry_lines jel
+       JOIN journal_entries je ON je.id = jel.journal_entry_id
+       JOIN suppliers s ON s.id = jel.reference_id
+       WHERE jel.reference_type = 'supplier' AND je.status <> 'DRAFT' AND je.entry_date <= $1
+       ORDER BY jel.reference_id, je.entry_date, jel.id`,
+      [asOf]
+    );
+    const suppliers = computeApAgingBuckets(result.rows, asOf);
+    const totals = suppliers.reduce((acc, b) => ({
+      current: acc.current + b.current, days31to60: acc.days31to60 + b.days31to60,
+      days61to90: acc.days61to90 + b.days61to90, over90: acc.over90 + b.over90, total: acc.total + b.total,
+    }), { current: 0, days31to60: 0, days61to90: 0, over90: 0, total: 0 });
+    res.json({ asOf, suppliers, totals });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/accounting-expense-report?from=&to=&year=&month=&branchId= - المصروفات (EXPENSE)
+// من دفتر الأستاذ مجمّعة حسب الحساب - نسخة محاسبية من /expenses-report التشغيلي فوق (ده مصدره جدول
+// expenses مباشرة، ده مصدره القيود المرحّلة بس، وبيشمل أي قيد مصروف حتى لو معمول يدوي)
+router.get("/accounting-expense-report", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const result = await pool.query(
+      `SELECT a.code, a.name,
+              COALESCE(SUM(jel.debit),0) - COALESCE(SUM(jel.credit),0) AS total
+       FROM journal_entry_lines jel
+       JOIN journal_entries je ON je.id = jel.journal_entry_id
+       JOIN accounts a ON a.id = jel.account_id AND a.account_type = 'EXPENSE'
+       WHERE je.status <> 'DRAFT' AND je.entry_date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR jel.branch_id = $3)
+       GROUP BY a.code, a.name
+       ORDER BY total DESC`,
+      [range.from, range.to, branchId]
+    );
+    const lines = result.rows.map((r) => ({ code: r.code, name: r.name, total: Number(r.total) }));
+    res.json({ from: range.from, to: range.to, branchId, lines, total: lines.reduce((s, l) => s + l.total, 0) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/sales-by-payment-method?from=&to=&year=&month=&branchId= - إجمالي المبيعات مقسّمة
+// حسب حساب التحصيل (كاش/بنك/عملاء/تطبيقات توصيل) - مأخوذة من مدين قيد البيع نفسه، مش من عمود مستقل
+router.get("/sales-by-payment-method", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const result = await pool.query(
+      `SELECT a.code, a.name, COALESCE(SUM(jel.debit),0) AS total, COUNT(DISTINCT je.source_id) AS order_count
+       FROM journal_entry_lines jel
+       JOIN journal_entries je ON je.id = jel.journal_entry_id
+       JOIN accounts a ON a.id = jel.account_id AND a.account_type = 'ASSET'
+       WHERE je.status <> 'DRAFT' AND je.source_type = 'order_sale' AND jel.debit > 0
+         AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR jel.branch_id = $3)
+       GROUP BY a.code, a.name
+       ORDER BY total DESC`,
+      [range.from, range.to, branchId]
+    );
+    const lines = result.rows.map((r) => ({ code: r.code, name: r.name, total: Number(r.total), orderCount: Number(r.order_count) }));
+    res.json({ from: range.from, to: range.to, branchId, lines, total: lines.reduce((s, l) => s + l.total, 0) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/delivery-app-settlement?from=&to=&year=&month=&branchId= - تسوية تطبيقات التوصيل:
+// المبيعات الإجمالية زي ما هي (من غير خصم عمولة) + عمولة منفصلة (لو اتسجلت كمصروف على حساب 6600) +
+// الرصيد المستحق حاليًا على التطبيقات (1350) - العمولة ماتخصمش من الإيراد أبدًا، بتظهر كمصروف مستقل
+router.get("/delivery-app-settlement", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const grossRes = await pool.query(
+      `SELECT o.source, COUNT(DISTINCT o.id) AS order_count, COALESCE(SUM(jel.debit),0) AS gross_amount
+       FROM journal_entry_lines jel
+       JOIN journal_entries je ON je.id = jel.journal_entry_id
+       JOIN accounts a ON a.id = jel.account_id AND a.code = '1350'
+       JOIN orders o ON o.id = je.source_id
+       WHERE je.source_type = 'order_sale' AND je.status <> 'DRAFT'
+         AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR je.branch_id = $3)
+       GROUP BY o.source
+       ORDER BY gross_amount DESC`,
+      [range.from, range.to, branchId]
+    );
+    const commissionRes = await pool.query(
+      `SELECT COALESCE(SUM(jel.debit),0) - COALESCE(SUM(jel.credit),0) AS commission
+       FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
+       JOIN accounts a ON a.id = jel.account_id AND a.code = '6600'
+       WHERE je.status <> 'DRAFT' AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR jel.branch_id = $3)`,
+      [range.from, range.to, branchId]
+    );
+    const outstandingRes = await pool.query(
+      `WITH filtered_lines AS (
+         SELECT jel.debit, jel.credit FROM journal_entry_lines jel
+         JOIN journal_entries je ON je.id = jel.journal_entry_id
+         JOIN accounts a ON a.id = jel.account_id AND a.code = '1350'
+         WHERE je.status <> 'DRAFT' AND je.entry_date <= $1 AND ($2::int IS NULL OR jel.branch_id = $2)
+       )
+       SELECT COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS balance FROM filtered_lines`,
+      [range.to, branchId]
+    );
+    const bySource = grossRes.rows.map((r) => ({ source: r.source, orderCount: Number(r.order_count), grossAmount: Number(r.gross_amount) }));
+    const grossTotal = bySource.reduce((s, r) => s + r.grossAmount, 0);
+    const commissionExpense = Number(commissionRes.rows[0].commission);
+    res.json({
+      from: range.from, to: range.to, branchId,
+      bySource, grossTotal, commissionExpense, netSettlement: grossTotal - commissionExpense,
+      outstandingReceivable: Number(outstandingRes.rows[0].balance),
+      note: "المبيعات هنا إجمالية زي ما هي من غير خصم عمولة التطبيق - العمولة ظاهرة كمصروف منفصل (حساب 6600) لو اتسجلت، مش متخصومة من الإيراد",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/gross-profit?from=&to=&year=&month=&branchId=
+router.get("/gross-profit", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const pl = foldProfitAndLoss(await fetchPostedLines({ from: range.from, to: range.to, branchId }));
+    res.json({
+      from: range.from, to: range.to, branchId,
+      netSales: pl.netSales, cogs: pl.cogs, grossProfit: pl.grossProfit, grossMarginPercent: pl.grossMarginPercent,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/net-operating-profit?from=&to=&year=&month=&branchId=
+router.get("/net-operating-profit", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const pl = foldProfitAndLoss(await fetchPostedLines({ from: range.from, to: range.to, branchId }));
+    res.json({
+      from: range.from, to: range.to, branchId,
+      grossProfit: pl.grossProfit, opex: pl.opex, operatingProfit: pl.operatingProfit,
+      operatingMarginPercent: pl.operatingMarginPercent,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/accounting-reconciliation?year=&month=&branchId= - مقارنة دفتر الأستاذ الرسمي
+// بمصادر البيانات التشغيلية المستقلة (income-statement القديم، جلسات الكاش اليومية، قيمة المخزون
+// الفعلية، استلام البضاعة، سداد الموردين) - أي فرق (drift) لازم يظهر هنا صراحة، مفيش دمج أو "تصحيح"
+// تلقائي بين المصدرين. أدمن/محاسب بس (بيغطي كل الفروع مع بعض عادةً)
+router.get("/accounting-reconciliation", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
+  const year = Number(req.query.year);
+  const month = Number(req.query.month);
+  if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+  const branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  const from = `${year}-${String(month).padStart(2, "0")}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+  const round2 = (n) => Math.round(n * 100) / 100;
+
+  try {
+    const legacyByBranch = await computeRevenueAndCogsByBranch(year, month);
+    const legacyScoped = branchId ? legacyByBranch.filter((r) => r.branchId === branchId) : legacyByBranch;
+    const legacyRevenue = legacyScoped.reduce((s, r) => s + r.revenue, 0);
+    const legacyCogs = legacyScoped.reduce((s, r) => s + r.cogs, 0);
+
+    const pl = foldProfitAndLoss(await fetchPostedLines({ from, to, branchId }));
+
+    const cashSessionsRes = await pool.query(
+      `SELECT COALESCE(SUM(cash_sales),0) AS cash_sales
+       FROM daily_cash_sessions
+       WHERE business_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR branch_id = $3)`,
+      [from, to, branchId]
+    );
+    const ledgerCashFromSalesRes = await pool.query(
+      `SELECT COALESCE(SUM(jel.debit),0) AS cash_from_sales
+       FROM journal_entry_lines jel
+       JOIN journal_entries je ON je.id = jel.journal_entry_id
+       JOIN accounts a ON a.id = jel.account_id AND (a.code = '1100' OR a.code LIKE '1100-%')
+       WHERE je.status <> 'DRAFT' AND je.source_type = 'order_sale'
+         AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR je.branch_id = $3)`,
+      [from, to, branchId]
+    );
+
+    const physicalInventoryRes = await pool.query(
+      `SELECT COALESCE(SUM(bis.quantity * COALESCE(ii.unit_cost,0)),0) AS value
+       FROM branch_inventory_stock bis JOIN inventory_items ii ON ii.id = bis.inventory_item_id
+       WHERE bis.quantity <> 0 AND ($1::int IS NULL OR bis.branch_id = $1)`,
+      [branchId]
+    );
+    const ledgerInventoryRes = await pool.query(
+      `WITH filtered_lines AS (
+         SELECT jel.debit, jel.credit FROM journal_entry_lines jel
+         JOIN journal_entries je ON je.id = jel.journal_entry_id
+         JOIN accounts a ON a.id = jel.account_id AND a.code = '1400'
+         WHERE je.status <> 'DRAFT' AND je.entry_date <= $1 AND ($2::int IS NULL OR jel.branch_id = $2)
+       )
+       SELECT COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS balance FROM filtered_lines`,
+      [to, branchId]
+    );
+
+    const grnRes = await pool.query(
+      `SELECT COALESCE(SUM(jel.debit),0) AS grn_inventory_value
+       FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
+       JOIN accounts a ON a.id = jel.account_id AND a.code = '1400'
+       WHERE je.status <> 'DRAFT' AND je.source_type = 'goods_receipt'
+         AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR je.branch_id = $3)`,
+      [from, to, branchId]
+    );
+    const apCreditFromGrnRes = await pool.query(
+      `SELECT COALESCE(SUM(jel.credit),0) AS ap_credit
+       FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
+       WHERE jel.reference_type = 'supplier' AND je.status <> 'DRAFT' AND je.source_type = 'goods_receipt'
+         AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR je.branch_id = $3)`,
+      [from, to, branchId]
+    );
+
+    const supplierPaymentsRes = await pool.query(
+      `SELECT COALESCE(SUM(amount),0) AS total FROM supplier_payments
+       WHERE payment_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR branch_id = $3)`,
+      [from, to, branchId]
+    );
+    const apDebitFromPaymentsRes = await pool.query(
+      `SELECT COALESCE(SUM(jel.debit),0) AS ap_debit
+       FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
+       WHERE jel.reference_type = 'supplier' AND je.status <> 'DRAFT' AND je.source_type = 'supplier_payment'
+         AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR je.branch_id = $3)`,
+      [from, to, branchId]
+    );
+
+    const checks = [
+      {
+        name: "المبيعات (الإيراد): التقرير التشغيلي income-statement مقابل صافي المبيعات في دفتر الأستاذ",
+        operational: round2(legacyRevenue), ledger: round2(pl.netSales), diff: round2(legacyRevenue - pl.netSales),
+      },
+      {
+        name: "تكلفة البضاعة المباعة: التقرير التشغيلي income-statement مقابل دفتر الأستاذ",
+        operational: round2(legacyCogs), ledger: round2(pl.cogs), diff: round2(legacyCogs - pl.cogs),
+      },
+      {
+        name: "الكاش: مبيعات الكاش في جلسات الكاش اليومية مقابل مدين حسابات الكاش من قيود البيع في دفتر الأستاذ",
+        operational: round2(Number(cashSessionsRes.rows[0].cash_sales)),
+        ledger: round2(Number(ledgerCashFromSalesRes.rows[0].cash_from_sales)),
+        diff: round2(Number(cashSessionsRes.rows[0].cash_sales) - Number(ledgerCashFromSalesRes.rows[0].cash_from_sales)),
+      },
+      {
+        name: "المخزون: القيمة الفعلية الحالية (الكمية × آخر تكلفة) مقابل رصيد حساب المخزون 1400 (فرق متوقع لو اتغيرت تكلفة صنف بعد حركات سابقة - للمراجعة فقط)",
+        operational: round2(Number(physicalInventoryRes.rows[0].value)),
+        ledger: round2(Number(ledgerInventoryRes.rows[0].balance)),
+        diff: round2(Number(physicalInventoryRes.rows[0].value) - Number(ledgerInventoryRes.rows[0].balance)),
+      },
+      {
+        name: "استلام البضاعة (GRN): قيمة المخزون الداخلة مقابل رصيد الموردين الدائن من نفس سندات الاستلام",
+        operational: round2(Number(grnRes.rows[0].grn_inventory_value)),
+        ledger: round2(Number(apCreditFromGrnRes.rows[0].ap_credit)),
+        diff: round2(Number(grnRes.rows[0].grn_inventory_value) - Number(apCreditFromGrnRes.rows[0].ap_credit)),
+      },
+      {
+        name: "سداد الموردين: جدول supplier_payments مقابل مدين حساب الموردين في دفتر الأستاذ",
+        operational: round2(Number(supplierPaymentsRes.rows[0].total)),
+        ledger: round2(Number(apDebitFromPaymentsRes.rows[0].ap_debit)),
+        diff: round2(Number(supplierPaymentsRes.rows[0].total) - Number(apDebitFromPaymentsRes.rows[0].ap_debit)),
+      },
+    ].map((c) => ({ ...c, matched: Math.abs(c.diff) < 0.01 }));
+
+    res.json({ year, month, branchId, checks, allMatched: checks.every((c) => c.matched) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -6,6 +6,7 @@ const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement, consumeFromBatches } = require("../db/inventory-ledger");
 const { explodeRecipeConsumption, computeRecipeCost } = require("../db/recipe-engine");
+const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
 
 // POST /api/production - أمر تصنيع جديد (DRAFT) - بياخد الوصفة من النسخة النشطة حاليًا للصنف الناتج
 // {branchId, recipeId, plannedQuantity, productionDate?, batchNumber?, expiryDate?, notes?}
@@ -207,6 +208,39 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
         `INSERT INTO production_order_batches (production_order_id, role, inventory_item_id, batch_id, quantity) VALUES ($1,'output',$2,$3,$4)`,
         [order.id, outputItemId, batchId, actualQuantity]
       );
+    }
+
+    // المرحلة 4B: التصنيع بيحوّل قيمة داخل نفس حساب المخزون المشترك 1400 (خام → تام) - مدين المنتج
+    // التام / دائن المكونات المستهلكة (المكونات اتخصمت فعليًا وقت /start عبر postInventoryMovement، بس
+    // القيد المحاسبي بيترحّل هنا مرة واحدة عند الإكمال). أي فرق بين قيمة المستهلك والمنتج (Yield Variance)
+    // بيتقفل على 5300 عشان القيد يفضل متزن دايمًا مهما كان الفرق
+    const rawCostRes = await client.query(
+      `SELECT COALESCE(SUM(total_cost),0) AS raw_cost, BOOL_OR(total_cost IS NULL) AS incomplete
+       FROM inventory_movements WHERE reference_type = 'production_order' AND reference_id = $1 AND movement_type = 'PRODUCTION_OUT'`,
+      [order.id]
+    );
+    const rawMaterialValue = Number(rawCostRes.rows[0].raw_cost);
+    const rawIncomplete = rawCostRes.rows[0].incomplete;
+    const finishedGoodsValue = unitCost != null ? Number(unitCost) * Number(actualQuantity) : 0;
+
+    if (rawMaterialValue > 0 || finishedGoodsValue > 0) {
+      const inventoryAccount = await getAccountByCode(client, "1400");
+      const varianceAccount = await getAccountByCode(client, "5300");
+      const incompleteNote = rawIncomplete || costInfo.incomplete ? " (تكلفة جزئية - بيانات ناقصة)" : "";
+      const entryLines = [];
+      if (finishedGoodsValue > 0) entryLines.push({ accountId: inventoryAccount.id, debit: finishedGoodsValue, description: "إنتاج - إضافة المنتج التام للمخزون" });
+      if (rawMaterialValue > 0) entryLines.push({ accountId: inventoryAccount.id, credit: rawMaterialValue, description: "إنتاج - خصم مكونات مستهلكة" });
+      const varianceAmount = finishedGoodsValue - rawMaterialValue;
+      if (varianceAmount > 0.0000001) {
+        entryLines.push({ accountId: varianceAccount.id, credit: varianceAmount, description: `فرق تكلفة إنتاج${incompleteNote}` });
+      } else if (varianceAmount < -0.0000001) {
+        entryLines.push({ accountId: varianceAccount.id, debit: -varianceAmount, description: `فرق تكلفة إنتاج${incompleteNote}` });
+      }
+      await postJournalEntry(client, {
+        entryDate: new Date().toISOString().slice(0, 10), description: `تصنيع - أمر #${order.id}`,
+        sourceType: "production_order", sourceId: order.id, branchId: order.branch_id,
+        lines: entryLines, idempotencyKey: `production-complete-${order.id}`, userId: req.user.id,
+      });
     }
 
     const updated = await client.query(
