@@ -8,7 +8,8 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
-const { postJournalEntry, reverseJournalEntry, ensurePeriodOpen } = require("../db/accounting-engine");
+const { postJournalEntry, reverseJournalEntry, ensurePeriodOpen, getAccountByCode } = require("../db/accounting-engine");
+const { toCents } = require("../services/payroll-engine");
 
 // ---------------- شجرة الحسابات ----------------
 
@@ -260,6 +261,127 @@ router.post("/periods/:year/:month/close", requireAuth, requireRole("admin"), re
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------- الميزانية العمومية وقفل السنة المالية ----------------
+
+// GET /api/accounting/fiscal-year-closings
+router.get("/fiscal-year-closings", requireAuth, requirePermission("accounting.view"), async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM fiscal_year_closings ORDER BY year DESC");
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/accounting/fiscal-year-closings - أدمن بس - {year}. بيتطلب كل شهور السنة CLOSED الأول،
+// بيحسب صافي الربح (كل حسابات REVENUE/COGS/EXPENSE المتحركة في السنة) وبيقفلها بقيد واحد يصفّر كل حساب
+// من دول على 3200 (أرباح مرحّلة). القيد بيتسجل بتاريخ أول يوم في السنة الجاية (مش آخر يوم في السنة
+// المقفولة) عشان ديسمبر المقفول أصلًا هيرفض أي قيد جديد عليه (ensurePeriodOpen) - نفس فلسفة "تصحيح بعد
+// القفل بيتسجل في الشهر المفتوح الحالي، مش بإعادة فتح القديم". مفيش endpoint مخصّص لعكس قفل سنة (زي
+// إعادة فتح شهر) عمدًا - القيد نفسه يقدر يتعكس بالطريقة العامة (journal-entries/:id/reverse، أدمن بس)
+// في حالة نادرة جدًا (قفل غلط)، لكن ده مش الطريق المتوقع - التصحيح الطبيعي بعد القفل قيد جديد في السنة
+// المفتوحة الحالية، مش عكس القفل نفسه
+router.post("/fiscal-year-closings", requireAuth, requireRole("admin"), requirePermission("accounting.close_year"), async (req, res) => {
+  const year = Number(req.body.year);
+  if (!year) return res.status(400).json({ error: "لازم تحدد السنة" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const already = await client.query("SELECT id FROM fiscal_year_closings WHERE year = $1 FOR UPDATE", [year]);
+    if (already.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: `السنة ${year} مقفولة بالفعل` });
+    }
+
+    const periods = await client.query("SELECT month, status FROM accounting_periods WHERE year = $1", [year]);
+    const closedMonths = new Set(periods.rows.filter((p) => p.status === "CLOSED").map((p) => p.month));
+    const missing = [];
+    for (let m = 1; m <= 12; m++) if (!closedMonths.has(m)) missing.push(m);
+    if (missing.length > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: `لازم كل شهور سنة ${year} تكون مقفولة الأول - الشهور [${missing.join(", ")}] لسه مفتوحة` });
+    }
+
+    const linesRes = await client.query(
+      `SELECT a.id, a.code, a.name, a.account_type,
+              COALESCE(SUM(jel.debit),0) AS total_debit, COALESCE(SUM(jel.credit),0) AS total_credit
+       FROM journal_entry_lines jel
+       JOIN journal_entries je ON je.id = jel.journal_entry_id
+       JOIN accounts a ON a.id = jel.account_id
+       WHERE je.status <> 'DRAFT' AND je.source_type <> 'year_end_closing'
+         AND EXTRACT(YEAR FROM je.entry_date) = $1
+         AND a.account_type IN ('REVENUE', 'COGS', 'EXPENSE')
+       GROUP BY a.id, a.code, a.name, a.account_type`,
+      [year]
+    );
+
+    const retainedEarnings = await getAccountByCode(client, "3200");
+
+    // كل مبلغ بيتحسب بوحدة قروش صحيحة (toCents) مرة واحدة بس لكل حساب - نفس أسلوب المرحلة 4C اللي
+    // اتحل بيه باج فارق كسور عشري كان بيرفض القيد كـ"غير متزن" - جمع أرقام عشرية JS خام في حلقة بيراكم
+    // خطأ تمثيل ثنائي بسيط لكن كافي إن مجموع المدين ميساويش مجموع الدائن بالظبط وقت التحقق في القاعدة
+    const closingLines = [];
+    let netIncomeCents = 0;
+    for (const r of linesRes.rows) {
+      const debit = Number(r.total_debit);
+      const credit = Number(r.total_credit);
+      const rawBalance = r.account_type === "REVENUE" ? credit - debit : debit - credit;
+      const balanceCents = toCents(rawBalance);
+      if (balanceCents === 0) continue;
+      const balance = balanceCents / 100;
+      const desc = `إقفال ${r.name} - سنة ${year}`;
+      if (r.account_type === "REVENUE") {
+        netIncomeCents += balanceCents;
+        if (balanceCents > 0) closingLines.push({ accountId: r.id, debit: balance, credit: 0, description: desc });
+        else closingLines.push({ accountId: r.id, debit: 0, credit: -balance, description: desc });
+      } else {
+        netIncomeCents -= balanceCents;
+        if (balanceCents > 0) closingLines.push({ accountId: r.id, debit: 0, credit: balance, description: desc });
+        else closingLines.push({ accountId: r.id, debit: -balance, credit: 0, description: desc });
+      }
+    }
+
+    if (closingLines.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: `مفيش حركة محاسبية مسجّلة على سنة ${year} أصلًا - مفيش حاجة تتقفل` });
+    }
+
+    const netIncome = netIncomeCents / 100;
+    if (netIncomeCents > 0) {
+      closingLines.push({ accountId: retainedEarnings.id, debit: 0, credit: netIncome, description: `صافي ربح سنة ${year} → أرباح مرحّلة` });
+    } else if (netIncomeCents < 0) {
+      closingLines.push({ accountId: retainedEarnings.id, debit: -netIncome, credit: 0, description: `صافي خسارة سنة ${year} → أرباح مرحّلة` });
+    }
+
+    const entryDate = `${year + 1}-01-01`;
+    const result = await postJournalEntry(client, {
+      entryDate, description: `قيد إقفال سنة مالية ${year}`, sourceType: "year_end_closing",
+      lines: closingLines, userId: req.user.id, autoPost: true, idempotencyKey: `year-end-closing-${year}`,
+    });
+
+    const closing = await client.query(
+      `INSERT INTO fiscal_year_closings (year, net_income, closed_by, journal_entry_id) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [year, netIncome, req.user.id, result.entry.id]
+    );
+
+    await logAudit(client, {
+      userId: req.user.id, action: "FISCAL_YEAR_CLOSED", entityType: "fiscal_year_closing", entityId: closing.rows[0].id,
+      metadata: { year, netIncome, journalEntryId: result.entry.id }, req,
+    });
+
+    await client.query("COMMIT");
+    res.status(201).json({ ...closing.rows[0], journalEntry: result.entry });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (err.code === "23505") return res.status(409).json({ error: `السنة ${year} مقفولة بالفعل` });
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

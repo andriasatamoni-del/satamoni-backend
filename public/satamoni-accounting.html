@@ -97,6 +97,7 @@
     <div class="tabbtn" data-tab="ledgerpl">قائمة الدخل (الدفتر)</div>
     <div class="tabbtn" data-tab="ap">الموردون والمدفوعات</div>
     <div class="tabbtn" data-tab="recon">المطابقة والفترات</div>
+    <div class="tabbtn" data-tab="balance">الميزانية العمومية</div>
   </div>
 
   <!-- المصروفات -->
@@ -437,7 +438,32 @@
         <div class="err" id="periodsErr"></div>
       </div>
       <table><thead><tr><th>السنة</th><th>الشهر</th><th>الحالة</th></tr></thead><tbody id="periodsBody"></tbody></table>
+
+      <h1>قفل سنة مالية</h1>
+      <div style="font-size:11px;color:var(--faint);margin-bottom:10px">بيتطلب كل شهور السنة تكون مقفولة فوق الأول. بيرحّل صافي ربح/خسارة السنة (إيرادات - تكلفة بضاعة - مصروفات) لحساب الأرباح المرحّلة (3200) بقيد واحد - إجراء نهائي، مفيش زرار "إعادة فتح".</div>
+      <div class="formbox">
+        <div class="row"><select id="fycYear"></select><button id="fycCloseBtn">قفل السنة</button></div>
+        <div class="err" id="fycErr"></div>
+      </div>
+      <table><thead><tr><th>السنة</th><th>صافي الربح/الخسارة</th><th>تاريخ القفل</th></tr></thead><tbody id="fycBody"></tbody></table>
     </div>
+  </div>
+
+  <!-- الميزانية العمومية -->
+  <div class="panel" id="panel-balance">
+    <h1>الميزانية العمومية</h1>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">صافي ربح السنة الحالية (غير المقفولة بعد) بيظهر كسطر محسوب لحظيًا جوه حقوق الملكية - مش مخزّن، بيتحدّث تلقائي مع أي قيد جديد.</div>
+    <div class="formbox">
+      <div class="row"><input id="bsAsOf" type="date" /><button id="bsRefresh">تحديث</button></div>
+      <div class="err" id="bsErr"></div>
+      <div class="ok" id="bsStatus"></div>
+    </div>
+    <h1 style="font-size:15px">الأصول</h1>
+    <table><thead><tr><th>الكود</th><th>الحساب</th><th>الرصيد</th></tr></thead><tbody id="bsAssetsBody"></tbody></table>
+    <h1 style="font-size:15px">الخصوم</h1>
+    <table><thead><tr><th>الكود</th><th>الحساب</th><th>الرصيد</th></tr></thead><tbody id="bsLiabilitiesBody"></tbody></table>
+    <h1 style="font-size:15px">حقوق الملكية</h1>
+    <table><thead><tr><th>الكود</th><th>الحساب</th><th>الرصيد</th></tr></thead><tbody id="bsEquityBody"></tbody></table>
   </div>
 </div>
 
@@ -508,7 +534,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 
 // المرحلة 4B: التبويبات الجديدة بتتحمّل أول مرة تتفتح بس (مش وقت boot() زي التبويبات القديمة) - عشان
 // نتجنب نداءات مش لازمة لمدير فرع/محاسب لسه مفتحش التبويب ده أصلًا
-const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false };
+const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false, balance: false };
 function onTabOpen(tab) {
   if (tab === "coa" && !accountingTabLoaded.coa) { accountingTabLoaded.coa = true; loadAccountsForForms().then(loadTrialBalance); }
   if (tab === "journal" && !accountingTabLoaded.journal) { accountingTabLoaded.journal = true; loadAccountsForForms().then(loadJournalEntries); }
@@ -518,7 +544,9 @@ function onTabOpen(tab) {
     accountingTabLoaded.recon = true;
     if (auth.user.role !== "branch_manager") loadReconciliation();
     loadPeriods();
+    if (auth.user.role === "admin") loadFiscalYearClosings();
   }
+  if (tab === "balance" && !accountingTabLoaded.balance) { accountingTabLoaded.balance = true; loadBalanceSheet(); }
 }
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -528,7 +556,7 @@ function currentBranchId() { return document.getElementById("branchSelect").valu
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
-  ["expDate", "purDate", "cashDate", "ledgerDate", "tbAsOf", "agingAsOf"].forEach(id => document.getElementById(id).value = todayStr());
+  ["expDate", "purDate", "cashDate", "ledgerDate", "tbAsOf", "agingAsOf", "bsAsOf"].forEach(id => document.getElementById(id).value = todayStr());
   const firstOfMonth = todayStr().slice(0, 8) + "01";
   document.getElementById("plFrom").value = firstOfMonth;
   document.getElementById("plTo").value = todayStr();
@@ -543,6 +571,9 @@ async function boot() {
     // تقرير المطابقة بيغطي كل الفروع مع بعض عادةً (أدمن/محاسب بس) - نفس منطق branch-profit-and-loss
     document.getElementById("reconReportWrap").style.display = "none";
     document.getElementById("reconDeniedNote").style.display = "block";
+    // الميزانية العمومية مفهوم على مستوى الشركة كلها بطبيعتها (حقوق الملكية مش قابلة للتقسيم على فرع) -
+    // تبويب أدمن/محاسب بس، زي تبويب المطابقة بالظبط
+    document.querySelector('.tabbtn[data-tab="balance"]').style.display = "none";
   }
   if (auth.user.role === "admin") {
     document.getElementById("periodsAdmin").style.display = "block";
@@ -1103,7 +1134,7 @@ function populateReconSelectors() {
   const years = [];
   for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) years.push(y);
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
-  ["reconYear", "closeYear"].forEach(id => {
+  ["reconYear", "closeYear", "fycYear"].forEach(id => {
     const sel = document.getElementById(id);
     sel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join("");
     sel.value = now.getFullYear();
@@ -1150,6 +1181,45 @@ document.getElementById("closePeriodBtn").onclick = async () => {
     loadPeriods();
   } catch (e) { errBox.textContent = e.message; }
 };
+
+async function loadFiscalYearClosings() {
+  const closings = await api("/api/accounting/fiscal-year-closings");
+  document.getElementById("fycBody").innerHTML = closings.map(c => `
+    <tr>
+      <td>${c.year}</td>
+      <td class="${Number(c.net_income) < 0 ? "diffneg" : "diffpos"}">${money(c.net_income)}</td>
+      <td>${new Date(c.closed_at).toLocaleDateString("ar-EG")}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="3">مفيش سنة مالية مقفولة لسه</td></tr>`;
+}
+document.getElementById("fycCloseBtn").onclick = async () => {
+  const errBox = document.getElementById("fycErr");
+  errBox.textContent = "";
+  const year = document.getElementById("fycYear").value;
+  if (!confirm(`متأكد إنك عايز تقفل سنة ${year} ماليًا؟ إجراء نهائي وبيرحّل صافي الربح/الخسارة لحساب الأرباح المرحّلة.`)) return;
+  try {
+    await api("/api/accounting/fiscal-year-closings", { method: "POST", body: JSON.stringify({ year: Number(year) }) });
+    loadFiscalYearClosings();
+    loadPeriods();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+async function loadBalanceSheet() {
+  const errBox = document.getElementById("bsErr");
+  errBox.textContent = "";
+  try {
+    const asOf = document.getElementById("bsAsOf").value || todayStr();
+    const data = await api(`/api/reports/balance-sheet?${new URLSearchParams({ asOf })}`);
+    document.getElementById("bsStatus").textContent = data.balanced
+      ? `متزنة ✓ (أصول ${money(data.totalAssets)} = خصوم ${money(data.totalLiabilities)} + حقوق ملكية ${money(data.totalEquity)})`
+      : `غير متزنة! (أصول ${money(data.totalAssets)} ≠ خصوم+حقوق ملكية ${money(data.totalLiabilities + data.totalEquity)})`;
+    const row = (a) => `<tr><td>${a.code}</td><td>${a.name}${a.computed ? " (محسوب لحظيًا)" : ""}</td><td class="${a.balance < 0 ? "diffneg" : "diffpos"}">${money(a.balance)}</td></tr>`;
+    document.getElementById("bsAssetsBody").innerHTML = data.assets.map(row).join("") || `<tr><td colspan="3">مفيش أصول لحد التاريخ ده</td></tr>`;
+    document.getElementById("bsLiabilitiesBody").innerHTML = data.liabilities.map(row).join("") || `<tr><td colspan="3">مفيش خصوم لحد التاريخ ده</td></tr>`;
+    document.getElementById("bsEquityBody").innerHTML = data.equity.map(row).join("") || `<tr><td colspan="3">مفيش حقوق ملكية لحد التاريخ ده</td></tr>`;
+  } catch (e) { errBox.textContent = e.message; }
+}
+document.getElementById("bsRefresh").onclick = loadBalanceSheet;
 
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;

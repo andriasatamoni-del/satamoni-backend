@@ -1928,6 +1928,7 @@ async function fetchPostedLines({ from, to, branchId }) {
      JOIN journal_entries je ON je.id = jel.journal_entry_id
      JOIN accounts a ON a.id = jel.account_id
      WHERE je.status <> 'DRAFT'
+       AND je.source_type <> 'year_end_closing'
        AND ($1::date IS NULL OR je.entry_date >= $1)
        AND ($2::date IS NULL OR je.entry_date <= $2)
        AND ($3::int IS NULL OR jel.branch_id = $3)
@@ -2040,6 +2041,70 @@ router.get("/trial-balance", requireAuth, canSeeAccounting, async (req, res) => 
     const totalDebit = rows.reduce((s, r) => s + r.totalDebit, 0);
     const totalCredit = rows.reduce((s, r) => s + r.totalCredit, 0);
     res.json({ asOf, branchId, accounts: rows, totalDebit, totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/balance-sheet?asOf=&branchId= - الميزانية العمومية: أرصدة أصول/خصوم/حقوق ملكية حتى
+// تاريخ معيّن + سطر محسوب (مش مخزّن) لصافي ربح السنة الحالية غير المقفولة بعد (حساب 3300 المخصّص له في
+// الشجرة فضل فاضي عمدًا - محدش بيترحّل عليه حاجة، القيمة بتتحسب لحظيًا من قائمة الدخل بدل ما تتخزّن،
+// عشان توازن الأصول=الخصوم+حقوق الملكية يفضل صحيح أوتوماتيك في أي لحظة من غير قيد إقفال يومي). المدى
+// بيبدأ من أول يوم بعد آخر سنة مالية مقفولة (أو من الأول لو مفيش سنة اتقفلت خالص) لغاية asOf.
+// أدمن/محاسب بس (زي branch-profit-and-loss بالظبط) - مش مدير فرع: الميزانية العمومية مفهوم على مستوى
+// الشركة كلها مش الفرع (حقوق الملكية 3100/3200/3300 دايمًا branch_id=NULL بطبيعتها، زي حساب الرواتب
+// المستحقة 2400 اللي بيترحّل بقيد واحد مجمّع مش مقسّم على الفروع من المرحلة 4C) - فلترة الميزانية على
+// فرع واحد هتوريه "غير متزنة" غلط لأسباب مالها علاقة بأي خطأ فعلي، ده هيلخبط مدير الفرع من غير داعي
+router.get("/balance-sheet", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
+  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  try {
+    const balancesRes = await pool.query(
+      `WITH filtered_lines AS (
+         SELECT jel.account_id, jel.debit, jel.credit
+         FROM journal_entry_lines jel
+         JOIN journal_entries je ON je.id = jel.journal_entry_id
+         WHERE je.status <> 'DRAFT' AND je.entry_date <= $1
+           AND ($2::int IS NULL OR jel.branch_id = $2)
+       )
+       SELECT a.id, a.code, a.name, a.account_type,
+              COALESCE(SUM(fl.debit),0) AS total_debit, COALESCE(SUM(fl.credit),0) AS total_credit
+       FROM accounts a
+       LEFT JOIN filtered_lines fl ON fl.account_id = a.id
+       WHERE a.account_type IN ('ASSET', 'LIABILITY', 'EQUITY')
+       GROUP BY a.id, a.code, a.name, a.account_type
+       HAVING COALESCE(SUM(fl.debit),0) <> 0 OR COALESCE(SUM(fl.credit),0) <> 0
+       ORDER BY a.code`,
+      [asOf, branchId]
+    );
+    const toLine = (r) => {
+      const debit = Number(r.total_debit);
+      const credit = Number(r.total_credit);
+      const balance = r.account_type === "ASSET" ? debit - credit : credit - debit;
+      return { accountId: r.id, code: r.code, name: r.name, balance };
+    };
+    const assets = balancesRes.rows.filter((r) => r.account_type === "ASSET").map(toLine);
+    const liabilities = balancesRes.rows.filter((r) => r.account_type === "LIABILITY").map(toLine);
+    const equity = balancesRes.rows.filter((r) => r.account_type === "EQUITY").map(toLine);
+
+    const lastClosedRes = await pool.query("SELECT MAX(year) AS year FROM fiscal_year_closings");
+    const lastClosedYear = lastClosedRes.rows[0].year;
+    const pl = foldProfitAndLoss(await fetchPostedLines({
+      from: lastClosedYear ? `${Number(lastClosedYear) + 1}-01-01` : null, to: asOf, branchId,
+    }));
+    equity.push({
+      accountId: null, code: "3300", name: "صافي ربح السنة الحالية (غير مقفول)", balance: pl.operatingProfit, computed: true,
+    });
+
+    const totalAssets = assets.reduce((s, a) => s + a.balance, 0);
+    const totalLiabilities = liabilities.reduce((s, a) => s + a.balance, 0);
+    const totalEquity = equity.reduce((s, a) => s + a.balance, 0);
+
+    res.json({
+      asOf, branchId, assets, liabilities, equity,
+      totalAssets, totalLiabilities, totalEquity,
+      balanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2303,7 +2368,7 @@ router.get("/accounting-expense-report", requireAuth, canSeeAccounting, async (r
        FROM journal_entry_lines jel
        JOIN journal_entries je ON je.id = jel.journal_entry_id
        JOIN accounts a ON a.id = jel.account_id AND a.account_type = 'EXPENSE'
-       WHERE je.status <> 'DRAFT' AND je.entry_date BETWEEN $1 AND $2
+       WHERE je.status <> 'DRAFT' AND je.source_type <> 'year_end_closing' AND je.entry_date BETWEEN $1 AND $2
          AND ($3::int IS NULL OR jel.branch_id = $3)
        GROUP BY a.code, a.name
        ORDER BY total DESC`,
@@ -2365,7 +2430,8 @@ router.get("/delivery-app-settlement", requireAuth, canSeeAccounting, async (req
       `SELECT COALESCE(SUM(jel.debit),0) - COALESCE(SUM(jel.credit),0) AS commission
        FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
        JOIN accounts a ON a.id = jel.account_id AND a.code = '6600'
-       WHERE je.status <> 'DRAFT' AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR jel.branch_id = $3)`,
+       WHERE je.status <> 'DRAFT' AND je.source_type <> 'year_end_closing'
+         AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR jel.branch_id = $3)`,
       [range.from, range.to, branchId]
     );
     const outstandingRes = await pool.query(

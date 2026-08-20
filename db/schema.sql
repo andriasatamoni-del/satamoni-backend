@@ -1349,6 +1349,20 @@ CREATE UNIQUE INDEX idx_supplier_payments_idempotency_key ON supplier_payments(i
 CREATE INDEX idx_supplier_payments_supplier ON supplier_payments(supplier_id);
 CREATE INDEX idx_supplier_payments_branch ON supplier_payments(branch_id);
 
+-- قفل سنة مالية - يتطلب إن كل شهور السنة تكون CLOSED في accounting_periods الأول. بيعمل قيد إقفال واحد
+-- (source_type='year_end_closing') بيصفّر أرصدة حسابات الإيرادات/تكلفة البضاعة/المصروفات للسنة دي على
+-- 3200 (أرباح مرحّلة). غير قابل للعكس (reversal) عمدًا - أي تصحيح بعد القفل بيبقى بقيد تصحيحي في الشهر
+-- المفتوح الحالي، نفس فلسفة قفل الشهر. net_income هنا نسخة مخزّنة (snapshot) وقت القفل للعرض السريع في
+-- التقارير، مش مصدر الحقيقة - مصدر الحقيقة قيود journal_entries نفسها
+CREATE TABLE fiscal_year_closings (
+  id                SERIAL PRIMARY KEY,
+  year              INTEGER NOT NULL UNIQUE,
+  net_income        NUMERIC NOT NULL DEFAULT 0,
+  closed_by         INTEGER REFERENCES users(id),
+  closed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  journal_entry_id  INTEGER
+);
+
 -- expense_categories.account_id وexpenses.journal_entry_id اتعرّفوا قبل كدة في الملف - الـFKs بتتضاف
 -- هنا بعد ما accounts/journal_entries يتعرّفوا فعليًا
 ALTER TABLE expense_categories ADD CONSTRAINT fk_expense_categories_account FOREIGN KEY (account_id) REFERENCES accounts(id);
@@ -1356,6 +1370,8 @@ ALTER TABLE expenses ADD CONSTRAINT fk_expenses_journal_entry FOREIGN KEY (journ
 -- المرحلة 4C: payroll_runs/payroll_payments معرّفين قبل كدة في الملف (قسم الرواتب) - الـFK بتتضاف هنا
 ALTER TABLE payroll_runs ADD CONSTRAINT fk_payroll_runs_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
 ALTER TABLE payroll_payments ADD CONSTRAINT fk_payroll_payments_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
+-- الميزانية العمومية وقفل السنة المالية: fiscal_year_closings معرّف قبل كدة في الملف - الـFK بتتضاف هنا
+ALTER TABLE fiscal_year_closings ADD CONSTRAINT fk_fiscal_year_closings_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
 
 -- شجرة الحسابات الافتراضية لساتاموني - حسابات مشتركة على مستوى الشركة (branch_id = NULL). حسابات الكاش
 -- الفرعية (1100-N لكل فرع) بتتنشئ تلقائيًا أول مرة تتحتاج (db/accounting-engine.js) مش هنا، لأن الفروع
