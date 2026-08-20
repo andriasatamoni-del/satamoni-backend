@@ -87,6 +87,7 @@
     <div class="tabbtn" data-tab="attendance">البصمة (استيراد وتصحيح)</div>
     <div class="tabbtn" data-tab="manual">حضور المطبخ المركزي</div>
     <div class="tabbtn" data-tab="adjustments">السلف والجزاءات والمكافآت</div>
+    <div class="tabbtn" data-tab="runs">تشغيلات الرواتب</div>
   </div>
 
   <!-- ملخص الرواتب -->
@@ -239,6 +240,43 @@
       </table>
     </div>
   </div>
+
+  <!-- تشغيلات الرواتب (المرحلة 4C) -->
+  <div class="panel" id="panel-runs">
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">تشغيلة الرواتب "snapshot" ثابت من ملخص الرواتب المحسوب وقت الإنشاء - مش تقرير حي زي تبويب "ملخص الرواتب". الاعتماد بيرحّل قيد محاسبي تلقائي (مدين الرواتب 6100 مقسّم على الفروع / دائن رواتب مستحقة 2400)، وبعد كده تقدر تسجل سداد فعلي لكل موظف.</div>
+    <h1>إنشاء تشغيلة جديدة</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="runYear"></select>
+        <select id="runMonth"></select>
+        <button id="runCreateBtn">إنشاء تشغيلة (مسودة)</button>
+      </div>
+      <div class="err" id="runCreateErr"></div>
+      <div class="ok" id="runCreateOk"></div>
+    </div>
+
+    <h1>كل التشغيلات</h1>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>الشهر</th><th>الحالة</th><th>إجمالي الصافي</th><th></th></tr></thead>
+        <tbody id="runsListBody"></tbody>
+      </table>
+    </div>
+
+    <div id="runDetailWrap" style="display:none">
+      <h1>تفاصيل التشغيلة - <span id="runDetailLabel"></span></h1>
+      <div class="formbox">
+        <div class="row" id="runDetailActions"></div>
+        <div class="err" id="runDetailErr"></div>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>الموظف</th><th>الفرع</th><th>الصافي</th><th>المدفوع</th><th>المتبقي</th><th>سداد</th></tr></thead>
+          <tbody id="runDetailBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية أدمن/محاسب على الحساب ده.</div>
@@ -334,6 +372,7 @@ async function boot() {
   populatePeriodSelectors("attYear", "attMonth");
   populatePeriodSelectors("mkYear", "mkMonth");
   populatePeriodSelectors("adjFilterYear", "adjFilterMonth");
+  populatePeriodSelectors("runYear", "runMonth");
   document.getElementById("adjDate").value = todayStr();
 
   branchesCache = await api("/api/branches/all");
@@ -343,6 +382,7 @@ async function boot() {
   await loadEmployees();
   await loadSummary();
   await loadAdjustments();
+  await loadRunsList();
 }
 
 // ---------------- ملخص الرواتب ----------------
@@ -609,6 +649,109 @@ async function loadAdjustments() {
     btn.onclick = async () => {
       await api(`/api/payroll/adjustments/${btn.dataset.deladj}`, { method: "DELETE" });
       loadAdjustments();
+    };
+  });
+}
+
+// ---------------- تشغيلات الرواتب (المرحلة 4C) ----------------
+const RUN_STATUS_LABELS = { DRAFT: "مسودة", APPROVED: "معتمدة", CANCELLED: "ملغاة" };
+const RUN_STATUS_CLASS = { DRAFT: "", APPROVED: "diffpos", CANCELLED: "diffneg" };
+
+async function loadRunsList() {
+  const runs = await api("/api/payroll/runs");
+  document.getElementById("runsListBody").innerHTML = runs.map(r => `
+    <tr>
+      <td>${r.month}/${r.year}</td>
+      <td class="${RUN_STATUS_CLASS[r.status] || ""}">${RUN_STATUS_LABELS[r.status] || r.status}</td>
+      <td>${money(r.total_net_pay)}</td>
+      <td><button class="linkbtn" data-openrun="${r.id}">تفاصيل</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="4">لسه مفيش تشغيلات رواتب</td></tr>`;
+  document.querySelectorAll("[data-openrun]").forEach(btn => {
+    btn.onclick = () => openRunDetail(btn.dataset.openrun);
+  });
+}
+
+document.getElementById("runCreateBtn").onclick = async () => {
+  const errBox = document.getElementById("runCreateErr");
+  const okBox = document.getElementById("runCreateOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    const res = await api("/api/payroll/runs", {
+      method: "POST",
+      body: JSON.stringify({ year: Number(document.getElementById("runYear").value), month: Number(document.getElementById("runMonth").value) }),
+    });
+    okBox.textContent = res.duplicate
+      ? "التشغيلة دي موجودة بالفعل"
+      : `تم إنشاء التشغيلة (${res.employeeCount} موظف)` + (res.alerts.length ? ` - ⚠ ${res.alerts.length} تنبيه، راجعهم في "ملخص الرواتب" قبل الاعتماد` : "");
+    await loadRunsList();
+    await openRunDetail(res.id);
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+async function openRunDetail(runId) {
+  document.getElementById("runDetailWrap").style.display = "block";
+  const errBox = document.getElementById("runDetailErr");
+  errBox.textContent = "";
+  const data = await api(`/api/payroll/runs/${runId}`);
+  const run = data.run;
+  document.getElementById("runDetailLabel").textContent = `${run.month}/${run.year} - ${RUN_STATUS_LABELS[run.status] || run.status}`;
+
+  const actions = [];
+  if (run.status === "DRAFT") actions.push(`<button id="runApproveBtn">اعتماد التشغيلة (بيرحّل قيد محاسبي)</button>`);
+  if (run.status === "APPROVED" && auth.user.role === "admin") actions.push(`<button id="runCancelBtn" style="background:var(--bg-alt);border:1px solid var(--red);color:#F08A83">إلغاء التشغيلة</button>`);
+  document.getElementById("runDetailActions").innerHTML = actions.join("") || `<span style="font-size:12px;color:var(--faint)">مفيش إجراء متاح على التشغيلة دي حاليًا</span>`;
+
+  if (run.status === "DRAFT") {
+    document.getElementById("runApproveBtn").onclick = async () => {
+      errBox.textContent = "";
+      try { await api(`/api/payroll/runs/${runId}/approve`, { method: "POST" }); await openRunDetail(runId); await loadRunsList(); }
+      catch (e) { errBox.textContent = e.message; }
+    };
+  }
+  if (run.status === "APPROVED" && auth.user.role === "admin") {
+    document.getElementById("runCancelBtn").onclick = async () => {
+      const reason = prompt("سبب إلغاء التشغيلة؟");
+      if (!reason) return;
+      errBox.textContent = "";
+      try { await api(`/api/payroll/runs/${runId}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }); await openRunDetail(runId); await loadRunsList(); }
+      catch (e) { errBox.textContent = e.message; }
+    };
+  }
+
+  document.getElementById("runDetailBody").innerHTML = data.employees.map(e => {
+    const remaining = Number(e.net_pay) - Number(e.paid_amount);
+    const canPay = run.status === "APPROVED" && remaining > 0.001;
+    const branchOpts = branchesCache.map(b => `<option value="${b.id}" ${b.id === e.branch_id ? "selected" : ""}>${b.name}</option>`).join("");
+    return `
+      <tr>
+        <td>${e.employee_name}</td><td>${e.branch_name || "عام (إدارة/مطبخ مركزي)"}</td>
+        <td>${money(e.net_pay)}</td><td>${money(e.paid_amount)}</td>
+        <td class="${remaining > 0.001 ? "diffneg" : "diffpos"}">${money(remaining)}</td>
+        <td>${canPay ? `
+          <select class="smallinput pay-branch" style="width:110px">${branchOpts}</select>
+          <input class="smallinput pay-amount" type="number" value="${remaining.toFixed(2)}" style="width:80px" />
+          <button class="linkbtn" data-payemp="${e.id}">سداد</button>
+        ` : "—"}</td>
+      </tr>
+    `;
+  }).join("");
+
+  document.querySelectorAll("[data-payemp]").forEach(btn => {
+    btn.onclick = async () => {
+      const row = btn.closest("tr");
+      errBox.textContent = "";
+      try {
+        await api(`/api/payroll/runs/${runId}/payments`, {
+          method: "POST",
+          body: JSON.stringify({
+            payrollRunEmployeeId: btn.dataset.payemp,
+            branchId: row.querySelector(".pay-branch").value,
+            amount: Number(row.querySelector(".pay-amount").value),
+          }),
+        });
+        await openRunDetail(runId);
+      } catch (e) { errBox.textContent = e.message; }
     };
   });
 }

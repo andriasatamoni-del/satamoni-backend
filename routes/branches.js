@@ -15,8 +15,10 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET /api/branches/all - كل الفروع شاملة السنتر كيتشن (أدمن بس - لشاشات الإدارة)
-router.get("/all", requireAuth, requireRole("admin"), async (req, res) => {
+// GET /api/branches/all - كل الفروع شاملة السنتر كيتشن (أدمن ومحاسب - لشاشات الإدارة والرواتب.
+// محاسب مضاف عمدًا: satamoni-payroll.html بتاعت أدمن/محاسب الاتنين وبتحتاج السنتر كيتشن في سلكتور
+// الفرع لتسجيل بصمة/سداد رواتب موظفيه - قبل كده كانت بتترفض للمحاسب فيوقّف تحميل الصفحة كلها)
+router.get("/all", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM branches ORDER BY is_central_kitchen, id");
     res.json(result.rows);
