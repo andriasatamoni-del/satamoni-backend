@@ -92,6 +92,11 @@
     <div class="tabbtn" data-tab="ledger">كشف حساب المخزن</div>
     <div class="tabbtn" data-tab="costanalysis">تحليل التكلفة</div>
     <div class="tabbtn" data-tab="income">قائمة الدخل</div>
+    <div class="tabbtn" data-tab="coa">شجرة الحسابات</div>
+    <div class="tabbtn" data-tab="journal">القيود</div>
+    <div class="tabbtn" data-tab="ledgerpl">قائمة الدخل (الدفتر)</div>
+    <div class="tabbtn" data-tab="ap">الموردون والمدفوعات</div>
+    <div class="tabbtn" data-tab="recon">المطابقة والفترات</div>
   </div>
 
   <!-- المصروفات -->
@@ -250,6 +255,190 @@
       <div style="font-size:11px;color:var(--faint);margin-top:8px" id="incOverheadNote"></div>
     </div>
   </div>
+
+  <!-- شجرة الحسابات + ميزان المراجعة + كشف حساب -->
+  <div class="panel" id="panel-coa">
+    <h1>ميزان المراجعة</h1>
+    <div class="formbox">
+      <div class="row"><input id="tbAsOf" type="date" /><button id="tbRefresh">تحديث</button></div>
+      <div class="err" id="tbErr"></div>
+      <div class="ok" id="tbStatus"></div>
+    </div>
+    <table>
+      <thead><tr><th>الكود</th><th>الحساب</th><th>النوع</th><th>مدين</th><th>دائن</th><th>الرصيد</th><th></th></tr></thead>
+      <tbody id="tbBody"></tbody>
+    </table>
+
+    <div id="coaCreateBox">
+      <h1>حساب مخصّص جديد</h1>
+      <div class="formbox">
+        <div class="row">
+          <input id="coaCode" placeholder="الكود" style="max-width:100px" />
+          <input id="coaName" placeholder="اسم الحساب" />
+          <select id="coaType">
+            <option value="ASSET">أصول</option>
+            <option value="LIABILITY">التزامات</option>
+            <option value="EQUITY">حقوق ملكية</option>
+            <option value="REVENUE">إيرادات</option>
+            <option value="COGS">تكلفة بضاعة مباعة</option>
+            <option value="EXPENSE">مصروفات</option>
+          </select>
+          <button id="coaCreate">إضافة</button>
+        </div>
+        <div class="err" id="coaErr"></div>
+      </div>
+    </div>
+
+    <div id="glWrap" style="display:none">
+      <h1>كشف حساب: <span id="glAccountName"></span></h1>
+      <div class="formbox">
+        <div class="row">
+          <input id="glFrom" type="date" /><input id="glTo" type="date" />
+          <button id="glRefresh">تحديث</button>
+          <button id="glClose">إغلاق الكشف</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>التاريخ</th><th>رقم القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد الجاري</th></tr></thead>
+        <tbody id="glBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- القيود -->
+  <div class="panel" id="panel-journal">
+    <h1>القيود المحاسبية</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="jeFrom" type="date" /><input id="jeTo" type="date" />
+        <select id="jeStatus">
+          <option value="">كل الحالات</option>
+          <option value="DRAFT">مسودة</option>
+          <option value="POSTED">مرحّل</option>
+          <option value="REVERSED">معكوس</option>
+        </select>
+        <button id="jeRefresh">تحديث</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>المصدر</th><th>الفرع</th><th>القيمة</th><th>الحالة</th><th></th></tr></thead>
+      <tbody id="jeBody"></tbody>
+    </table>
+
+    <div id="jeCreateWrap">
+      <h1>قيد يدوي جديد</h1>
+      <div class="formbox">
+        <div class="row">
+          <input id="jeNewDate" type="date" />
+          <input id="jeNewDesc" placeholder="البيان" />
+          <select id="jeNewBranch"><option value="">بدون فرع (على مستوى الشركة)</option></select>
+        </div>
+        <div id="jeLinesWrap"></div>
+        <div class="row"><button id="jeAddLine">+ سطر جديد</button><button id="jeSubmit">حفظ القيد (مسودة)</button></div>
+        <div class="err" id="jeErr"></div>
+        <div class="ok" id="jeOk"></div>
+      </div>
+    </div>
+
+    <div id="jeDetailWrap" style="display:none">
+      <h1>تفاصيل القيد <span id="jeDetailNumber"></span></h1>
+      <table><thead><tr><th>الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead><tbody id="jeDetailBody"></tbody></table>
+      <div class="formbox"><button id="jeDetailClose">إغلاق</button></div>
+    </div>
+  </div>
+
+  <!-- قائمة الدخل من دفتر الأستاذ -->
+  <div class="panel" id="panel-ledgerpl">
+    <h1>قائمة الدخل من دفتر الأستاذ</h1>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">تقرير مستقل عن "قائمة الدخل" التشغيلية فوق - مصدره القيود المرحّلة بدل جداول العمليات مباشرة. لو فيه فرق بين الاتنين، شوف تبويب "المطابقة والفترات".</div>
+    <div class="formbox">
+      <div class="row">
+        <input id="plFrom" type="date" /><input id="plTo" type="date" />
+        <select id="plBranchSelect"></select>
+        <button id="plRefresh">تحديث</button>
+      </div>
+      <div class="err" id="plErr"></div>
+    </div>
+    <table style="margin-bottom:20px">
+      <tbody>
+        <tr><td>صافي المبيعات</td><td id="plNetSales" style="text-align:left"></td></tr>
+        <tr><td>تكلفة البضاعة المباعة</td><td id="plCogs" style="text-align:left"></td></tr>
+        <tr><td><b>إجمالي الربح</b></td><td id="plGrossProfit" style="text-align:left"><b></b></td></tr>
+        <tr><td>هامش الربح الإجمالي %</td><td id="plGrossMargin" style="text-align:left"></td></tr>
+      </tbody>
+    </table>
+    <h1>المصروفات التشغيلية</h1>
+    <table style="margin-bottom:20px"><thead><tr><th>الحساب</th><th>المبلغ</th></tr></thead><tbody id="plOpexBody"></tbody></table>
+    <table>
+      <tbody>
+        <tr><td>إجمالي المصروفات التشغيلية</td><td id="plOpex" style="text-align:left"></td></tr>
+        <tr><td><b>صافي الربح التشغيلي</b></td><td id="plOperatingProfit" style="text-align:left"><b></b></td></tr>
+      </tbody>
+    </table>
+
+    <div id="plBranchCompareWrap" style="display:none">
+      <h1>مقارنة الفروع (من الدفتر)</h1>
+      <table>
+        <thead><tr><th>الفرع</th><th>صافي المبيعات</th><th>تكلفة البضاعة</th><th>إجمالي الربح</th><th>مصروفات</th><th>صافي الربح التشغيلي</th></tr></thead>
+        <tbody id="plBranchCompareBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- الموردون والمدفوعات -->
+  <div class="panel" id="panel-ap">
+    <h1>أرصدة الموردين</h1>
+    <table><thead><tr><th>المورد</th><th>الحالة</th><th>الرصيد المستحق</th></tr></thead><tbody id="apBalancesBody"></tbody></table>
+
+    <h1>أعمار الديون</h1>
+    <div class="formbox"><div class="row"><input id="agingAsOf" type="date" /><button id="agingRefresh">تحديث</button></div></div>
+    <table>
+      <thead><tr><th>المورد</th><th>0-30 يوم</th><th>31-60 يوم</th><th>61-90 يوم</th><th>90+ يوم</th><th>الإجمالي</th></tr></thead>
+      <tbody id="agingBody"></tbody>
+    </table>
+
+    <h1>سداد مورد</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="paySupplier"></select>
+        <select id="payBranch"></select>
+        <input id="payAmount" type="number" placeholder="المبلغ" />
+      </div>
+      <div class="row">
+        <select id="payMethod"><option value="">كاش (افتراضي)</option></select>
+        <input id="payRef" placeholder="رقم مرجعي (اختياري)" />
+        <button id="paySubmit">تسجيل السداد</button>
+      </div>
+      <div class="err" id="payErr"></div>
+      <div class="ok" id="payOk"></div>
+    </div>
+  </div>
+
+  <!-- المطابقة والفترات -->
+  <div class="panel" id="panel-recon">
+    <div id="reconReportWrap">
+      <h1>تقرير المطابقة</h1>
+      <div style="font-size:11px;color:var(--faint);margin-bottom:10px">بيقارن دفتر الأستاذ الرسمي بمصادر البيانات التشغيلية المستقلة - أي فرق بيظهر هنا صراحة، مفيش دمج أو "تصحيح" تلقائي.</div>
+      <div class="formbox">
+        <div class="row"><select id="reconYear"></select><select id="reconMonth"></select><button id="reconRefresh">تحديث</button></div>
+        <div class="err" id="reconErr"></div>
+      </div>
+      <table>
+        <thead><tr><th>المقارنة</th><th>تشغيلي</th><th>دفتر الأستاذ</th><th>الفرق</th><th>الحالة</th></tr></thead>
+        <tbody id="reconBody"></tbody>
+      </table>
+    </div>
+    <div id="reconDeniedNote" style="display:none;color:var(--faint);font-size:12px;padding:20px 0">تقرير المطابقة متاح للأدمن والمحاسب بس - بيغطي كل الفروع مع بعض عادةً.</div>
+
+    <div id="periodsAdmin" style="display:none">
+      <h1>الفترات المحاسبية</h1>
+      <div class="formbox">
+        <div class="row"><select id="closeYear"></select><select id="closeMonth"></select><button id="closePeriodBtn">قفل الشهر</button></div>
+        <div class="err" id="periodsErr"></div>
+      </div>
+      <table><thead><tr><th>السنة</th><th>الشهر</th><th>الحالة</th></tr></thead><tbody id="periodsBody"></tbody></table>
+    </div>
+  </div>
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
@@ -313,8 +502,24 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    onTabOpen(btn.dataset.tab);
   };
 });
+
+// المرحلة 4B: التبويبات الجديدة بتتحمّل أول مرة تتفتح بس (مش وقت boot() زي التبويبات القديمة) - عشان
+// نتجنب نداءات مش لازمة لمدير فرع/محاسب لسه مفتحش التبويب ده أصلًا
+const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false };
+function onTabOpen(tab) {
+  if (tab === "coa" && !accountingTabLoaded.coa) { accountingTabLoaded.coa = true; loadAccountsForForms().then(loadTrialBalance); }
+  if (tab === "journal" && !accountingTabLoaded.journal) { accountingTabLoaded.journal = true; loadAccountsForForms().then(loadJournalEntries); }
+  if (tab === "ledgerpl" && !accountingTabLoaded.ledgerpl) { accountingTabLoaded.ledgerpl = true; loadLedgerPL(); }
+  if (tab === "ap" && !accountingTabLoaded.ap) { accountingTabLoaded.ap = true; loadSuppliersForPayment(); loadSupplierBalances(); loadApAging(); }
+  if (tab === "recon" && !accountingTabLoaded.recon) {
+    accountingTabLoaded.recon = true;
+    if (auth.user.role !== "branch_manager") loadReconciliation();
+    loadPeriods();
+  }
+}
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
@@ -323,13 +528,27 @@ function currentBranchId() { return document.getElementById("branchSelect").valu
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
-  ["expDate", "purDate", "cashDate", "ledgerDate"].forEach(id => document.getElementById(id).value = todayStr());
+  ["expDate", "purDate", "cashDate", "ledgerDate", "tbAsOf", "agingAsOf"].forEach(id => document.getElementById(id).value = todayStr());
+  const firstOfMonth = todayStr().slice(0, 8) + "01";
+  document.getElementById("plFrom").value = firstOfMonth;
+  document.getElementById("plTo").value = todayStr();
+  document.getElementById("jeNewDate").value = todayStr();
   if (auth.user.role === "branch_manager") {
     // مدير الفرع يقدر يشوف كشف حساب المخزن بس، مش يضيف قيود (أدمن/محاسب بس)
     document.getElementById("ledgerSubmit").disabled = true;
     document.getElementById("ledgerSubmit").title = "الإضافة لأدمن/محاسب بس";
+    // المرحلة 4B: مدير الفرع عنده accounting.view بس (رؤية فرعه) - مفيش إنشاء حسابات/قيود يدوية ولا قفل فترات
+    document.getElementById("coaCreateBox").style.display = "none";
+    document.getElementById("jeCreateWrap").style.display = "none";
+    // تقرير المطابقة بيغطي كل الفروع مع بعض عادةً (أدمن/محاسب بس) - نفس منطق branch-profit-and-loss
+    document.getElementById("reconReportWrap").style.display = "none";
+    document.getElementById("reconDeniedNote").style.display = "block";
+  }
+  if (auth.user.role === "admin") {
+    document.getElementById("periodsAdmin").style.display = "block";
   }
   populateIncPeriodSelectors();
+  populateReconSelectors();
   await loadBranches();
   await loadExpenseCategories();
   await Promise.all([loadExpenses(), loadPurchases(), loadCash(), loadLedger(), loadCostAnalysis(), loadIncomeStatement()]);
@@ -352,6 +571,19 @@ async function loadBranches() {
     incSel.value = auth.user.branchId;
     incSel.disabled = true;
   }
+
+  // المرحلة 4B: تبويب قائمة الدخل من الدفتر له سلكتور فرع منفصل بنفس منطق incBranchSelect بالظبط
+  const plSel = document.getElementById("plBranchSelect");
+  plSel.innerHTML = allBranchesOption + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  if (auth.user.role === "branch_manager") { plSel.value = auth.user.branchId; plSel.disabled = true; }
+
+  // فرع السداد والقيد اليدوي - أي فرع (مدير الفرع مقفول على فرعه، القيد اليدوي أصلًا مخفي له)
+  const payBranchSel = document.getElementById("payBranch");
+  payBranchSel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  if (auth.user.role === "branch_manager") { payBranchSel.value = auth.user.branchId; payBranchSel.disabled = true; }
+
+  const jeNewBranchSel = document.getElementById("jeNewBranch");
+  jeNewBranchSel.innerHTML = `<option value="">بدون فرع (على مستوى الشركة)</option>` + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
 }
 
 // ---------------- المصروفات ----------------
@@ -589,6 +821,335 @@ async function loadIncomeStatement() {
   } catch (e) { errBox.textContent = e.message; }
 }
 document.getElementById("incRefresh").onclick = loadIncomeStatement;
+
+// ================= المرحلة 4B: المحاسبة والدفتر العام =================
+
+function accountTypeLabel(t) {
+  return { ASSET: "أصول", LIABILITY: "التزامات", EQUITY: "حقوق ملكية", REVENUE: "إيرادات", COGS: "تكلفة بضاعة", EXPENSE: "مصروفات" }[t] || t;
+}
+function dateOnly(d) { return d && d.slice ? d.slice(0, 10) : d; }
+
+// ---------------- شجرة الحسابات + ميزان المراجعة + كشف حساب ----------------
+let coaAccounts = [];
+async function loadAccountsForForms() {
+  coaAccounts = await api("/api/accounting/accounts");
+  const options = coaAccounts.map(a => `<option value="${a.id}">${a.code} - ${a.name}</option>`).join("");
+  document.querySelectorAll(".je-account-select").forEach(sel => { sel.innerHTML = options; });
+}
+
+async function loadTrialBalance() {
+  const errBox = document.getElementById("tbErr");
+  errBox.textContent = "";
+  try {
+    const asOf = document.getElementById("tbAsOf").value || todayStr();
+    const data = await api(`/api/reports/trial-balance?${new URLSearchParams({ asOf })}`);
+    document.getElementById("tbStatus").textContent = data.balanced
+      ? `متزن ✓ (مدين ${money(data.totalDebit)} = دائن ${money(data.totalCredit)})`
+      : `غير متزن! (مدين ${money(data.totalDebit)} ≠ دائن ${money(data.totalCredit)})`;
+    document.getElementById("tbBody").innerHTML = data.accounts.map(a => `
+      <tr>
+        <td>${a.code}</td><td>${a.name}</td><td>${accountTypeLabel(a.accountType)}</td>
+        <td>${money(a.totalDebit)}</td><td>${money(a.totalCredit)}</td>
+        <td class="${a.balance < 0 ? "diffneg" : "diffpos"}">${money(a.balance)}</td>
+        <td><button class="linkbtn" data-glaccount="${a.accountId}" data-glname="${a.code} - ${a.name}">كشف الحساب</button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="7">مفيش أرصدة لحد التاريخ ده</td></tr>`;
+    document.querySelectorAll("[data-glaccount]").forEach(btn => {
+      btn.onclick = () => openGeneralLedger(btn.dataset.glaccount, btn.dataset.glname);
+    });
+  } catch (e) { errBox.textContent = e.message; }
+}
+document.getElementById("tbRefresh").onclick = loadTrialBalance;
+
+document.getElementById("coaCreate").onclick = async () => {
+  const errBox = document.getElementById("coaErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/accounting/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        code: document.getElementById("coaCode").value.trim(),
+        name: document.getElementById("coaName").value.trim(),
+        accountType: document.getElementById("coaType").value,
+      }),
+    });
+    document.getElementById("coaCode").value = "";
+    document.getElementById("coaName").value = "";
+    await loadAccountsForForms();
+    loadTrialBalance();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+let currentGlAccountId = null;
+function openGeneralLedger(accountId, label) {
+  currentGlAccountId = accountId;
+  document.getElementById("glWrap").style.display = "block";
+  document.getElementById("glAccountName").textContent = label;
+  if (!document.getElementById("glFrom").value) {
+    document.getElementById("glFrom").value = todayStr().slice(0, 8) + "01";
+    document.getElementById("glTo").value = todayStr();
+  }
+  loadGeneralLedger();
+  document.getElementById("glWrap").scrollIntoView({ behavior: "smooth" });
+}
+async function loadGeneralLedger() {
+  if (!currentGlAccountId) return;
+  const data = await api(`/api/reports/general-ledger?${new URLSearchParams({
+    accountId: currentGlAccountId, from: document.getElementById("glFrom").value, to: document.getElementById("glTo").value,
+  })}`);
+  document.getElementById("glBody").innerHTML = data.lines.map(l => `
+    <tr>
+      <td>${dateOnly(l.entryDate)}</td><td>${l.entryNumber}</td>
+      <td>${l.lineDescription || l.entryDescription || "—"}</td>
+      <td>${l.debit > 0 ? money(l.debit) : "—"}</td><td>${l.credit > 0 ? money(l.credit) : "—"}</td>
+      <td>${money(l.runningBalance)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">مفيش حركات في المدى ده</td></tr>`;
+}
+document.getElementById("glRefresh").onclick = loadGeneralLedger;
+document.getElementById("glClose").onclick = () => {
+  currentGlAccountId = null;
+  document.getElementById("glWrap").style.display = "none";
+};
+
+// ---------------- القيود ----------------
+function jeStatusBadge(s) {
+  const map = { DRAFT: ["مسودة", "inactive"], POSTED: ["مرحّل", "active"], REVERSED: ["معكوس", "inactive"] };
+  const [label, cls] = map[s] || [s, "inactive"];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+function canPostJe() { return auth.user.role === "admin" || auth.user.role === "accountant"; }
+
+async function loadJournalEntries() {
+  const params = new URLSearchParams();
+  if (document.getElementById("jeFrom").value) params.set("from", document.getElementById("jeFrom").value);
+  if (document.getElementById("jeTo").value) params.set("to", document.getElementById("jeTo").value);
+  if (document.getElementById("jeStatus").value) params.set("status", document.getElementById("jeStatus").value);
+  const data = await api(`/api/reports/journal-entries-report?${params}`);
+  document.getElementById("jeBody").innerHTML = data.entries.map(e => `
+    <tr>
+      <td><button class="linkbtn" data-jedetail="${e.id}">${e.entryNumber}</button></td>
+      <td>${dateOnly(e.entryDate)}</td>
+      <td>${e.description || "—"}</td><td>${e.sourceType}</td><td>${e.branchName || "—"}</td>
+      <td>${money(e.totalAmount)}</td>
+      <td>${jeStatusBadge(e.status)}</td>
+      <td>
+        ${e.status === "DRAFT" && canPostJe() ? `<button class="linkbtn" data-jepost="${e.id}">ترحيل</button>` : ""}
+        ${e.status === "POSTED" && auth.user.role === "admin" ? `<button class="linkbtn" data-jereverse="${e.id}">عكس</button>` : ""}
+      </td>
+    </tr>
+  `).join("") || `<tr><td colspan="8">مفيش قيود في المدى/الفلتر ده</td></tr>`;
+
+  document.querySelectorAll("[data-jedetail]").forEach(btn => btn.onclick = () => openJeDetail(btn.dataset.jedetail));
+  document.querySelectorAll("[data-jepost]").forEach(btn => btn.onclick = async () => {
+    try { await api(`/api/accounting/journal-entries/${btn.dataset.jepost}/post`, { method: "POST" }); loadJournalEntries(); }
+    catch (e) { alert(e.message); }
+  });
+  document.querySelectorAll("[data-jereverse]").forEach(btn => btn.onclick = async () => {
+    const reason = prompt("سبب عكس القيد؟");
+    if (!reason) return;
+    try {
+      await api(`/api/accounting/journal-entries/${btn.dataset.jereverse}/reverse`, { method: "POST", body: JSON.stringify({ reason }) });
+      loadJournalEntries();
+    } catch (e) { alert(e.message); }
+  });
+}
+document.getElementById("jeRefresh").onclick = loadJournalEntries;
+
+async function openJeDetail(id) {
+  const data = await api(`/api/accounting/journal-entries/${id}`);
+  document.getElementById("jeDetailWrap").style.display = "block";
+  document.getElementById("jeDetailNumber").textContent = data.entry.entry_number;
+  document.getElementById("jeDetailBody").innerHTML = data.lines.map(l => `
+    <tr>
+      <td>${l.account_code} - ${l.account_name}</td><td>${l.description || "—"}</td>
+      <td>${Number(l.debit) > 0 ? money(l.debit) : "—"}</td><td>${Number(l.credit) > 0 ? money(l.credit) : "—"}</td>
+    </tr>
+  `).join("");
+  document.getElementById("jeDetailWrap").scrollIntoView({ behavior: "smooth" });
+}
+document.getElementById("jeDetailClose").onclick = () => { document.getElementById("jeDetailWrap").style.display = "none"; };
+
+// سطور القيد اليدوي - كل سطر حساب + مدين + دائن (السطر بيتحسب بس لو فيه مدين أو دائن أكبر من صفر)
+let jeLineCount = 0;
+function addJeLine() {
+  jeLineCount++;
+  const div = document.createElement("div");
+  div.className = "row";
+  div.dataset.jeline = jeLineCount;
+  div.innerHTML = `
+    <select class="je-account-select" style="min-width:180px">${coaAccounts.map(a => `<option value="${a.id}">${a.code} - ${a.name}</option>`).join("")}</select>
+    <input type="number" class="je-debit" placeholder="مدين" style="max-width:110px" />
+    <input type="number" class="je-credit" placeholder="دائن" style="max-width:110px" />
+    <button class="linkbtn" data-removeline>حذف</button>
+  `;
+  document.getElementById("jeLinesWrap").appendChild(div);
+  div.querySelector("[data-removeline]").onclick = () => div.remove();
+}
+document.getElementById("jeAddLine").onclick = addJeLine;
+
+document.getElementById("jeSubmit").onclick = async () => {
+  const errBox = document.getElementById("jeErr");
+  const okBox = document.getElementById("jeOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const lines = [...document.querySelectorAll("#jeLinesWrap [data-jeline]")].map(div => ({
+    accountId: div.querySelector(".je-account-select").value,
+    debit: Number(div.querySelector(".je-debit").value || 0),
+    credit: Number(div.querySelector(".je-credit").value || 0),
+  })).filter(l => l.debit > 0 || l.credit > 0);
+  if (lines.length === 0) { errBox.textContent = "لازم سطر واحد على الأقل فيه مدين أو دائن"; return; }
+  try {
+    await api("/api/accounting/journal-entries", {
+      method: "POST",
+      body: JSON.stringify({
+        entryDate: document.getElementById("jeNewDate").value,
+        description: document.getElementById("jeNewDesc").value.trim() || null,
+        branchId: document.getElementById("jeNewBranch").value || null,
+        lines,
+      }),
+    });
+    okBox.textContent = "تم حفظ القيد كمسودة - محتاج ترحيل منفصل من الجدول فوق";
+    document.getElementById("jeLinesWrap").innerHTML = "";
+    document.getElementById("jeNewDesc").value = "";
+    loadJournalEntries();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- قائمة الدخل من دفتر الأستاذ ----------------
+async function loadLedgerPL() {
+  const errBox = document.getElementById("plErr");
+  errBox.textContent = "";
+  try {
+    const from = document.getElementById("plFrom").value;
+    const to = document.getElementById("plTo").value;
+    const params = new URLSearchParams({ from, to });
+    const branchId = document.getElementById("plBranchSelect").value;
+    if (branchId) params.set("branchId", branchId);
+    const data = await api(`/api/reports/profit-and-loss?${params}`);
+    document.getElementById("plNetSales").textContent = money(data.netSales);
+    document.getElementById("plCogs").textContent = money(data.cogs);
+    document.getElementById("plGrossProfit").innerHTML = `<b>${money(data.grossProfit)}</b>`;
+    document.getElementById("plGrossMargin").textContent = pct(data.grossMarginPercent);
+    document.getElementById("plOpexBody").innerHTML = data.opexLines.map(l => `<tr><td>${l.name}</td><td>${money(l.amount)}</td></tr>`).join("") || `<tr><td colspan="2">مفيش مصروفات مرحّلة في المدى ده</td></tr>`;
+    document.getElementById("plOpex").textContent = money(data.opex);
+    document.getElementById("plOperatingProfit").innerHTML = `<b class="${data.operatingProfit < 0 ? "diffneg" : "diffpos"}">${money(data.operatingProfit)}</b>`;
+
+    if (auth.user.role === "admin" || auth.user.role === "accountant") {
+      const cmp = await api(`/api/reports/branch-profit-and-loss?${new URLSearchParams({ from, to })}`);
+      document.getElementById("plBranchCompareWrap").style.display = "block";
+      const rows = [...cmp.branches, { branchName: "الإجمالي المجمّع", ...cmp.consolidated }];
+      document.getElementById("plBranchCompareBody").innerHTML = rows.map(r => `
+        <tr>
+          <td>${r.branchName}</td><td>${money(r.netSales)}</td><td>${money(r.cogs)}</td><td>${money(r.grossProfit)}</td>
+          <td>${money(r.opex)}</td><td class="${r.operatingProfit < 0 ? "diffneg" : "diffpos"}">${money(r.operatingProfit)}</td>
+        </tr>
+      `).join("");
+    }
+  } catch (e) { errBox.textContent = e.message; }
+}
+document.getElementById("plRefresh").onclick = loadLedgerPL;
+
+// ---------------- الموردون والمدفوعات ----------------
+async function loadSupplierBalances() {
+  const data = await api("/api/reports/supplier-balances");
+  document.getElementById("apBalancesBody").innerHTML = data.suppliers.map(s => `
+    <tr><td>${s.supplierName}</td><td>${s.status}</td>
+    <td class="${s.balance > 0 ? "diffneg" : "diffpos"}">${money(s.balance)}</td></tr>
+  `).join("") || `<tr><td colspan="3">مفيش أرصدة مستحقة لأي مورد</td></tr>`;
+}
+async function loadApAging() {
+  const asOf = document.getElementById("agingAsOf").value || todayStr();
+  const data = await api(`/api/reports/ap-aging?asOf=${asOf}`);
+  document.getElementById("agingBody").innerHTML = data.suppliers.map(s => `
+    <tr><td>${s.supplierName}</td><td>${money(s.current)}</td><td>${money(s.days31to60)}</td>
+    <td>${money(s.days61to90)}</td><td class="diffneg">${money(s.over90)}</td><td><b>${money(s.total)}</b></td></tr>
+  `).join("") || `<tr><td colspan="6">مفيش ديون مستحقة حاليًا</td></tr>`;
+}
+document.getElementById("agingRefresh").onclick = loadApAging;
+
+async function loadSuppliersForPayment() {
+  const suppliers = await api("/api/suppliers");
+  document.getElementById("paySupplier").innerHTML = suppliers.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
+  const config = await api("/api/config");
+  document.getElementById("payMethod").innerHTML = `<option value="">كاش (افتراضي)</option>` +
+    config.paymentMethods.filter(m => m.kind !== "cash").map(m => `<option value="${m.id}">${m.name}</option>`).join("");
+}
+document.getElementById("paySubmit").onclick = async () => {
+  const errBox = document.getElementById("payErr");
+  const okBox = document.getElementById("payOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    await api("/api/supplier-payments", {
+      method: "POST",
+      body: JSON.stringify({
+        supplierId: document.getElementById("paySupplier").value,
+        branchId: document.getElementById("payBranch").value,
+        amount: Number(document.getElementById("payAmount").value),
+        paymentMethodId: document.getElementById("payMethod").value || null,
+        referenceNumber: document.getElementById("payRef").value.trim() || null,
+      }),
+    });
+    okBox.textContent = "تم تسجيل السداد";
+    document.getElementById("payAmount").value = "";
+    document.getElementById("payRef").value = "";
+    loadSupplierBalances();
+    loadApAging();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- المطابقة والفترات ----------------
+function populateReconSelectors() {
+  const now = new Date();
+  const years = [];
+  for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) years.push(y);
+  const months = Array.from({ length: 12 }, (_, i) => i + 1);
+  ["reconYear", "closeYear"].forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join("");
+    sel.value = now.getFullYear();
+  });
+  ["reconMonth", "closeMonth"].forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = months.map(m => `<option value="${m}">${m}</option>`).join("");
+    sel.value = now.getMonth() + 1;
+  });
+}
+async function loadReconciliation() {
+  const errBox = document.getElementById("reconErr");
+  errBox.textContent = "";
+  try {
+    const year = document.getElementById("reconYear").value;
+    const month = document.getElementById("reconMonth").value;
+    const data = await api(`/api/reports/accounting-reconciliation?year=${year}&month=${month}`);
+    document.getElementById("reconBody").innerHTML = data.checks.map(c => `
+      <tr>
+        <td>${c.name}</td><td>${money(c.operational)}</td><td>${money(c.ledger)}</td>
+        <td class="${c.matched ? "diffpos" : "diffneg"}">${money(c.diff)}</td>
+        <td>${c.matched ? `<span class="badge active">مطابق</span>` : `<span class="badge inactive">فيه فرق</span>`}</td>
+      </tr>
+    `).join("");
+  } catch (e) { errBox.textContent = e.message; }
+}
+document.getElementById("reconRefresh").onclick = loadReconciliation;
+
+async function loadPeriods() {
+  const periods = await api("/api/accounting/periods");
+  document.getElementById("periodsBody").innerHTML = periods.map(p => `
+    <tr><td>${p.year}</td><td>${p.month}</td>
+    <td><span class="badge ${p.status === "CLOSED" ? "inactive" : "active"}">${p.status === "CLOSED" ? "مقفول" : "مفتوح"}</span></td></tr>
+  `).join("") || `<tr><td colspan="3">مفيش فترات مسجّلة لسه</td></tr>`;
+}
+document.getElementById("closePeriodBtn").onclick = async () => {
+  const errBox = document.getElementById("periodsErr");
+  errBox.textContent = "";
+  const year = document.getElementById("closeYear").value;
+  const month = document.getElementById("closeMonth").value;
+  if (!confirm(`متأكد إنك عايز تقفل شهر ${month}/${year}؟ مش هينفع يترحّل أي قيد جديد عليه بعد كده.`)) return;
+  try {
+    await api(`/api/accounting/periods/${year}/${month}/close`, { method: "POST" });
+    loadPeriods();
+  } catch (e) { errBox.textContent = e.message; }
+};
 
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
