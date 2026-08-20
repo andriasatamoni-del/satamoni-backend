@@ -2,6 +2,9 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { logAudit } = require("../db/audit");
+const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
+const { computePayrollSummary, toCents } = require("../services/payroll-engine");
 
 // نظام الرواتب حساس ماليًا وشامل كل الفروع - أدمن ومحاسب بس (مش مقفول على فرع زي المصروفات العادية)
 const payrollAccess = requireRole("admin", "accountant");
@@ -363,75 +366,329 @@ router.post("/department-sales", async (req, res) => {
 });
 
 // ---------------- ملخص الرواتب المحسوب ----------------
-const {
-  computeFingerprintPayroll,
-  computeManualPayroll,
-  computeNoTrackingPayroll,
-} = require("../services/payroll-engine");
-
-function toCents(n) {
-  return Math.round(n * 100);
-}
-
 router.get("/summary", async (req, res) => {
   const year = Number(req.query.year);
   const month = Number(req.query.month);
   if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
 
   try {
-    const [fingerprintRows, manualRows, noTrackingRows, adjustments, branches] = await Promise.all([
-      computeFingerprintPayroll(pool, year, month),
-      computeManualPayroll(pool, year, month),
-      computeNoTrackingPayroll(pool),
-      pool.query(
-        `SELECT employee_id,
-                SUM(amount) FILTER (WHERE adjustment_type = 'advance') AS advances,
-                SUM(amount) FILTER (WHERE adjustment_type = 'penalty') AS penalties,
-                SUM(amount) FILTER (WHERE adjustment_type = 'bonus') AS bonuses
-         FROM payroll_adjustments
-         WHERE EXTRACT(YEAR FROM entry_date) = $1 AND EXTRACT(MONTH FROM entry_date) = $2
-         GROUP BY employee_id`,
-        [year, month]
-      ),
-      pool.query("SELECT id, name FROM branches WHERE is_central_kitchen = TRUE LIMIT 1"),
-    ]);
-
-    const adjByEmployee = {};
-    adjustments.rows.forEach((r) => {
-      adjByEmployee[r.employee_id] = {
-        advances: Number(r.advances || 0),
-        penalties: Number(r.penalties || 0),
-        bonuses: Number(r.bonuses || 0),
-      };
-    });
-    const centralKitchenName = branches.rows[0]?.name || "المطبخ المركزي";
-
-    const all = [...fingerprintRows, ...manualRows, ...noTrackingRows].map((r) => {
-      const adj = adjByEmployee[r.employeeId] || { advances: 0, penalties: 0, bonuses: 0 };
-      // جمع/طرح مبالغ جاهزة (كل واحدة متقرّبة لـ 2 خانة عشرية بالفعل من SQL) بالقرش الصحيح
-      // عشان نتجنب أي انحراف في دقة الأرقام العشرية لجمع/طرح JS العادي
-      const netPayCents = toCents(r.payAfterAttendance) - toCents(adj.advances) - toCents(adj.penalties) + toCents(adj.bonuses);
-      const netPay = netPayCents / 100;
-      const missingBaseSalary = r.wageType === "hourly" ? Number(r.hourlyRate || 0) === 0 : Number(r.baseSalary) === 0;
-      let alert = null;
-      if (netPay < 0) alert = "⚠ راتب بالسالب - راجع الخصومات";
-      else if (missingBaseSalary && r.attendanceSystem !== "none") alert = "⚠ الراتب الأساسي غير مُدخل";
-      else if (r.attendanceSystem === "fingerprint_auto" && !r.primaryBranch) alert = "⚠ لا يوجد سجل بصمة له في أي فرع";
-
-      return {
-        ...r,
-        primaryBranch: r.primaryBranch || (r.attendanceSystem === "manual" ? centralKitchenName : r.attendanceSystem === "none" ? "الإدارة العامة" : null),
-        advances: adj.advances,
-        penalties: adj.penalties,
-        bonuses: adj.bonuses,
-        netPay,
-        alert,
-      };
-    });
-
+    const all = await computePayrollSummary(pool, year, month);
     res.json({ year, month, employees: all });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// المرحلة 4C: تشغيلات الرواتب الرسمية + الترحيل المحاسبي
+// ============================================================
+// GET /summary فوق تقرير حي - لو الحضور أو السلف اتعدّلوا بعد كده، رقمه بيتغيّر معاهم. التشغيلة (Run)
+// تحت snapshot ثابت من نفس المحرك (computePayrollSummary) وقت الإنشاء بالظبط - تاريخي ومايتغيّرش.
+
+// GET /api/payroll/runs - كل التشغيلات
+router.get("/runs", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM payroll_runs ORDER BY year DESC, month DESC");
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/payroll/runs/:id - تفاصيل تشغيلة + كل موظف فيها + المتبقي له (net_pay - مجموع مدفوعاته الفعلية)
+router.get("/runs/:id", async (req, res) => {
+  try {
+    const run = await pool.query("SELECT * FROM payroll_runs WHERE id = $1", [req.params.id]);
+    if (run.rows.length === 0) return res.status(404).json({ error: "تشغيلة الرواتب مش موجودة" });
+    const employees = await pool.query(
+      `SELECT pre.*, b.name AS branch_name, COALESCE(pp.paid, 0) AS paid_amount
+       FROM payroll_run_employees pre
+       LEFT JOIN branches b ON b.id = pre.branch_id
+       LEFT JOIN (SELECT payroll_run_employee_id, SUM(amount) AS paid FROM payroll_payments GROUP BY payroll_run_employee_id) pp
+         ON pp.payroll_run_employee_id = pre.id
+       WHERE pre.payroll_run_id = $1
+       ORDER BY pre.employee_name`,
+      [req.params.id]
+    );
+    res.json({ run: run.rows[0], employees: employees.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/payroll/runs - إنشاء تشغيلة DRAFT لشهر معيّن - snapshot ثابت من computePayrollSummary وقت
+// النداء (نفس محرك /summary بالظبط). {year, month, idempotencyKey?}
+router.post("/runs", async (req, res) => {
+  const { year, month, idempotencyKey } = req.body;
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: "لازم سنة وشهر صحيحين" });
+
+  const client = await pool.connect();
+  try {
+    if (idempotencyKey) {
+      const existing = await client.query("SELECT * FROM payroll_runs WHERE idempotency_key = $1", [idempotencyKey]);
+      if (existing.rows.length > 0) return res.status(200).json({ ...existing.rows[0], duplicate: true });
+    }
+
+    const summary = await computePayrollSummary(pool, year, month);
+    if (summary.length === 0) return res.status(400).json({ error: "مفيش موظفين نشطين لحساب راتبهم في الشهر ده" });
+    const totalNetPay = summary.reduce((s, r) => s + r.netPay, 0);
+
+    await client.query("BEGIN");
+    let run;
+    try {
+      run = await client.query(
+        `INSERT INTO payroll_runs (year, month, total_net_pay, created_by, idempotency_key)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [year, month, totalNetPay, req.user.id, idempotencyKey || null]
+      );
+    } catch (err) {
+      if (err.code === "23505") {
+        await client.query("ROLLBACK");
+        if (idempotencyKey) {
+          const existing = await client.query("SELECT * FROM payroll_runs WHERE idempotency_key = $1", [idempotencyKey]);
+          if (existing.rows.length > 0) return res.status(200).json({ ...existing.rows[0], duplicate: true });
+        }
+        return res.status(409).json({ error: `تشغيلة رواتب ${month}/${year} موجودة بالفعل` });
+      }
+      throw err;
+    }
+
+    for (const r of summary) {
+      const branchId = r.attendanceSystem === "fingerprint_auto" ? (r.primaryBranchId || null) : null;
+      await client.query(
+        `INSERT INTO payroll_run_employees
+          (payroll_run_id, employee_id, employee_name, branch_id, gross_pay, advances, penalties, bonuses, net_pay)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [run.rows[0].id, r.employeeId, r.name, branchId, r.payAfterAttendance, r.advances, r.penalties, r.bonuses, r.netPay]
+      );
+    }
+
+    await logAudit(client, {
+      userId: req.user.id, action: "PAYROLL_RUN_CREATED", entityType: "payroll_run", entityId: run.rows[0].id,
+      newValues: { year, month, totalNetPay, employeeCount: summary.length }, req,
+    });
+    await client.query("COMMIT");
+    const alerts = summary.filter((r) => r.alert).map((r) => ({ employeeId: r.employeeId, name: r.name, alert: r.alert }));
+    res.status(201).json({ ...run.rows[0], employeeCount: summary.length, alerts, duplicate: false });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/payroll/runs/:id/approve - DRAFT → APPROVED - بيرحّل قيد واحد: مدين 6100 الرواتب (سطر منفصل
+// لكل فرع بتكلفته - نفس تقسيم computePayrollCostByBranch بالظبط) / دائن 2400 رواتب مستحقة بالإجمالي
+router.post("/runs/:id/approve", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const run = await client.query("SELECT * FROM payroll_runs WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (run.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "تشغيلة الرواتب مش موجودة" }); }
+    if (run.rows[0].status !== "DRAFT") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "التشغيلة دي مش في حالة قابلة للاعتماد (DRAFT بس)" });
+    }
+
+    const employees = await client.query("SELECT branch_id, net_pay FROM payroll_run_employees WHERE payroll_run_id = $1", [req.params.id]);
+    // بالقرش الصحيح (نفس أسلوب services/payroll-engine.js بالظبط) - جمع NUMERIC كـfloat عادي هنا كان
+    // بيطلع فروق زي 9615.38 مقابل 9615.380000000001 بين إجمالي سطور المدين ومجموعها المستقل، فقيد
+    // الاعتماد كان بيترفض كـ"غير متزن" رغم إن الرقمين متطابقين فعليًا لغاية القرش
+    const byBranchCents = {};
+    let totalCents = 0;
+    employees.rows.forEach((e) => {
+      const key = e.branch_id || "overhead";
+      const cents = toCents(Number(e.net_pay));
+      byBranchCents[key] = (byBranchCents[key] || 0) + cents;
+      totalCents += cents;
+    });
+    const byBranch = {};
+    Object.entries(byBranchCents).forEach(([key, cents]) => { byBranch[key] = cents / 100; });
+    const total = totalCents / 100;
+
+    const salariesExpense = await getAccountByCode(client, "6100");
+    const salariesPayable = await getAccountByCode(client, "2400");
+    const lines = Object.entries(byBranch)
+      .filter(([, amount]) => amount > 0)
+      .map(([key, amount]) => ({
+        accountId: salariesExpense.id, debit: amount,
+        branchId: key === "overhead" ? null : Number(key),
+        description: key === "overhead" ? "رواتب - تكلفة عامة (إدارة/مطبخ مركزي)" : null,
+      }));
+    if (total > 0) lines.push({ accountId: salariesPayable.id, credit: total });
+
+    // تاريخ القيد = آخر يوم في شهر التشغيلة (استحقاق نهاية الشهر) - بدون Date/toISOString عشان نتجنب
+    // أي انزلاق تاريخ بسبب فرق التوقيت المحلي (نفس أسلوب resolveDateRange في reports.js بالظبط)
+    const lastDay = new Date(run.rows[0].year, run.rows[0].month, 0).getDate();
+    const entryDate = `${run.rows[0].year}-${String(run.rows[0].month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+    const je = await postJournalEntry(client, {
+      entryDate, description: `رواتب شهر ${run.rows[0].month}/${run.rows[0].year}`,
+      sourceType: "payroll_run", sourceId: run.rows[0].id, branchId: null,
+      lines, idempotencyKey: `payroll-run-${run.rows[0].id}`, userId: req.user.id,
+    });
+
+    const updated = await client.query(
+      `UPDATE payroll_runs SET status = 'APPROVED', approved_by = $1, approved_at = now(), journal_entry_id = $2 WHERE id = $3 RETURNING *`,
+      [req.user.id, je.entry.id, req.params.id]
+    );
+    await logAudit(client, {
+      userId: req.user.id, action: "PAYROLL_RUN_APPROVED", entityType: "payroll_run", entityId: Number(req.params.id),
+      newValues: { journalEntryId: je.entry.id, total }, req,
+    });
+    await client.query("COMMIT");
+    res.json(updated.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (err.code === "PERIOD_CLOSED") return res.status(400).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/payroll/runs/:id/cancel - APPROVED → CANCELLED - أدمن بس (زي عكس أي قيد محاسبي تمامًا)،
+// بيعكس القيد الأصلي، مرفوض لو فيه مدفوعات فعلية اتسجلت بالفعل على التشغيلة (لازم تتعالج الأول)
+router.post("/runs/:id/cancel", requireRole("admin"), async (req, res) => {
+  const { reason } = req.body;
+  if (!reason) return res.status(400).json({ error: "لازم سبب الإلغاء" });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const run = await client.query("SELECT * FROM payroll_runs WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (run.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "تشغيلة الرواتب مش موجودة" }); }
+    if (run.rows[0].status !== "APPROVED") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "مينفعش تلغي إلا تشغيلة معتمدة (APPROVED)" });
+    }
+
+    const payments = await client.query(
+      `SELECT COUNT(*) FROM payroll_payments pp
+       JOIN payroll_run_employees pre ON pre.id = pp.payroll_run_employee_id
+       WHERE pre.payroll_run_id = $1`,
+      [req.params.id]
+    );
+    if (Number(payments.rows[0].count) > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "مينفعش تلغي التشغيلة - فيه مدفوعات فعلية اتسجلت عليها بالفعل" });
+    }
+
+    await reverseJournalEntry(client, {
+      originalEntryId: run.rows[0].journal_entry_id, reason, userId: req.user.id,
+      idempotencyKey: `payroll-run-cancel-${run.rows[0].id}`,
+    });
+
+    const updated = await client.query(
+      `UPDATE payroll_runs SET status = 'CANCELLED', cancelled_by = $1, cancelled_at = now(), cancellation_reason = $2 WHERE id = $3 RETURNING *`,
+      [req.user.id, reason, req.params.id]
+    );
+    await logAudit(client, {
+      userId: req.user.id, action: "PAYROLL_RUN_CANCELLED", entityType: "payroll_run", entityId: Number(req.params.id),
+      metadata: { reason }, req,
+    });
+    await client.query("COMMIT");
+    res.json(updated.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/payroll/runs/:id/payments - سداد فعلي لموظف واحد من تشغيلة معتمدة (زي supplier_payments
+// بالظبط) - مدين 2400 رواتب مستحقة (مرتبط بالموظف عن طريق reference_type='employee') / دائن كاش
+// الفرع أو البنك. {payrollRunEmployeeId, branchId, amount, paymentDate?, paymentMethodId?, notes?, idempotencyKey?}
+router.post("/runs/:id/payments", async (req, res) => {
+  const { payrollRunEmployeeId, branchId, amount, paymentDate, paymentMethodId, notes, idempotencyKey } = req.body;
+  if (!payrollRunEmployeeId || !branchId || !amount || Number(amount) <= 0) {
+    return res.status(400).json({ error: "لازم تحدد الموظف والفرع ومبلغ أكبر من صفر" });
+  }
+  const client = await pool.connect();
+  try {
+    if (idempotencyKey) {
+      const existing = await client.query("SELECT * FROM payroll_payments WHERE idempotency_key = $1", [idempotencyKey]);
+      if (existing.rows.length > 0) return res.status(200).json({ ...existing.rows[0], duplicate: true });
+    }
+
+    await client.query("BEGIN");
+    const runEmployee = await client.query(
+      `SELECT pre.*, pr.status AS run_status FROM payroll_run_employees pre
+       JOIN payroll_runs pr ON pr.id = pre.payroll_run_id
+       WHERE pre.id = $1 AND pre.payroll_run_id = $2 FOR UPDATE OF pre`,
+      [payrollRunEmployeeId, req.params.id]
+    );
+    if (runEmployee.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "سطر الموظف ده مش موجود في التشغيلة دي" });
+    }
+    if (runEmployee.rows[0].run_status !== "APPROVED") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "التشغيلة لازم تكون معتمدة (APPROVED) الأول قبل أي سداد" });
+    }
+
+    const paidSoFar = await client.query(
+      "SELECT COALESCE(SUM(amount),0) AS total FROM payroll_payments WHERE payroll_run_employee_id = $1", [payrollRunEmployeeId]
+    );
+    const remaining = Number(runEmployee.rows[0].net_pay) - Number(paidSoFar.rows[0].total);
+    if (Number(amount) > remaining + 0.0000001) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: `المبلغ أكبر من المتبقي المستحق للموظف (متبقي ${remaining.toFixed(2)}ج)` });
+    }
+
+    let payment;
+    try {
+      payment = await client.query(
+        `INSERT INTO payroll_payments (payroll_run_employee_id, branch_id, payment_date, amount, payment_method_id, notes, idempotency_key, created_by)
+         VALUES ($1,$2,COALESCE($3,CURRENT_DATE),$4,$5,$6,$7,$8) RETURNING *`,
+        [payrollRunEmployeeId, branchId, paymentDate || null, amount, paymentMethodId || null, notes || null, idempotencyKey || null, req.user.id]
+      );
+    } catch (err) {
+      if (err.code === "23505" && idempotencyKey) {
+        await client.query("ROLLBACK");
+        const existing = await client.query("SELECT * FROM payroll_payments WHERE idempotency_key = $1", [idempotencyKey]);
+        return res.status(200).json({ ...existing.rows[0], duplicate: true });
+      }
+      throw err;
+    }
+
+    const payable = await getAccountByCode(client, "2400");
+    let paymentMethodKind = "cash";
+    if (paymentMethodId) {
+      const pm = await client.query("SELECT kind FROM payment_methods WHERE id = $1", [paymentMethodId]);
+      paymentMethodKind = pm.rows[0]?.kind || "cash";
+    }
+    const cashAccount = paymentMethodKind === "cash"
+      ? await getOrCreateBranchCashAccount(client, branchId)
+      : await getAccountByCode(client, "1200");
+
+    const je = await postJournalEntry(client, {
+      entryDate: payment.rows[0].payment_date, description: `سداد راتب: ${runEmployee.rows[0].employee_name}`,
+      sourceType: "payroll_payment", sourceId: payment.rows[0].id, branchId,
+      lines: [
+        {
+          accountId: payable.id, debit: amount, referenceType: "employee", referenceId: runEmployee.rows[0].employee_id,
+          description: `سداد لـ${runEmployee.rows[0].employee_name}`,
+        },
+        { accountId: cashAccount.id, credit: amount },
+      ],
+      idempotencyKey: `payroll-payment-${payment.rows[0].id}`, userId: req.user.id,
+    });
+    await client.query("UPDATE payroll_payments SET journal_entry_id = $1 WHERE id = $2", [je.entry.id, payment.rows[0].id]);
+
+    await logAudit(client, {
+      branchId, userId: req.user.id, action: "PAYROLL_PAYMENT_CREATED", entityType: "payroll_payment", entityId: payment.rows[0].id,
+      newValues: { payrollRunEmployeeId, amount, journalEntryId: je.entry.id }, req,
+    });
+    await client.query("COMMIT");
+    res.status(201).json({ ...payment.rows[0], journal_entry_id: je.entry.id, duplicate: false });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (err.code === "PERIOD_CLOSED") return res.status(400).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

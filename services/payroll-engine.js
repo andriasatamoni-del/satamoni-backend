@@ -262,4 +262,118 @@ async function computeNoTrackingPayroll(pool) {
   }));
 }
 
-module.exports = { computeFingerprintPayroll, computeManualPayroll, computeNoTrackingPayroll };
+function toCents(n) {
+  return Math.round(n * 100);
+}
+
+// ملخص الرواتب الكامل لكل موظف في شهر معيّن (صافي بعد السلف/الجزاءات/المكافآت + تنبيهات) - مصدر واحد
+// بس مستخدم في GET /api/payroll/summary (تقرير حي) وفي POST /api/payroll/runs (المرحلة 4C - snapshot
+// ثابت وقت إنشاء التشغيلة)، عشان الاتنين ميختلفوش عن بعض أبدًا
+async function computePayrollSummary(pool, year, month) {
+  const [fingerprintRows, manualRows, noTrackingRows, adjustments, branches] = await Promise.all([
+    computeFingerprintPayroll(pool, year, month),
+    computeManualPayroll(pool, year, month),
+    computeNoTrackingPayroll(pool),
+    pool.query(
+      `SELECT employee_id,
+              SUM(amount) FILTER (WHERE adjustment_type = 'advance') AS advances,
+              SUM(amount) FILTER (WHERE adjustment_type = 'penalty') AS penalties,
+              SUM(amount) FILTER (WHERE adjustment_type = 'bonus') AS bonuses
+       FROM payroll_adjustments
+       WHERE EXTRACT(YEAR FROM entry_date) = $1 AND EXTRACT(MONTH FROM entry_date) = $2
+       GROUP BY employee_id`,
+      [year, month]
+    ),
+    pool.query("SELECT id, name FROM branches WHERE is_central_kitchen = TRUE LIMIT 1"),
+  ]);
+
+  const adjByEmployee = {};
+  adjustments.rows.forEach((r) => {
+    adjByEmployee[r.employee_id] = {
+      advances: Number(r.advances || 0),
+      penalties: Number(r.penalties || 0),
+      bonuses: Number(r.bonuses || 0),
+    };
+  });
+  const centralKitchenName = branches.rows[0]?.name || "المطبخ المركزي";
+
+  return [...fingerprintRows, ...manualRows, ...noTrackingRows].map((r) => {
+    const adj = adjByEmployee[r.employeeId] || { advances: 0, penalties: 0, bonuses: 0 };
+    // جمع/طرح مبالغ جاهزة (كل واحدة متقرّبة لـ 2 خانة عشرية بالفعل من SQL) بالقرش الصحيح عشان نتجنب
+    // أي انحراف في دقة الأرقام العشرية لجمع/طرح JS العادي
+    const netPayCents = toCents(r.payAfterAttendance) - toCents(adj.advances) - toCents(adj.penalties) + toCents(adj.bonuses);
+    const netPay = netPayCents / 100;
+    const missingBaseSalary = r.wageType === "hourly" ? Number(r.hourlyRate || 0) === 0 : Number(r.baseSalary) === 0;
+    let alert = null;
+    if (netPay < 0) alert = "⚠ راتب بالسالب - راجع الخصومات";
+    else if (missingBaseSalary && r.attendanceSystem !== "none") alert = "⚠ الراتب الأساسي غير مُدخل";
+    else if (r.attendanceSystem === "fingerprint_auto" && !r.primaryBranch) alert = "⚠ لا يوجد سجل بصمة له في أي فرع";
+
+    return {
+      ...r,
+      primaryBranch: r.primaryBranch || (r.attendanceSystem === "manual" ? centralKitchenName : r.attendanceSystem === "none" ? "الإدارة العامة" : null),
+      advances: adj.advances,
+      penalties: adj.penalties,
+      bonuses: adj.bonuses,
+      netPay,
+      alert,
+    };
+  });
+}
+
+// إجمالي تكلفة الرواتب (الصافي المستحق للصرف بعد السلف/الجزاءات/المكافآت) مقسّمة على الفروع.
+// موظفي البصمة بيتحسبوا على فرعهم الأساسي الفعلي؛ موظفي المطبخ المركزي والإدارة (بدون فرع بيع محدد)
+// بيتحسبوا كـ "تكاليف عامة" منفصلة عن أي فرع بيع بعينه - عشان قائمة الدخل متبقاش مضلِّلة بتحميل
+// تكلفة موظف إداري على فرع معين وهو أصلًا بيخدم كل الفروع. مستخدمة في تقرير قائمة الدخل التشغيلي
+// (routes/reports.js) وفي ترحيل تشغيلة الرواتب المحاسبية (routes/payroll.js) - مصدر واحد بس لمنطق
+// تقسيم التكلفة على الفروع، عشان الاتنين ميختلفوش عن بعض
+async function computePayrollCostByBranch(pool, year, month) {
+  const [fingerprintRows, manualRows, noTrackingRows, adjustments] = await Promise.all([
+    computeFingerprintPayroll(pool, year, month),
+    computeManualPayroll(pool, year, month),
+    computeNoTrackingPayroll(pool),
+    pool.query(
+      `SELECT employee_id,
+              SUM(amount) FILTER (WHERE adjustment_type = 'advance') AS advances,
+              SUM(amount) FILTER (WHERE adjustment_type = 'penalty') AS penalties,
+              SUM(amount) FILTER (WHERE adjustment_type = 'bonus') AS bonuses
+       FROM payroll_adjustments
+       WHERE EXTRACT(YEAR FROM entry_date) = $1 AND EXTRACT(MONTH FROM entry_date) = $2
+       GROUP BY employee_id`,
+      [year, month]
+    ),
+  ]);
+
+  const adjByEmployee = {};
+  adjustments.rows.forEach((r) => {
+    adjByEmployee[r.employee_id] = {
+      advances: Number(r.advances || 0),
+      penalties: Number(r.penalties || 0),
+      bonuses: Number(r.bonuses || 0),
+    };
+  });
+
+  const byBranchCents = {};
+  let overheadCents = 0;
+  let totalCents = 0;
+
+  [...fingerprintRows, ...manualRows, ...noTrackingRows].forEach((r) => {
+    const adj = adjByEmployee[r.employeeId] || { advances: 0, penalties: 0, bonuses: 0 };
+    const netPayCents = toCents(r.payAfterAttendance) - toCents(adj.advances) - toCents(adj.penalties) + toCents(adj.bonuses);
+    totalCents += netPayCents;
+    if (r.attendanceSystem === "fingerprint_auto" && r.primaryBranchId) {
+      byBranchCents[r.primaryBranchId] = (byBranchCents[r.primaryBranchId] || 0) + netPayCents;
+    } else {
+      overheadCents += netPayCents;
+    }
+  });
+
+  const byBranch = {};
+  Object.entries(byBranchCents).forEach(([branchId, cents]) => { byBranch[branchId] = cents / 100; });
+  return { byBranch, overhead: overheadCents / 100, total: totalCents / 100 };
+}
+
+module.exports = {
+  computeFingerprintPayroll, computeManualPayroll, computeNoTrackingPayroll,
+  computePayrollCostByBranch, computePayrollSummary, toCents,
+};

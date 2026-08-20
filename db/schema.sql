@@ -1044,6 +1044,69 @@ CREATE TABLE department_sales (
   UNIQUE(branch_id, department, year, month)
 );
 
+-- المرحلة 4C: تشغيلة رواتب شهرية رسمية - snapshot ثابت من نتيجة services/payroll-engine.js وقت
+-- الاعتماد (مش تقرير حي زي GET /api/payroll/summary - لو الحضور/السلف اتعدّلوا بعد كده، الأرقام هنا
+-- مابتتغيّرش) + دورة حياة محاسبية: DRAFT (مسودة، لسه مفيش قيد) → APPROVED (اتاعتمدت وترحّل قيدها
+-- تلقائيًا: مدين 6100 الرواتب [مقسّم على الفروع] / دائن 2400 رواتب مستحقة) → CANCELLED (عكس القيد،
+-- أدمن بس، زي عكس أي قيد محاسبي تمامًا - نفس نمط expenses.status بالظبط)
+CREATE TABLE payroll_runs (
+  id                   SERIAL PRIMARY KEY,
+  year                 INTEGER NOT NULL,
+  month                INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+  status               TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'APPROVED', 'CANCELLED')),
+  total_net_pay        NUMERIC NOT NULL DEFAULT 0,
+  created_by           INTEGER REFERENCES users(id),
+  approved_by          INTEGER REFERENCES users(id),
+  approved_at          TIMESTAMPTZ,
+  cancelled_by         INTEGER REFERENCES users(id),
+  cancelled_at         TIMESTAMPTZ,
+  cancellation_reason  TEXT,
+  -- journal_entry_id: journal_entries معرّف في قسم المحاسبة تحت - الـFK بيتضاف هناك
+  journal_entry_id     INTEGER,
+  idempotency_key      TEXT,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (year, month)
+);
+CREATE UNIQUE INDEX idx_payroll_runs_idempotency_key ON payroll_runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+-- سطر واحد لكل موظف في التشغيلة - snapshot ثابت من صافي راتبه وقت الاعتماد (مش مرجع حي لـ
+-- payroll_adjustments/attendance_punches، عشان الرقم التاريخي يفضل زي ما هو حتى لو الحضور اتصحّح بعد كده)
+CREATE TABLE payroll_run_employees (
+  id              SERIAL PRIMARY KEY,
+  payroll_run_id  INTEGER NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
+  employee_id     INTEGER NOT NULL REFERENCES employees(id),
+  employee_name   TEXT NOT NULL, -- نسخة من اسم الموظف وقت الاعتماد (لو الاسم اتغيّر في employees بعد كده)
+  branch_id       INTEGER REFERENCES branches(id), -- NULL = تكلفة عامة (إدارة/مطبخ مركزي بدون فرع بيع محدد)
+  gross_pay       NUMERIC NOT NULL DEFAULT 0, -- الراتب بعد الحضور، قبل السلف/الجزاءات/المكافآت
+  advances        NUMERIC NOT NULL DEFAULT 0,
+  penalties       NUMERIC NOT NULL DEFAULT 0,
+  bonuses         NUMERIC NOT NULL DEFAULT 0,
+  net_pay         NUMERIC NOT NULL DEFAULT 0,
+  UNIQUE (payroll_run_id, employee_id)
+);
+CREATE INDEX idx_payroll_run_employees_run ON payroll_run_employees(payroll_run_id);
+CREATE INDEX idx_payroll_run_employees_employee ON payroll_run_employees(employee_id);
+
+-- سداد فعلي لموظف من تشغيلة معتمدة - نفس نمط supplier_payments بالظبط (مدين 2400 رواتب مستحقة / دائن
+-- كاش الفرع أو البنك)، ممكن أكتر من سداد جزئي لنفس الموظف لحد ما يوصل net_pay بالكامل. مفيش عمود رصيد
+-- متبقي مخزّن هنا عمدًا - المتبقي بيتحسب وقت القراءة (SUM) زي رصيد المورد بالظبط، عشان يستحيل يحصل drift
+CREATE TABLE payroll_payments (
+  id                       SERIAL PRIMARY KEY,
+  payroll_run_employee_id  INTEGER NOT NULL REFERENCES payroll_run_employees(id),
+  branch_id                INTEGER NOT NULL REFERENCES branches(id),
+  payment_date             DATE NOT NULL DEFAULT CURRENT_DATE,
+  amount                   NUMERIC NOT NULL CHECK (amount > 0),
+  payment_method_id        INTEGER REFERENCES payment_methods(id),
+  notes                    TEXT,
+  -- journal_entry_id: journal_entries معرّف في قسم المحاسبة تحت - الـFK بيتضاف هناك
+  journal_entry_id         INTEGER,
+  idempotency_key          TEXT,
+  created_by               INTEGER REFERENCES users(id),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_payroll_payments_idempotency_key ON payroll_payments(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_payroll_payments_run_employee ON payroll_payments(payroll_run_employee_id);
+
 -- ============================================================
 -- Views مفيدة للداشبورد (بديل شيت "لوحة التحكم")
 -- ============================================================
@@ -1290,6 +1353,9 @@ CREATE INDEX idx_supplier_payments_branch ON supplier_payments(branch_id);
 -- هنا بعد ما accounts/journal_entries يتعرّفوا فعليًا
 ALTER TABLE expense_categories ADD CONSTRAINT fk_expense_categories_account FOREIGN KEY (account_id) REFERENCES accounts(id);
 ALTER TABLE expenses ADD CONSTRAINT fk_expenses_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
+-- المرحلة 4C: payroll_runs/payroll_payments معرّفين قبل كدة في الملف (قسم الرواتب) - الـFK بتتضاف هنا
+ALTER TABLE payroll_runs ADD CONSTRAINT fk_payroll_runs_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
+ALTER TABLE payroll_payments ADD CONSTRAINT fk_payroll_payments_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
 
 -- شجرة الحسابات الافتراضية لساتاموني - حسابات مشتركة على مستوى الشركة (branch_id = NULL). حسابات الكاش
 -- الفرعية (1100-N لكل فرع) بتتنشئ تلقائيًا أول مرة تتحتاج (db/accounting-engine.js) مش هنا، لأن الفروع

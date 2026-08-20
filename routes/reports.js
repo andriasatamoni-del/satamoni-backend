@@ -9,12 +9,15 @@ const {
   computeFingerprintPayroll,
   computeManualPayroll,
   computeNoTrackingPayroll,
+  computePayrollCostByBranch: computePayrollCostByBranchRaw,
 } = require("../services/payroll-engine");
 
 const canSeeReports = requireRole("admin", "accountant", "branch_manager");
 
-function toCents(n) {
-  return Math.round(n * 100);
+// نسخة مربوطة بـpool مباشرة - نفس منطق تقسيم تكلفة الرواتب على الفروع مستخدم هنا وفي routes/payroll.js
+// (المرحلة 4C) من مصدر واحد بس (services/payroll-engine.js) عشان الاتنين ميختلفوش عن بعض
+function computePayrollCostByBranch(year, month) {
+  return computePayrollCostByBranchRaw(pool, year, month);
 }
 
 // كل تقارير مركز التقارير الجديدة بتقبل مدى تاريخ مرن (from/to) بدل ما تتقفل على شهر كامل بس -
@@ -30,56 +33,6 @@ function resolveDateRange(query) {
     return { from, to };
   }
   return null;
-}
-
-// إجمالي تكلفة الرواتب (الصافي المستحق للصرف بعد السلف/الجزاءات/المكافآت) مقسّمة على الفروع.
-// موظفي البصمة بيتحسبوا على فرعهم الأساسي الفعلي؛ موظفي المطبخ المركزي والإدارة (بدون فرع بيع محدد)
-// بيتحسبوا كـ "تكاليف عامة" منفصلة عن أي فرع بيع بعينه - عشان قائمة الدخل متبقاش مضلِّلة بتحميل
-// تكلفة موظف إداري على فرع معين وهو أصلًا بيخدم كل الفروع.
-async function computePayrollCostByBranch(year, month) {
-  const [fingerprintRows, manualRows, noTrackingRows, adjustments] = await Promise.all([
-    computeFingerprintPayroll(pool, year, month),
-    computeManualPayroll(pool, year, month),
-    computeNoTrackingPayroll(pool),
-    pool.query(
-      `SELECT employee_id,
-              SUM(amount) FILTER (WHERE adjustment_type = 'advance') AS advances,
-              SUM(amount) FILTER (WHERE adjustment_type = 'penalty') AS penalties,
-              SUM(amount) FILTER (WHERE adjustment_type = 'bonus') AS bonuses
-       FROM payroll_adjustments
-       WHERE EXTRACT(YEAR FROM entry_date) = $1 AND EXTRACT(MONTH FROM entry_date) = $2
-       GROUP BY employee_id`,
-      [year, month]
-    ),
-  ]);
-
-  const adjByEmployee = {};
-  adjustments.rows.forEach((r) => {
-    adjByEmployee[r.employee_id] = {
-      advances: Number(r.advances || 0),
-      penalties: Number(r.penalties || 0),
-      bonuses: Number(r.bonuses || 0),
-    };
-  });
-
-  const byBranchCents = {};
-  let overheadCents = 0;
-  let totalCents = 0;
-
-  [...fingerprintRows, ...manualRows, ...noTrackingRows].forEach((r) => {
-    const adj = adjByEmployee[r.employeeId] || { advances: 0, penalties: 0, bonuses: 0 };
-    const netPayCents = toCents(r.payAfterAttendance) - toCents(adj.advances) - toCents(adj.penalties) + toCents(adj.bonuses);
-    totalCents += netPayCents;
-    if (r.attendanceSystem === "fingerprint_auto" && r.primaryBranchId) {
-      byBranchCents[r.primaryBranchId] = (byBranchCents[r.primaryBranchId] || 0) + netPayCents;
-    } else {
-      overheadCents += netPayCents;
-    }
-  });
-
-  const byBranch = {};
-  Object.entries(byBranchCents).forEach(([branchId, cents]) => { byBranch[branchId] = cents / 100; });
-  return { byBranch, overhead: overheadCents / 100, total: totalCents / 100 };
 }
 
 // GET /api/reports/daily?year=2026&month=7 - بديل شيت "لوحة التحكم"
