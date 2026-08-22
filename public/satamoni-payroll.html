@@ -469,6 +469,24 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// المرحلة 6 (6D): حماية ضد الضغط المزدوج على أزرار الإجراءات المالية - نفس النمط بالظبط المستخدم في
+// satamoni-accounting.html (الباك اند أصلًا idempotent/محمي بقفل صفوف، الحماية دي بس لتجربة استخدام
+// أنضف عشان مايظهرش خطأ مربك للمستخدم لو ضغط مرتين بسرعة)
+function guardedClick(btn, handler) {
+  return async (...args) => {
+    if (btn.disabled) return;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "جاري التنفيذ...";
+    try {
+      await handler(...args);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  };
+}
+
 document.getElementById("loginBtn").onclick = async () => {
   const email = document.getElementById("loginEmail").value.trim();
   const password = document.getElementById("loginPassword").value;
@@ -1151,20 +1169,22 @@ async function openRunDetail(runId) {
   document.getElementById("runDetailActions").innerHTML = actions.join("") || `<span style="font-size:12px;color:var(--faint)">مفيش إجراء متاح على التشغيلة دي حاليًا</span>`;
 
   if (run.status === "DRAFT") {
-    document.getElementById("runApproveBtn").onclick = async () => {
+    const approveBtn = document.getElementById("runApproveBtn");
+    approveBtn.onclick = guardedClick(approveBtn, async () => {
       errBox.textContent = "";
       try { await api(`/api/payroll/runs/${runId}/approve`, { method: "POST" }); await openRunDetail(runId); await loadRunsList(); }
       catch (e) { errBox.textContent = e.message; }
-    };
+    });
   }
   if (run.status === "APPROVED" && auth.user.role === "admin") {
-    document.getElementById("runCancelBtn").onclick = async () => {
+    const cancelBtn = document.getElementById("runCancelBtn");
+    cancelBtn.onclick = guardedClick(cancelBtn, async () => {
       const reason = prompt("سبب إلغاء التشغيلة؟");
       if (!reason) return;
       errBox.textContent = "";
       try { await api(`/api/payroll/runs/${runId}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }); await openRunDetail(runId); await loadRunsList(); }
       catch (e) { errBox.textContent = e.message; }
-    };
+    });
   }
 
   document.getElementById("runDetailBody").innerHTML = data.employees.map(e => {
@@ -1186,7 +1206,7 @@ async function openRunDetail(runId) {
   }).join("");
 
   document.querySelectorAll("[data-payemp]").forEach(btn => {
-    btn.onclick = async () => {
+    btn.onclick = guardedClick(btn, async () => {
       const row = btn.closest("tr");
       errBox.textContent = "";
       try {
@@ -1200,7 +1220,7 @@ async function openRunDetail(runId) {
         });
         await openRunDetail(runId);
       } catch (e) { errBox.textContent = e.message; }
-    };
+    });
   });
 }
 

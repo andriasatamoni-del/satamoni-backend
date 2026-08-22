@@ -148,7 +148,11 @@ const auth = {
   token: sessionStorage.getItem("satamoni_token") || null,
   user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
 };
-const allowedRoles = ["admin", "accountant"];
+// المرحلة 6 (6D): mدير الفرع كان ممنوع من الصفحة دي تمامًا من الفرونت إند، رغم إن الباك اند
+// (routes/reports.js: canSeeReports = requireRole("admin", "accountant", "branch_manager")) بيسمح
+// له فعليًا وبيقصر النتيجة تلقائيًا على فرعه بس (branchId = req.user.branchId لو الدور branch_manager)
+// - عدم تطابق فرونت/باك إند صريح، والفرونت إند هو اللي غلط هنا مش الباك إند
+const allowedRoles = ["admin", "accountant", "branch_manager"];
 
 function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
 function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
@@ -211,11 +215,17 @@ async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
   populateFilters();
-  try {
-    const branches = await api("/api/branches");
-    document.getElementById("branchSelect").innerHTML =
-      `<option value="">كل الفروع</option>` + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
-  } catch (e) { /* تجاهل - الفلتر هيفضل "كل الفروع" بس */ }
+  // مدير الفرع نتيجته دايمًا مقصورة على فرعه بس من الباك اند (بغض النظر عن أي قيمة تتبعت) - عرض
+  // اختيار فرع ليه هيبقى مضلّل (يختار فرع تاني ويشوف بيانات فرعه هو برضه) فبنخفيه بس لدوره
+  if (auth.user.role === "branch_manager") {
+    document.getElementById("branchSelect").style.display = "none";
+  } else {
+    try {
+      const branches = await api("/api/branches");
+      document.getElementById("branchSelect").innerHTML =
+        `<option value="">كل الفروع</option>` + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    } catch (e) { /* تجاهل - الفلتر هيفضل "كل الفروع" بس */ }
+  }
   await loadDashboard();
 }
 document.getElementById("refreshBtn").onclick = loadDashboard;

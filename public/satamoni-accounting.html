@@ -57,6 +57,12 @@
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
   #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
   #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+
+  /* المرحلة 6 (6D): حالة تحميل/خطأ صريحة لـboot() - نفس نمط satamoni-kitchen.html بالظبط */
+  #bootStatus { max-width: 900px; margin: 20px auto; padding: 0 16px; }
+  #bootStatus .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; text-align: center; }
+  #bootStatus .box.error { border-color: var(--red); }
+  #bootStatus button { margin-top: 10px; padding: 8px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -468,6 +474,7 @@
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
+<div id="bootStatus" style="display:none"></div>
 
 <script>
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
@@ -502,6 +509,27 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// المرحلة 6 (6D): حماية ضد الضغط المزدوج على أزرار الإجراءات المالية (اعتماد/إلغاء/سداد/ترحيل/إقفال) -
+// الباك اند أصلًا idempotent/محمي بقفل صفوف لكل الحالات دي (اتأكد فعليًا في المرحلة 5 و6A)، فده مش
+// بديل عن الحماية دي - هدفه بس تجربة استخدام أنضف: من غير الحماية، ضغطتين سريعتين كانتا بترجّعوا
+// طلبين متزامنين، الباك اند يقبل واحد ويرفض التاني برسالة "already..." مربكة للمستخدم، وده تجربة
+// سيئة حتى لو النتيجة النهائية صحيحة ماليًا. الزرار بيتعطّل فورًا لحد ما الطلب يخلص (نجاح أو فشل)،
+// وبيرجع يشتغل تاني في كل الحالات (finally) عشان المستخدم مايفضلش عالق لو حصل خطأ
+function guardedClick(btn, handler) {
+  return async (...args) => {
+    if (btn.disabled) return;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "جاري التنفيذ...";
+    try {
+      await handler(...args);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  };
+}
+
 document.getElementById("loginBtn").onclick = async () => {
   const email = document.getElementById("loginEmail").value.trim();
   const password = document.getElementById("loginPassword").value;
@@ -517,12 +545,39 @@ document.getElementById("loginBtn").onclick = async () => {
     }
     setSession(data.token, data.user);
     hideLogin();
-    boot();
+    bootSafely();
   } catch (e) {
     errBox.textContent = e.message;
   }
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+// المرحلة 6 (6D): نفس إصلاح satamoni-kitchen.html بالظبط - boot() كان بينادَى من غير await/catch،
+// فأي خطأ (سيرفر واقع/انقطاع إنترنت) كان بيسيب الصفحة فاضية من غير أي رسالة
+async function bootSafely() {
+  const statusBox = document.getElementById("bootStatus");
+  const mainBox = document.getElementById("main");
+  statusBox.style.display = "block";
+  mainBox.style.display = "none";
+  statusBox.innerHTML = `<div class="box">جاري تحميل البيانات...</div>`;
+  try {
+    await boot();
+    statusBox.style.display = "none";
+  } catch (e) {
+    mainBox.style.display = "none";
+    const isNetworkFailure = e instanceof TypeError;
+    const message = isNetworkFailure
+      ? "تعذّر الاتصال بالسيرفر - تأكد من الإنترنت أو حاول تاني بعد شوية"
+      : `حصل خطأ أثناء تحميل البيانات: ${e.message}`;
+    statusBox.innerHTML = `
+      <div class="box error">
+        <div>${message}</div>
+        <button id="bootRetryBtn">إعادة المحاولة</button>
+      </div>`;
+    document.getElementById("bootRetryBtn").onclick = bootSafely;
+    console.error("boot() failed:", e);
+  }
+}
 
 document.querySelectorAll(".tabbtn").forEach(btn => {
   btn.onclick = () => {
@@ -972,18 +1027,18 @@ async function loadJournalEntries() {
   `).join("") || `<tr><td colspan="8">مفيش قيود في المدى/الفلتر ده</td></tr>`;
 
   document.querySelectorAll("[data-jedetail]").forEach(btn => btn.onclick = () => openJeDetail(btn.dataset.jedetail));
-  document.querySelectorAll("[data-jepost]").forEach(btn => btn.onclick = async () => {
+  document.querySelectorAll("[data-jepost]").forEach(btn => btn.onclick = guardedClick(btn, async () => {
     try { await api(`/api/accounting/journal-entries/${btn.dataset.jepost}/post`, { method: "POST" }); loadJournalEntries(); }
     catch (e) { alert(e.message); }
-  });
-  document.querySelectorAll("[data-jereverse]").forEach(btn => btn.onclick = async () => {
+  }));
+  document.querySelectorAll("[data-jereverse]").forEach(btn => btn.onclick = guardedClick(btn, async () => {
     const reason = prompt("سبب عكس القيد؟");
     if (!reason) return;
     try {
       await api(`/api/accounting/journal-entries/${btn.dataset.jereverse}/reverse`, { method: "POST", body: JSON.stringify({ reason }) });
       loadJournalEntries();
     } catch (e) { alert(e.message); }
-  });
+  }));
 }
 document.getElementById("jeRefresh").onclick = loadJournalEntries;
 
@@ -1105,7 +1160,7 @@ async function loadSuppliersForPayment() {
   document.getElementById("payMethod").innerHTML = `<option value="">كاش (افتراضي)</option>` +
     config.paymentMethods.filter(m => m.kind !== "cash").map(m => `<option value="${m.id}">${m.name}</option>`).join("");
 }
-document.getElementById("paySubmit").onclick = async () => {
+document.getElementById("paySubmit").onclick = guardedClick(document.getElementById("paySubmit"), async () => {
   const errBox = document.getElementById("payErr");
   const okBox = document.getElementById("payOk");
   errBox.textContent = ""; okBox.textContent = "";
@@ -1126,7 +1181,7 @@ document.getElementById("paySubmit").onclick = async () => {
     loadSupplierBalances();
     loadApAging();
   } catch (e) { errBox.textContent = e.message; }
-};
+});
 
 // ---------------- المطابقة والفترات ----------------
 function populateReconSelectors() {
@@ -1170,7 +1225,7 @@ async function loadPeriods() {
     <td><span class="badge ${p.status === "CLOSED" ? "inactive" : "active"}">${p.status === "CLOSED" ? "مقفول" : "مفتوح"}</span></td></tr>
   `).join("") || `<tr><td colspan="3">مفيش فترات مسجّلة لسه</td></tr>`;
 }
-document.getElementById("closePeriodBtn").onclick = async () => {
+document.getElementById("closePeriodBtn").onclick = guardedClick(document.getElementById("closePeriodBtn"), async () => {
   const errBox = document.getElementById("periodsErr");
   errBox.textContent = "";
   const year = document.getElementById("closeYear").value;
@@ -1180,7 +1235,7 @@ document.getElementById("closePeriodBtn").onclick = async () => {
     await api(`/api/accounting/periods/${year}/${month}/close`, { method: "POST" });
     loadPeriods();
   } catch (e) { errBox.textContent = e.message; }
-};
+});
 
 async function loadFiscalYearClosings() {
   const closings = await api("/api/accounting/fiscal-year-closings");
@@ -1192,7 +1247,7 @@ async function loadFiscalYearClosings() {
     </tr>
   `).join("") || `<tr><td colspan="3">مفيش سنة مالية مقفولة لسه</td></tr>`;
 }
-document.getElementById("fycCloseBtn").onclick = async () => {
+document.getElementById("fycCloseBtn").onclick = guardedClick(document.getElementById("fycCloseBtn"), async () => {
   const errBox = document.getElementById("fycErr");
   errBox.textContent = "";
   const year = document.getElementById("fycYear").value;
@@ -1202,7 +1257,7 @@ document.getElementById("fycCloseBtn").onclick = async () => {
     loadFiscalYearClosings();
     loadPeriods();
   } catch (e) { errBox.textContent = e.message; }
-};
+});
 
 async function loadBalanceSheet() {
   const errBox = document.getElementById("bsErr");
@@ -1224,7 +1279,7 @@ document.getElementById("bsRefresh").onclick = loadBalanceSheet;
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
   hideLogin();
-  if (allowedRoles.includes(auth.user.role)) boot();
+  if (allowedRoles.includes(auth.user.role)) bootSafely();
   else document.getElementById("accessDenied").style.display = "block";
 } else {
   showLogin();

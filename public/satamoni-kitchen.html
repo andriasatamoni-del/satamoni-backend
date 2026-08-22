@@ -57,6 +57,13 @@
   .linkbtn.danger { color: #F08A83; }
   .fulfillbox { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 6px; }
 
+  /* المرحلة 6 (6D): حالة تحميل/خطأ صريحة لـboot() - قبل كده لو فشل (السيرفر واقع/الإنترنت مقطوع)
+     كانت الصفحة بتفضل فاضية من غير أي رسالة، من غير ما تفرّق بين "مفيش بيانات" و"السيرفر مش راضي يرد" */
+  #bootStatus { max-width: 950px; margin: 20px auto; padding: 0 16px; }
+  #bootStatus .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; text-align: center; }
+  #bootStatus .box.error { border-color: var(--red); }
+  #bootStatus button { margin-top: 10px; padding: 8px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+
   #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
   #loginOverlay.hidden { display: none; }
   #loginBox { width: 320px; text-align: center; }
@@ -201,6 +208,7 @@
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
+<div id="bootStatus" style="display:none"></div>
 
 <script>
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
@@ -252,12 +260,43 @@ document.getElementById("loginBtn").onclick = async () => {
     }
     setSession(data.token, data.user);
     hideLogin();
-    boot();
+    bootSafely();
   } catch (e) {
     errBox.textContent = e.message;
   }
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+// المرحلة 6 (6D): boot() قبل كده كان بينادَى من غير await/catch في مكانين (بعد تسجيل الدخول، وعند
+// استعادة الجلسة من sessionStorage) - أي خطأ جواه (السيرفر واقع/انقطاع إنترنت/رفض صلاحية) كان بيتحول
+// لـunhandled promise rejection صامتة، والصفحة تفضل فاضية من غير أي رسالة وتفرقة بين "مفيش بيانات
+// لسه" (ده أصلًا متعامل معاه في كل جدول برسالة "مفيش سجلات" لو الرد رجع مصفوفة فاضية) و"السيرفر مش
+// راضي يرد خالص". bootSafely() بتلف boot() بحالة تحميل واضحة + رسالة خطأ صريحة (بتفرّق شبكة/اتصال
+// عن رد فعلي من السيرفر) + زرار إعادة محاولة.
+async function bootSafely() {
+  const statusBox = document.getElementById("bootStatus");
+  const mainBox = document.getElementById("main");
+  statusBox.style.display = "block";
+  mainBox.style.display = "none";
+  statusBox.innerHTML = `<div class="box">جاري تحميل البيانات...</div>`;
+  try {
+    await boot();
+    statusBox.style.display = "none";
+  } catch (e) {
+    mainBox.style.display = "none";
+    const isNetworkFailure = e instanceof TypeError; // fetch رمى قبل ما يوصل للسيرفر خالص (مفيش اتصال)
+    const message = isNetworkFailure
+      ? "تعذّر الاتصال بالسيرفر - تأكد من الإنترنت أو حاول تاني بعد شوية"
+      : `حصل خطأ أثناء تحميل البيانات: ${e.message}`;
+    statusBox.innerHTML = `
+      <div class="box error">
+        <div>${message}</div>
+        <button id="bootRetryBtn">إعادة المحاولة</button>
+      </div>`;
+    document.getElementById("bootRetryBtn").onclick = bootSafely;
+    console.error("boot() failed:", e);
+  }
+}
 
 document.querySelectorAll(".tabbtn").forEach(btn => {
   btn.onclick = () => {
@@ -652,7 +691,7 @@ async function loadKitchenStock() {
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
   hideLogin();
-  if (allowedRoles.includes(auth.user.role)) boot();
+  if (allowedRoles.includes(auth.user.role)) bootSafely();
   else document.getElementById("accessDenied").style.display = "block";
 } else {
   showLogin();
