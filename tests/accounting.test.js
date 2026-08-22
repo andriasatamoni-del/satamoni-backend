@@ -309,6 +309,31 @@ describe("5) سداد مورد: قيد + رصيد + idempotency تحت التز�
     const entries = await pool.query("SELECT COUNT(*) FROM journal_entries WHERE idempotency_key = $1", [`supplier-payment-${results[0].body.id}`]);
     expect(Number(entries.rows[0].count)).toBe(1);
   });
+
+  // المرحلة 6.5 (متابعة): المحاسب (accountant) دور مركزي (branch_id = NULL) بالتصميم، بس كان
+  // assertOwnBranch بيرفضه دايمًا مهما كان الفرع المحدد - رغم إن الـendpoint نفسه صراحة بيقبل صلاحية
+  // accounting.create (اللي المحاسب عنده) كبديل لـpurchasing.create. الفحص اتقصر على مدير الفرع بس -
+  // نفس النمط المستخدم فعليًا في routes/expenses.js. مدير الفرع لسه ممنوع يسدد لفرع تاني (الاختبار
+  // التاني تحت يتأكد من كده - الإصلاح ميضعفش عزل الفروع، بس بيفتح الوصول المركزي الصحيح للمحاسب)
+  test("محاسب (دور مركزي، مش مربوط بفرع) يقدر يسدد لأي فرع - كان ممنوع بالغلط قبل كده", async () => {
+    const res = await request(app).post("/api/supplier-payments").set(authed(accountantToken)).send({
+      supplierId, branchId, amount: 50,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.journal_entry_id).toBeTruthy();
+
+    const resOtherBranch = await request(app).post("/api/supplier-payments").set(authed(accountantToken)).send({
+      supplierId, branchId: otherBranchId, amount: 50,
+    });
+    expect(resOtherBranch.status).toBe(201);
+  });
+
+  test("مدير فرع لسه ممنوع يسدد لفرع تاني غير فرعه - العزل بين الفروع محافَظ عليه بعد الإصلاح", async () => {
+    const res = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send({
+      supplierId, branchId: otherBranchId, amount: 50,
+    });
+    expect(res.status).toBe(403);
+  });
 });
 
 describe("6) دورة حياة المصروف: قديم فوري + DRAFT→SUBMITTED→APPROVED→POSTED→CANCELLED", () => {

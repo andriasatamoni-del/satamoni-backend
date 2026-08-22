@@ -14,7 +14,16 @@ router.post("/", requireAuth, requirePermission("purchasing.create", "accounting
   if (!supplierId || !branchId || !amount || Number(amount) <= 0) {
     return res.status(400).json({ error: "لازم مورد وفرع ومبلغ أكبر من صفر" });
   }
-  if (!assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية تسجل سداد من فرع تاني" });
+  // المرحلة 6.5 (متابعة): assertOwnBranch كان بيتطبّق على أي دور مش أدمن - المحاسب (accountant) دور
+  // مركزي غير مربوط بفرع (branch_id = NULL) بالتصميم، فكان بيترفض دايمًا مهما كان الفرع المحدد، رغم
+  // إن الـendpoint نفسه صراحة بيقبل صلاحية accounting.create كبديل لـpurchasing.create (سطر الـpermission
+  // فوق). ده تناقض حقيقي اتكشف في التحقق التشغيلي (Phase 6.5): محاسب عنده صلاحية معلنة للسداد بس
+  // مايقدرش يستخدمها لأي فرع خالص. الفحص هنا بقى مقصور على مدير الفرع بس (نفس النمط المستخدم فعليًا
+  // في routes/expenses.js وفي GET / في نفس الملف ده) - أدوار مركزية (أدمن/محاسب) وصولها عبر الفروع
+  // بالتصميم، مش لازم تتقيّد بفرع واحد
+  if (req.user.role === "branch_manager" && !assertOwnBranch(req.user, branchId)) {
+    return res.status(403).json({ error: "معندكش صلاحية تسجل سداد من فرع تاني" });
+  }
 
   const client = await pool.connect();
   try {
