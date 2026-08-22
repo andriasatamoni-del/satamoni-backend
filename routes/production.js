@@ -95,15 +95,22 @@ router.post("/:id/approve", requireAuth, requireRole("admin"), requirePermission
 router.post("/:id/start", requireAuth, requirePermission("production.create"), async (req, res) => {
   const client = await pool.connect();
   try {
-    const existing = await client.query("SELECT * FROM production_orders WHERE id = $1", [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: "أمر التصنيع مش موجود" });
+    // المرحلة 6 (6A.2): القفل (FOR UPDATE) لازم يكون أول حاجة بعد BEGIN، قبل أي فحص حالة - نفس باج
+    // التزامن اللي اتكشف واتصلح فعليًا في orders.js (void) و kitchen-transfers.js (issue/receive) في
+    // المرحلة 5: طلبين /start متزامنين على نفس أمر التصنيع كانوا هيعدّوا فحص الحالة (APPROVED) لحظة
+    // واحدة وبعدين الاتنين يخصموا المكونات مرتين لأمر واحد
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM production_orders WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "أمر التصنيع مش موجود" }); }
     const order = existing.rows[0];
-    if (order.status !== "APPROVED") return res.status(400).json({ error: "أمر التصنيع ده مش في حالة قابلة للبدء" });
-    if (!assertOwnBranch(req.user, order.branch_id)) return res.status(403).json({ error: "معندكش صلاحية تشغّل تصنيع في الفرع ده" });
+    if (order.status !== "APPROVED") { await client.query("ROLLBACK"); return res.status(400).json({ error: "أمر التصنيع ده مش في حالة قابلة للبدء" }); }
+    if (!assertOwnBranch(req.user, order.branch_id)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية تشغّل تصنيع في الفرع ده" });
+    }
 
     const { raw } = await explodeRecipeConsumption(client, order.recipe_version_id, order.planned_quantity, new Set());
 
-    await client.query("BEGIN");
     for (const [itemId, data] of raw) {
       const consumed = await consumeFromBatches(client, { branchId: order.branch_id, inventoryItemId: itemId, quantity: data.quantity });
       if (consumed && consumed.consumed.length > 0) {
@@ -162,17 +169,23 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
 
   const client = await pool.connect();
   try {
-    const existing = await client.query("SELECT * FROM production_orders WHERE id = $1", [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: "أمر التصنيع مش موجود" });
+    // المرحلة 6 (6A.2): نفس إصلاح التزامن - القفل أول حاجة بعد BEGIN، قبل أي فحص حالة
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM production_orders WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "أمر التصنيع مش موجود" }); }
     const order = existing.rows[0];
-    if (order.status !== "IN_PROGRESS") return res.status(400).json({ error: "أمر التصنيع ده مش في حالة قابلة للإكمال" });
-    if (!assertOwnBranch(req.user, order.branch_id)) return res.status(403).json({ error: "معندكش صلاحية تكمّل تصنيع في الفرع ده" });
+    if (order.status !== "IN_PROGRESS") { await client.query("ROLLBACK"); return res.status(400).json({ error: "أمر التصنيع ده مش في حالة قابلة للإكمال" }); }
+    if (!assertOwnBranch(req.user, order.branch_id)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية تكمّل تصنيع في الفرع ده" });
+    }
 
     const variance = Number(actualQuantity) - Number(order.planned_quantity);
     const variancePercent = Number(order.planned_quantity) ? (variance / Number(order.planned_quantity)) * 100 : 0;
     const settings = await client.query("SELECT production_variance_alert_percent FROM pos_settings WHERE id = 1");
     const threshold = Number(settings.rows[0]?.production_variance_alert_percent ?? 10);
     if (Math.abs(variancePercent) > threshold && !varianceReason) {
+      await client.query("ROLLBACK");
       return res.status(400).json({
         error: `فرق الإنتاج ${variancePercent.toFixed(1)}% أكبر من الحد المسموح (${threshold}%) - لازم توضّح السبب`,
         code: "VARIANCE_REASON_REQUIRED",
@@ -181,12 +194,14 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
 
     const recipeRes = await client.query("SELECT inventory_item_id FROM recipes WHERE id = $1", [order.recipe_id]);
     const outputItemId = recipeRes.rows[0]?.inventory_item_id;
-    if (!outputItemId) return res.status(400).json({ error: "الوصفة دي مش لصنف مصنّع (manufactured_item) - مينفعش تُكمَّل كتصنيع" });
+    if (!outputItemId) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "الوصفة دي مش لصنف مصنّع (manufactured_item) - مينفعش تُكمَّل كتصنيع" });
+    }
 
     const costInfo = await computeRecipeCost(pool, order.recipe_version_id, 1);
     const unitCost = costInfo.incomplete ? null : costInfo.totalCost;
 
-    await client.query("BEGIN");
     let batchId = null;
     if (order.batch_number || order.expiry_date) {
       const batch = await client.query(
@@ -270,15 +285,20 @@ router.post("/:id/cancel", requireAuth, requirePermission("production.cancel"), 
   const { reason } = req.body;
   const client = await pool.connect();
   try {
-    const existing = await client.query("SELECT * FROM production_orders WHERE id = $1", [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: "أمر التصنيع مش موجود" });
+    // المرحلة 6 (6A.2): نفس إصلاح التزامن - القفل أول حاجة بعد BEGIN، قبل أي فحص حالة
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM production_orders WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "أمر التصنيع مش موجود" }); }
     const order = existing.rows[0];
     if (order.status === "COMPLETED" || order.status === "CANCELLED") {
+      await client.query("ROLLBACK");
       return res.status(400).json({ error: "أمر التصنيع ده اكتمل أو اتلغى بالفعل" });
     }
-    if (!assertOwnBranch(req.user, order.branch_id)) return res.status(403).json({ error: "معندكش صلاحية تلغي تصنيع في الفرع ده" });
+    if (!assertOwnBranch(req.user, order.branch_id)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية تلغي تصنيع في الفرع ده" });
+    }
 
-    await client.query("BEGIN");
     if (order.status === "IN_PROGRESS") {
       const inputs = await client.query(
         "SELECT * FROM production_order_batches WHERE production_order_id = $1 AND role = 'input'", [order.id]
