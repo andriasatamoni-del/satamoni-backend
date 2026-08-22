@@ -312,19 +312,23 @@ router.post("/:id/approve", requireAuth, requireRole("admin"), async (req, res) 
 
 // POST /api/kitchen-transfers/:id/issue - بينزل الكمية فعليًا من مخزون فرع المصدر (لسه معدلش مخزون الوجهة)
 // - بيحافظ على هوية الدفعة (لو الصنف متتبّع بدفعات) عشان تتنقل صح وقت الاستلام
+// المرحلة 5: BEGIN + FOR UPDATE من أول السطر (مش بعد التحقق) - عشان طلبات /issue متزامنة لنفس التحويل
+// متعدّيش شرط status==='approved' مع بعض قبل أي واحد يعمل commit (اتأكد فعليًا إن ده كان بيحصل، بيسبب
+// خصم مضاعف من مخزون فرع المصدر، في tests/phase5-integration.test.js)
 router.post("/:id/issue", requireAuth, stockManagers, async (req, res) => {
   const client = await pool.connect();
   try {
-    const existing = await client.query("SELECT * FROM kitchen_transfers WHERE id = $1", [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: "التحويل مش موجود" });
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM kitchen_transfers WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "التحويل مش موجود" }); }
     const t = existing.rows[0];
-    if (t.status !== "approved") return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للإصدار" });
+    if (t.status !== "approved") { await client.query("ROLLBACK"); return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للإصدار" }); }
     if (!assertOwnBranch(req.user, t.from_branch_id)) {
+      await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية تصدّر من الفرع ده" });
     }
     const items = await client.query("SELECT * FROM kitchen_transfer_items WHERE kitchen_transfer_id = $1", [t.id]);
 
-    await client.query("BEGIN");
     for (const it of items.rows) {
       await issueTransferItem(client, {
         kitchenTransferItemId: it.id, fromBranchId: t.from_branch_id, inventoryItemId: it.inventory_item_id,
@@ -360,17 +364,18 @@ router.post("/:id/receive", requireAuth, stockManagers, async (req, res) => {
   }
   const client = await pool.connect();
   try {
-    const existing = await client.query("SELECT * FROM kitchen_transfers WHERE id = $1", [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: "التحويل مش موجود" });
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM kitchen_transfers WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "التحويل مش موجود" }); }
     const t = existing.rows[0];
-    if (t.status !== "in_transit") return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للاستلام" });
+    if (t.status !== "in_transit") { await client.query("ROLLBACK"); return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للاستلام" }); }
     if (!assertOwnBranch(req.user, t.to_branch_id)) {
+      await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية تستلم في الفرع ده" });
     }
     const items = await client.query("SELECT * FROM kitchen_transfer_items WHERE kitchen_transfer_id = $1", [t.id]);
     const receivedByItem = new Map(receivedItems.map((r) => [r.inventoryItemId, Number(r.quantityReceived)]));
 
-    await client.query("BEGIN");
     let anyVariance = false;
     for (const it of items.rows) {
       const qtyReceived = receivedByItem.get(it.inventory_item_id) ?? Number(it.quantity_sent ?? it.quantity);

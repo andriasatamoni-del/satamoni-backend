@@ -674,14 +674,21 @@ router.post(
 
     const client = await pool.connect();
     try {
-      const orderRes = await client.query("SELECT * FROM orders WHERE id = $1", [req.params.id]);
-      if (orderRes.rows.length === 0) return res.status(404).json({ error: "الطلب مش موجود" });
+      // المرحلة 5: BEGIN + FOR UPDATE هنا (مش بعد التحقق زي قبل كده) - عشان نقفل صف الطلب من أول لحظة
+      // قبل أي تحقق، لا بعده. قبل كده كان التحقق بيحصل من غير قفل خالص، فطلبات void متزامنة لنفس
+      // الطلب كانت كلها بتعدّي شرط status==='completed' قبل ما أي واحد يعمل commit - نتيجته المخزون
+      // بيترجع أكتر من مرة (اتأكد فعليًا بـ3 طلبات متزامنة في tests/phase5-integration.test.js)
+      await client.query("BEGIN");
+      const orderRes = await client.query("SELECT * FROM orders WHERE id = $1 FOR UPDATE", [req.params.id]);
+      if (orderRes.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلب مش موجود" }); }
       const order = orderRes.rows[0];
 
       if ((req.user.role === "cashier" || req.user.role === "branch_manager") && !assertOwnBranch(req.user, order.branch_id)) {
+        await client.query("ROLLBACK");
         return res.status(403).json({ error: "معندكش صلاحية تسترجع طلب فرع تاني" });
       }
       if (order.status !== "completed" || order.voided) {
+        await client.query("ROLLBACK");
         return res.status(400).json({ error: "الاسترجاع (Void) بس للطلبات المكتملة اللي لسه ما اتسترجعتش" });
       }
 
@@ -689,18 +696,16 @@ router.post(
       if (req.user.role === "admin" || req.user.role === "branch_manager") {
         finalApproverId = req.user.id;
       } else {
-        if (!approverId) return res.status(400).json({ error: "استرجاع الطلب محتاج موافقة مدير الفرع أو الأدمن" });
+        if (!approverId) { await client.query("ROLLBACK"); return res.status(400).json({ error: "استرجاع الطلب محتاج موافقة مدير الفرع أو الأدمن" }); }
         const approver = await client.query(
           `SELECT id FROM users
            WHERE id = $1 AND is_active = TRUE
              AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
           [approverId, order.branch_id]
         );
-        if (approver.rows.length === 0) return res.status(400).json({ error: "الموافقة على الاسترجاع غير صالحة" });
+        if (approver.rows.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ error: "الموافقة على الاسترجاع غير صالحة" }); }
         finalApproverId = approverId;
       }
-
-      await client.query("BEGIN");
 
       // synced_at بيترجع NULL عمدًا - لو الطلب ده كان اتبعت للمركزي قبل الاسترجاع، لازم يترفع تاني
       // بحالته الجديدة (ملغي/مسترجع) عشان الإيرادات المجمّعة مركزيًا متفضلش شايلة بيع اتلغى فعليًا

@@ -183,6 +183,15 @@ CREATE TABLE orders (
   idempotency_key   TEXT
 );
 CREATE UNIQUE INDEX idx_orders_idempotency_key ON orders(idempotency_key) WHERE idempotency_key IS NOT NULL;
+-- المرحلة 5 (تدقيق الجاهزية للإنتاج): orders مالهاش أي index على created_at خالص قبل كده - قائمة
+-- الطلبات (GET /api/orders، بدون فلتر تاريخ) بترتب بـcreated_at DESC على الجدول كله، وتقارير الفترات
+-- بتفلتر بـcreated_at::date. جرّبنا index تعبيري (created_at::date) لكنه رفض يتعمل - CAST من
+-- timestamptz لـdate مش IMMUTABLE في بوستجريس (بيعتمد على timezone الجلسة)، فمحتاج AT TIME ZONE ثابت
+-- يتأكد إنه مطابق فعليًا لتايم زون الاتصال المستخدم قبل ما يتضاف - ده تغيير أعمق من "index إضافي آمن"،
+-- موثّق كتوصية منفصلة في تقرير المرحلة 5 مش مطبّق هنا. الـindex العادي ده بيفيد على الأقل ترتيب/فلترة
+-- created_at المباشرة (زي GET /api/orders) والفلترة بـbranch_id
+CREATE INDEX idx_orders_branch_created_at ON orders (branch_id, created_at);
+CREATE INDEX idx_orders_created_at ON orders (created_at);
 
 -- سجل كل تغيير في حالة الطلب (بديل "نقدر نرجع لكل سجل الأوردرات")
 CREATE TABLE order_status_log (
@@ -759,6 +768,10 @@ CREATE INDEX idx_recipe_versions_recipe ON recipe_versions(recipe_id);
 ALTER TABLE order_items ADD CONSTRAINT fk_order_items_recipe_version
   FOREIGN KEY (recipe_version_id) REFERENCES recipe_versions(id);
 CREATE INDEX idx_order_items_recipe_version ON order_items(recipe_version_id);
+-- المرحلة 5 (تدقيق الجاهزية للإنتاج): order_items.order_id مالوش index خالص قبل كده - كل جوين
+-- orders↔order_items (تفاصيل طلب، تقارير المبيعات/الكاتالوج...) كان بيعمل Seq Scan على الجدول كله.
+-- اتأكد فعليًا بـEXPLAIN ANALYZE على 50 ألف طلب/بند - الفرق قبل/بعد موثّق في تقرير المرحلة 5
+CREATE INDEX idx_order_items_order ON order_items(order_id);
 
 -- مكونات نسخة الوصفة - المكوّن نفسه ممكن يكون خام أو "مصنّع له وصفة تانية بتاعته" (sub-recipe) - محرك
 -- الاستهلاك النظري بيتعرّف على ده تلقائيًا وينفجر فيه (routes recipe-engine.js) لحد ما يوصل لخام بس
