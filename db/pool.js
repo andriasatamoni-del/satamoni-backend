@@ -7,11 +7,19 @@ const { Pool } = require("pg");
 // DB_POOL_MAX (أقصى عدد اتصالات مفتوحة في نفس الوقت)، DB_POOL_IDLE_TIMEOUT_MS (بعد قد إيه اتصال idle
 // بيتقفل تلقائيًا)، DB_POOL_CONNECTION_TIMEOUT_MS (أقصى وقت انتظار للحصول على اتصال قبل ما يرمي خطأ -
 // بديل أفضل من انتظار معلّق للأبد لو الـpool اتخنق بالكامل).
+// المرحلة 7A: كان الـPool من غير أي إعداد SSL خالص - قواعد بيانات مُدارة سحابية (Render، RDS، إلخ)
+// بترفض أي اتصال من غير SSL افتراضيًا، فمن غير الإعداد ده أول محاولة اتصال بأي بيئة staging/إنتاج
+// سحابية كانت هتفشل فورًا. الشهادة نفسها عادةً من CA وسيط مش موجود في trust store الافتراضي لـNode،
+// فـ`rejectUnauthorized: false` هو اللي غالبية مزوّدي الاستضافة المُدارة (Render/Heroku) بيوثّقوه رسميًا
+// كإعداد قياسي - بس ده لسه محتاج تأكيد من توثيق المزوّد الفعلي وقت النشر الحقيقي (مش مفترض هنا كأمر
+// واقع، `DB_SSL` اختياري صراحة زي بقية إعدادات الـPool وdefault-هـ false عشان ميأثرش على أي بيئة محلية
+// حالية بتشتغل عادي من غيره)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: Number(process.env.DB_POOL_MAX || 20),
   idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_TIMEOUT_MS || 30000),
   connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS || 5000),
+  ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
 });
 
 // المرحلة 6 (6F): pg.Pool بيطلق event اسمه 'error' على مستوى الـpool نفسه (مش كل query عادي - ده

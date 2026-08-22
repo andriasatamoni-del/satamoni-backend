@@ -43,6 +43,7 @@
 | `SLOW_REQUEST_THRESHOLD_MS` | لا | حد تنبيه الطلبات البطيئة في اللوج (افتراضي 1000) |
 | `LOGIN_MAX_ATTEMPTS` / `LOGIN_LOCKOUT_MINUTES` | لا | إعدادات قفل تسجيل الدخول بعد محاولات فاشلة متكررة |
 | `SYNC_API_KEY` | لا (إجباري بس لو استخدمت المزامنة) | مفتاح مشترك ثابت لمزامنة فرع↔مركزي - المزامنة معطّلة تمامًا من غيره |
+| `DB_SSL` | لا (إجباري فعليًا لأي قاعدة بيانات مُدارة سحابية زي Render/RDS) | `true` بيفعّل `ssl: { rejectUnauthorized: false }` على pg Pool (`db/pool.js`) - افتراضي `false` (بدون SSL، مناسب لقاعدة بيانات محلية). من غيره، الاتصال بقاعدة سحابية مُدارة بيفشل غالبًا لأنها بترفض اتصال بدون SSL افتراضيًا |
 | `BACKUP_DIR` / `BACKUP_DAILY_RETENTION_DAYS` / `BACKUP_MONTHLY_RETENTION_MONTHS` | لا | إعدادات النسخ الاحتياطي - تفاصيل في `docs/BACKUP_AND_RECOVERY.md` |
 | `ADMIN_NAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | إجباري بس وقت `npm run seed:admin` (أول إعداد) | راجع قسم 8 تحت |
 
