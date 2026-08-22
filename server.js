@@ -2,9 +2,21 @@ require("dotenv").config();
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
+const { getCorsOptions } = require("./middleware/cors");
+const { securityHeaders } = require("./middleware/security-headers");
+const { errorSanitizer } = require("./middleware/error-sanitizer");
 
 const app = express();
-app.use(cors());
+app.use(securityHeaders);
+app.use(errorSanitizer);
+
+// المرحلة 6 (6B): كان cors() من غير أي إعدادات - بيسمح لأي origin يبعت طلب، وده خطر حقيقي أول ما
+// السيرفر ده يتعرض على الإنترنت العام (حتى مع Bearer token مش cookies - أي origin برضه يقدر يقرا
+// رد أي endpoint من غير موافقة صريحة). CORS_ORIGINS: قايمة origins مفصولة بفاصلة (بيئة الإنتاج لازم
+// تحددها صراحة). لو مش محددة: في الإنتاج (NODE_ENV=production) منمنع أي cross-origin تمامًا (الصفحات
+// الثابتة في public/ بتتقدّم من نفس الـorigin أصلًا فمش متأثرة - المنع بس لأي استدعاء API من origin
+// خارجي)؛ في التطوير (مفيش NODE_ENV=production) بنسمح بالكل زي قبل كده عشان الراحة أثناء التطوير.
+app.use(cors(getCorsOptions()));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 

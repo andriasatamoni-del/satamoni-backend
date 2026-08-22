@@ -10,12 +10,46 @@ const { logAudit } = require("../db/audit");
 const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_TTL = "12h";
 
+// المرحلة 6 (6B): تحديد محاولات دخول فاشلة - نفس نمط قفل الـPIN تحت بالظبط (في الذاكرة، مفيش مكتبة
+// جديدة). المفتاح هنا IP الطالب بس - مش الإيميل - عمدًا، عشان رد القفل مايبقاش وسيلة غير مباشرة
+// لمعرفة إن إيميل معيّن "موجود" (لو كنا بنقفل بالإيميل، محاولات كتير على إيميل حقيقي هتقفل بعد
+// N محاولة، بينما إيميل وهمي ممكن يتصرف مختلف لو فيه أي فرق منطقي - بالـIP الرد متطابق تمامًا
+// في الحالتين). قابل للتحكم بمتغيرات بيئة (LOGIN_MAX_ATTEMPTS/LOGIN_LOCKOUT_MINUTES) زي ما اتطلب صراحة.
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 10);
+const LOGIN_LOCKOUT_MS = Number(process.env.LOGIN_LOCKOUT_MINUTES || 15) * 60 * 1000;
+const loginAttempts = new Map(); // ip -> { count, lockedUntil }
+
+function getLoginLockoutSeconds(ip) {
+  const entry = loginAttempts.get(ip);
+  if (!entry || !entry.lockedUntil) return 0;
+  const remaining = entry.lockedUntil - Date.now();
+  return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
+}
+function recordLoginFailure(ip) {
+  const entry = loginAttempts.get(ip) || { count: 0, lockedUntil: null };
+  entry.count += 1;
+  if (entry.count >= LOGIN_MAX_ATTEMPTS) {
+    entry.lockedUntil = Date.now() + LOGIN_LOCKOUT_MS;
+    entry.count = 0;
+  }
+  loginAttempts.set(ip, entry);
+}
+function recordLoginSuccess(ip) {
+  loginAttempts.delete(ip);
+}
+
 // POST /api/auth/login - {email, password} -> {token, user}
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: "لازم تبعت email و password" });
   }
+
+  const lockedSeconds = getLoginLockoutSeconds(req.ip);
+  if (lockedSeconds > 0) {
+    return res.status(429).json({ error: `محاولات دخول كتير غلط - جرب تاني بعد ${lockedSeconds} ثانية` });
+  }
+
   try {
     const result = await pool.query(
       `SELECT u.*, COALESCE(b.is_central_kitchen, FALSE) AS is_central_kitchen
@@ -26,17 +60,20 @@ router.post("/login", async (req, res) => {
     );
     const user = result.rows[0];
     if (!user) {
+      recordLoginFailure(req.ip);
       await logAudit(pool, { action: "LOGIN_FAILED", metadata: { email }, req });
       return res.status(401).json({ error: "بيانات الدخول غلط" });
     }
 
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
+      recordLoginFailure(req.ip);
       await logAudit(pool, {
         branchId: user.branch_id, userId: user.id, action: "LOGIN_FAILED", metadata: { email }, req,
       });
       return res.status(401).json({ error: "بيانات الدخول غلط" });
     }
+    recordLoginSuccess(req.ip);
     await logAudit(pool, { branchId: user.branch_id, userId: user.id, action: "LOGIN", req });
 
     const payload = {
