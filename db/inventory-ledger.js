@@ -47,11 +47,16 @@ async function consumeFromBatches(client, { branchId, inventoryItemId, quantity 
     );
   }
   // لو الكمية المطلوبة أكبر من كل الدفعات المتاحة (رصيد إجمالي أعلى من مجموع الدفعات المسجّلة لأي سبب)،
-  // الباقي بياخد تكلفة آخر دفعة اتصرف منها كتقريب معقول - رصيد branch_inventory_stock يفضل هو مصدر
-  // الحقيقة للكمية الإجمالية بغض النظر عن دقة توزيع التكلفة على الدفعات
+  // الباقي بياخد تكلفة آخر دفعة اتصرف منها كتقريب معقول. المرحلة 6: الباقي ده لازم يترجع كجزء من
+  // consumed برضه (batchId: null) - قبل كده كان بيتحسب في totalCost/weightedUnitCost بس من غير ما
+  // يترجع كجزء قابل للتسجيل، فأي Caller بيلف على consumed.consumed بس (kitchen-transfers.js،
+  // production.js) كان بيسجل حركة/يخصم رصيد بقيمة الدفعات المتاحة بس ويتجاهل الباقي تمامًا - فرق
+  // حقيقي بين الرصيد المتاح فعليًا والمسجّل، اتكشف بالتحقق الفعلي في اختبارات تكامل المرحلة 6 (تحويل
+  // بكمية أكبر من رصيد الدفعة المتاحة). دلوقتي كل الكمية المطلوبة بترجع مغطاة داخل consumed دايمًا.
   if (remaining > 0 && batches.rows.length > 0) {
     const lastCost = Number(batches.rows[batches.rows.length - 1].unit_cost || 0);
     totalCost += remaining * lastCost;
+    consumed.push({ batchId: null, quantity: remaining, unitCost: lastCost, batchNumber: null, expiryDate: null, productionDate: null });
   }
   const weightedUnitCost = quantity > 0 ? totalCost / quantity : null;
   return { weightedUnitCost, lastBatchId, consumed };

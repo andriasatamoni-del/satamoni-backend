@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { postInventoryMovement, consumeFromBatches } = require("../db/inventory-ledger");
+const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
 const { logAudit } = require("../db/audit");
 
 const stockManagers = requireRole("admin", "branch_manager");
@@ -105,6 +106,55 @@ async function receiveTransferItem(client, { kitchenTransferItemId, toBranchId, 
       userId, businessDate, negativeStockOverrideApproved: true,
     });
   }
+}
+
+// المرحلة 6 (تدقيق الجاهزية للإنتاج - قرار معماري): التحويل بين الفروع كان قبل كده بيحرّك المخزون الفعلي
+// من غير أي قيد محاسبي خالص - رصيد المخزون (1400) في دفتر الأستاذ لفرع المصدر ميقلّش ولفرع الوجهة
+// ميزيدش، فالتسوية على مستوى الفرع الواحد بعد أي تحويل كانت بتظهر فرق حقيقي غير مبرر (اتأكد فعليًا في
+// تدقيق المرحلة 5). القرار: قيد واحد بيترحّل وقت الاستلام (/receive) مش وقت الإصدار (/issue) - عشان
+// الاستلام هو أول لحظة الكمية اللي وصلت فعليًا بقت معروفة بالتأكيد (زي استلام البضاعة GRN بالظبط -
+// القيد بيترحّل وقت /post مش وقت إنشاء الطلب). القيد: دائن 1400 فرع المصدر بقيمة اللي *خرج فعليًا*
+// (TRANSFER_OUT، بتكلفته التاريخية من الدفعة) / مدين 1400 فرع الوجهة بقيمة اللي *وصل فعليًا*
+// (TRANSFER_IN) / أي فرق بينهم (عجز/زيادة نقل) بيتحمّل كخسارة على 5300 (هالك) بفرع المصدر - بالظبط
+// زي فلسفة الهالك الموجودة بالفعل، مش حساب جديد مخترع. صافي الأثر على الشركة كلها صفر دايمًا - القيد
+// بيوزّع نفس القيمة بين فرعين، مش بيخلق ربح أو خسارة من نقل داخلي (إلا عجز النقل الفعلي لو حصل)
+async function postTransferAccounting(client, { transferId, fromBranchId, toBranchId, userId, businessDate }) {
+  const totals = await client.query(
+    `SELECT branch_id, movement_type, COALESCE(SUM(total_cost), 0) AS value
+     FROM inventory_movements
+     WHERE reference_type = 'kitchen_transfer' AND reference_id = $1
+       AND movement_type IN ('TRANSFER_OUT', 'TRANSFER_IN')
+     GROUP BY branch_id, movement_type`,
+    [transferId]
+  );
+  const issuedValue = totals.rows.filter((r) => r.movement_type === "TRANSFER_OUT")
+    .reduce((s, r) => s + Number(r.value), 0);
+  const receivedValue = totals.rows.filter((r) => r.movement_type === "TRANSFER_IN")
+    .reduce((s, r) => s + Number(r.value), 0);
+
+  const issuedCents = Math.round(issuedValue * 100);
+  const receivedCents = Math.round(receivedValue * 100);
+  if (issuedCents === 0 && receivedCents === 0) return null; // مفيش قيمة تكلفة أصلًا - مفيش قيد يتسجل
+
+  const inv1400 = await getAccountByCode(client, "1400");
+  const waste5300 = await getAccountByCode(client, "5300");
+  const lines = [
+    { accountId: inv1400.id, branchId: fromBranchId, credit: issuedCents / 100, description: `تحويل مخزون خارج - تحويل #${transferId}` },
+    { accountId: inv1400.id, branchId: toBranchId, debit: receivedCents / 100, description: `تحويل مخزون وارد - تحويل #${transferId}` },
+  ];
+  const varianceCents = issuedCents - receivedCents;
+  if (varianceCents > 0) {
+    lines.push({ accountId: waste5300.id, branchId: fromBranchId, debit: varianceCents / 100, description: `عجز نقل - تحويل #${transferId}` });
+  } else if (varianceCents < 0) {
+    lines.push({ accountId: waste5300.id, branchId: toBranchId, credit: (-varianceCents) / 100, description: `زيادة نقل غير مفسّرة - تحويل #${transferId}` });
+  }
+
+  const result = await postJournalEntry(client, {
+    entryDate: businessDate, description: `تحويل مخزون بين الفروع - تحويل #${transferId}`,
+    sourceType: "kitchen_transfer", sourceId: transferId, lines, userId, autoPost: true,
+    idempotencyKey: `kitchen-transfer-${transferId}`,
+  });
+  return result;
 }
 
 // GET /api/kitchen-transfers?branchId=&date= - تحويلات سنتر كيتشن للفروع (مع تفاصيل الأصناف)
@@ -387,9 +437,13 @@ router.post("/:id/receive", requireAuth, stockManagers, async (req, res) => {
       await client.query("UPDATE kitchen_transfer_items SET quantity_received = $1 WHERE id = $2", [qtyReceived, it.id]);
     }
     const newStatus = anyVariance ? "partially_received" : "received";
+    const accountingResult = await postTransferAccounting(client, {
+      transferId: t.id, fromBranchId: t.from_branch_id, toBranchId: t.to_branch_id,
+      userId: req.user.id, businessDate: t.business_date,
+    });
     const updated = await client.query(
-      `UPDATE kitchen_transfers SET status = $1, received_by = $2, received_at = now() WHERE id = $3 RETURNING *`,
-      [newStatus, req.user.id, t.id]
+      `UPDATE kitchen_transfers SET status = $1, received_by = $2, received_at = now(), journal_entry_id = $3 WHERE id = $4 RETURNING *`,
+      [newStatus, req.user.id, accountingResult ? accountingResult.entry.id : null, t.id]
     );
     if (t.kitchen_order_id) {
       await client.query("UPDATE kitchen_orders SET status = 'fulfilled' WHERE id = $1", [t.kitchen_order_id]);

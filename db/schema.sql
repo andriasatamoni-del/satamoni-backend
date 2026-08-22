@@ -602,7 +602,13 @@ CREATE TABLE kitchen_transfers (
   received_by      INTEGER REFERENCES users(id),
   approved_at      TIMESTAMPTZ,
   issued_at        TIMESTAMPTZ,
-  received_at      TIMESTAMPTZ
+  received_at      TIMESTAMPTZ,
+  -- المرحلة 6: قيد محاسبة التحويل بين الفروع (دائن 1400 فرع المصدر بقيمة اللي خرج فعليًا / مدين 1400
+  -- فرع الوجهة بقيمة اللي وصل فعليًا / أي فرق بينهم - عجز نقل - على 5300 هالك بفرع المصدر) - بيترحّل
+  -- مرة واحدة بس وقت الاستلام (مش وقت الإصدار) لأن ده أول لحظة الكمية الفعلية اللي وصلت بقت معروفة
+  -- بالتأكيد، زي بالظبط استلام البضاعة (GRN) بيترحّل وقت /post مش وقت إنشاء الطلب. الـFK بيتضاف تحت
+  -- بعد ما journal_entries يتعرّف
+  journal_entry_id INTEGER
 );
 
 -- بنود التحويل بالتفصيل (أصناف وكميات) - amount_at_cost فوق بيتحسب من مجموعها
@@ -1477,6 +1483,8 @@ ALTER TABLE payroll_runs ADD CONSTRAINT fk_payroll_runs_journal_entry FOREIGN KE
 ALTER TABLE payroll_payments ADD CONSTRAINT fk_payroll_payments_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
 -- الميزانية العمومية وقفل السنة المالية: fiscal_year_closings معرّف قبل كدة في الملف - الـFK بتتضاف هنا
 ALTER TABLE fiscal_year_closings ADD CONSTRAINT fk_fiscal_year_closings_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
+-- المرحلة 6: kitchen_transfers معرّف قبل كدة في الملف - الـFK بتتضاف هنا
+ALTER TABLE kitchen_transfers ADD CONSTRAINT fk_kitchen_transfers_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
 
 -- شجرة الحسابات الافتراضية لساتاموني - حسابات مشتركة على مستوى الشركة (branch_id = NULL). حسابات الكاش
 -- الفرعية (1100-N لكل فرع) بتتنشئ تلقائيًا أول مرة تتحتاج (db/accounting-engine.js) مش هنا، لأن الفروع

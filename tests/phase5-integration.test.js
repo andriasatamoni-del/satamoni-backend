@@ -200,22 +200,138 @@ describe("Flow E: Branch Transfer - inventory symmetry + accounting gap detectio
     expect(Number(toAfter.rows[0].quantity) - Number(toBefore.rows[0].quantity)).toBe(transferQty);
   });
 
-  test("فحص فجوة محاسبية حقيقية: التحويل مبيرحّلش أي قيد محاسبي - المخزون الفعلي والدفتر بيختلفوا للفرع الواحد بعد التحويل", async () => {
-    const entryCount = await pool.query(
-      "SELECT COUNT(*) AS c FROM journal_entries WHERE source_type IN ('kitchen_transfer','branch_transfer','transfer')"
+  test("المرحلة 6 (6A.1): التحويل بقى بيرحّل قيد محاسبي واحد وقت الاستلام - دائن 1400 فرع المصدر / مدين 1400 فرع الوجهة، متزن، ومربوط بالتحويل عن طريق journal_entry_id", async () => {
+    const entry = await pool.query(
+      "SELECT * FROM journal_entries WHERE source_type='kitchen_transfer' AND source_id=$1",
+      [transferId]
     );
-    expect(Number(entryCount.rows[0].c)).toBe(0); // فجوة موثّقة صراحة - لا يوجد أي قيد محاسبي للتحويلات حاليًا
+    expect(entry.rows.length).toBe(1);
+    expect(entry.rows[0].status).toBe("POSTED");
 
-    // نتأكد إمبريقيًا إن ده فعلًا بيظهر كفرق في تقرير المطابقة نفسه لما نفلتر بفرع واحد بعد تحويل حقيقي:
-    // القيمة الفعلية (physical) لازم تختلف عن رصيد حساب المخزون 1400 المرحّل لنفس الفرع، لأن مفيش أي
-    // قيد اتسجل بمغادرة/وصول المخزون بين الفرعين محاسبيًا - العملية أثّرت على الفعلي بس، مش على الدفتر
+    const transferRow = await pool.query("SELECT journal_entry_id FROM kitchen_transfers WHERE id=$1", [transferId]);
+    expect(transferRow.rows[0].journal_entry_id).toBe(entry.rows[0].id);
+
+    const lines = await pool.query(
+      `SELECT jel.*, a.code FROM journal_entry_lines jel JOIN accounts a ON a.id = jel.account_id
+       WHERE jel.journal_entry_id = $1`,
+      [entry.rows[0].id]
+    );
+    const totalDebit = lines.rows.reduce((s, l) => s + Number(l.debit), 0);
+    const totalCredit = lines.rows.reduce((s, l) => s + Number(l.credit), 0);
+    expect(totalDebit).toBe(totalCredit); // القيد لازم يكون متزن دايمًا
+
+    const movementValues = await pool.query(
+      `SELECT movement_type, COALESCE(SUM(total_cost),0) AS v FROM inventory_movements
+       WHERE reference_type='kitchen_transfer' AND reference_id=$1 AND movement_type IN ('TRANSFER_OUT','TRANSFER_IN')
+       GROUP BY movement_type`,
+      [transferId]
+    );
+    const issuedValue = Number(movementValues.rows.find((r) => r.movement_type === "TRANSFER_OUT").v);
+    const receivedValue = Number(movementValues.rows.find((r) => r.movement_type === "TRANSFER_IN").v);
+    expect(issuedValue).toBe(receivedValue); // استلام كامل بدون عجز نقل - نفس القيمة بالظبط بين الفرعين
+
+    const inv1400 = await accountId("1400");
+    const fromLine = lines.rows.find((l) => l.account_id === inv1400 && l.branch_id === branchId);
+    const toLine = lines.rows.find((l) => l.account_id === inv1400 && l.branch_id === otherBranchId);
+    expect(Number(fromLine.credit)).toBeCloseTo(issuedValue, 2); // القيد بيعكس بالظبط قيمة اللي خرج فعليًا من فرع المصدر
+    expect(Number(toLine.debit)).toBeCloseTo(receivedValue, 2); // ونفس القيمة اللي وصلت فرع الوجهة
+
+    // مفيش إيراد أو مصروف اتسجل من عملية النقل الداخلي - بس حسابات مخزون 1400 اتحركت بين الفرعين
+    const revenueOrExpense = lines.rows.some((l) => !l.code.startsWith("14") && !l.code.startsWith("53"));
+    expect(revenueOrExpense).toBe(false);
+  });
+
+  test("تكرار نفس الاستلام (idempotency) - مبيضاعفش القيد المحاسبي", async () => {
+    const repeat = await request(app).post(`/api/kitchen-transfers/${transferId}/receive`).set(authed(otherManagerToken))
+      .send({ items: [{ inventoryItemId: flourId, quantityReceived: transferQty }] });
+    expect(repeat.status).toBe(400); // التحويل بقى received فعلًا - مش قابل للاستلام تاني من الأساس
+    const entryCount = await pool.query(
+      "SELECT COUNT(*) AS c FROM journal_entries WHERE source_type='kitchen_transfer' AND source_id=$1",
+      [transferId]
+    );
+    expect(Number(entryCount.rows[0].c)).toBe(1);
+  });
+
+  test("بعد ترحيل قيد التحويل: تقرير المطابقة المحاسبية على الفرع الواحد ما بيظهرش فجوة المخزون التاريخية", async () => {
     const recon = await request(app).get(`/api/reports/accounting-reconciliation?year=2026&month=1&branchId=${branchId}`).set(authed(adminToken));
     expect(recon.status).toBe(200);
     const invCheck = recon.body.checks.find((c) => c.name.includes("المخزون"));
     expect(invCheck).toBeTruthy();
-    // الفحص ده معلوماتي بس (مش لازم يفشل) - الهدف توثيق إن الفرق (لو موجود) قابل للاكتشاف عن طريق نفس
-    // التقرير الموجود بالفعل، مش إنه "خطأ" لازم يتصلح فورًا (قرار معماري: عدم ترحيل قيد للتحويلات
-    // لأن حساب 1400 حساب واحد على مستوى الشركة أصلًا مش مقسّم لكل فرع بشكل محاسبي رسمي)
+  });
+});
+
+// ============================================================
+// المرحلة 6 (6A.1): تزامن حقيقي على قيد محاسبة التحويل - عدة استلامات متزامنة لنفس التحويل
+// ============================================================
+describe("Phase 6A.1 Concurrency: استلام متزامن لنفس التحويل - قيد محاسبي واحد بس", () => {
+  test("3 طلبات استلام متزامنة لنفس التحويل - نجاح واحد بس وقيد محاسبي واحد بس", async () => {
+    await request(app).post("/api/inventory/purchase-receipt").set(authed(managerToken))
+      .send({ branchId, inventoryItemId: flourId, quantity: 30, unitCost: 25 }).expect(201);
+    const req1 = await request(app).post("/api/kitchen-transfers/request").set(authed(adminToken)).send({
+      fromBranchId: branchId, toBranchId: otherBranchId, businessDate: "2026-01-22",
+      items: [{ inventoryItemId: flourId, quantity: 12 }],
+    });
+    const transferId2 = req1.body.id;
+    await request(app).post(`/api/kitchen-transfers/${transferId2}/approve`).set(authed(adminToken)).expect(200);
+    await request(app).post(`/api/kitchen-transfers/${transferId2}/issue`).set(authed(managerToken)).expect(200);
+
+    const results = await Promise.all(
+      Array.from({ length: 3 }, () => request(app).post(`/api/kitchen-transfers/${transferId2}/receive`).set(authed(otherManagerToken))
+        .send({ items: [{ inventoryItemId: flourId, quantityReceived: 12 }] }))
+    );
+    const successCount = results.filter((r) => r.status === 200).length;
+    expect(successCount).toBe(1);
+
+    const entryCount = await pool.query(
+      "SELECT COUNT(*) AS c FROM journal_entries WHERE source_type='kitchen_transfer' AND source_id=$1",
+      [transferId2]
+    );
+    expect(Number(entryCount.rows[0].c)).toBe(1);
+  });
+});
+
+// ============================================================
+// المرحلة 6 (6A.1): عجز نقل - وصل أقل مما خرج - الفرق بيتحمّل كخسارة على 5300 (هالك) بفرع المصدر
+// ============================================================
+describe("Phase 6A.1 Transit Variance: استلام كمية أقل من المُصدَرة - الفرق يترحّل كهالك على فرع المصدر", () => {
+  test("إصدار 15 كيلو واستلام 10 بس - القيد بيسجل عجز النقل على 5300 بفرع المصدر ولسه متزن", async () => {
+    await request(app).post("/api/inventory/purchase-receipt").set(authed(managerToken))
+      .send({ branchId, inventoryItemId: flourId, quantity: 20, unitCost: 22 }).expect(201);
+    const req1 = await request(app).post("/api/kitchen-transfers/request").set(authed(adminToken)).send({
+      fromBranchId: branchId, toBranchId: otherBranchId, businessDate: "2026-01-25",
+      items: [{ inventoryItemId: flourId, quantity: 15 }],
+    });
+    const transferId3 = req1.body.id;
+    await request(app).post(`/api/kitchen-transfers/${transferId3}/approve`).set(authed(adminToken)).expect(200);
+    await request(app).post(`/api/kitchen-transfers/${transferId3}/issue`).set(authed(managerToken)).expect(200);
+    const receive = await request(app).post(`/api/kitchen-transfers/${transferId3}/receive`).set(authed(otherManagerToken))
+      .send({ items: [{ inventoryItemId: flourId, quantityReceived: 10 }] });
+    expect(receive.status).toBe(200);
+    expect(receive.body.status).toBe("partially_received");
+
+    const movementValues = await pool.query(
+      `SELECT movement_type, COALESCE(SUM(total_cost),0) AS v FROM inventory_movements
+       WHERE reference_type='kitchen_transfer' AND reference_id=$1 AND movement_type IN ('TRANSFER_OUT','TRANSFER_IN')
+       GROUP BY movement_type`,
+      [transferId3]
+    );
+    const issuedValue = Number(movementValues.rows.find((r) => r.movement_type === "TRANSFER_OUT").v);
+    const receivedValue = Number(movementValues.rows.find((r) => r.movement_type === "TRANSFER_IN").v);
+    expect(issuedValue).toBeGreaterThan(receivedValue); // فعلًا وصل أقل مما خرج
+
+    const entry = await pool.query("SELECT id FROM journal_entries WHERE source_type='kitchen_transfer' AND source_id=$1", [transferId3]);
+    const lines = await pool.query(
+      `SELECT jel.*, a.code FROM journal_entry_lines jel JOIN accounts a ON a.id = jel.account_id WHERE jel.journal_entry_id = $1`,
+      [entry.rows[0].id]
+    );
+    const totalDebit = lines.rows.reduce((s, l) => s + Number(l.debit), 0);
+    const totalCredit = lines.rows.reduce((s, l) => s + Number(l.credit), 0);
+    expect(totalDebit).toBe(totalCredit); // العجز اتحمّل كخسارة - القيد لسه متزن
+
+    const waste5300 = await accountId("5300");
+    const wasteLine = lines.rows.find((l) => l.account_id === waste5300 && l.branch_id === branchId);
+    expect(wasteLine).toBeTruthy();
+    expect(Number(wasteLine.debit)).toBeCloseTo(issuedValue - receivedValue, 2);
   });
 });
 
