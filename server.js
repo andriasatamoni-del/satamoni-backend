@@ -6,7 +6,28 @@ const { getCorsOptions } = require("./middleware/cors");
 const { securityHeaders } = require("./middleware/security-headers");
 const { errorSanitizer } = require("./middleware/error-sanitizer");
 const { requestLogger } = require("./middleware/request-logger");
+const { validateEnv } = require("./db/env-validation");
 const pool = require("./db/pool");
+
+// المرحلة 6 (6I): قبل كده لو DATABASE_URL أو JWT_SECRET ناقصة، السيرفر كان يا إما بيطيح بـexception
+// خام مبهم جوه سلسلة require عميقة (JWT_SECRET) يا إما بيشتغل عادي وبيبان شغال لحد أول طلب حقيقي
+// (DATABASE_URL - health check هيرجع 503 بس لو حد راقبه أصلًا). دلوقتي كل متغيرات البيئة المهمة
+// بتتفحص هنا صراحة قبل أي حاجة تانية، وبتوقف التشغيل برسالة واضحة (مش استثناء مبهم) لو في مشكلة حقيقية.
+// process.exit(1) هنا بس لو الملف ده اتشغل مباشرة (زي app.listen تحت بالظبط) - عشان لو حد عمل require
+// لـserver.js من كود تاني (زي tests/) من غير المتغيرات دي مظبوطة، مايطيحش الـprocess كله بتاعه
+const envCheck = validateEnv();
+for (const warning of envCheck.warnings) {
+  console.warn(`[env] تحذير: ${warning}`);
+}
+if (envCheck.errors.length > 0) {
+  for (const error of envCheck.errors) {
+    console.error(`[env] خطأ: ${error}`);
+  }
+  if (require.main === module) {
+    console.error("[env] السيرفر مش هيشتغل - لازم تصلّح المشاكل فوق في متغيرات البيئة الأول");
+    process.exit(1);
+  }
+}
 
 const app = express();
 app.use(securityHeaders);
@@ -85,6 +106,39 @@ const PORT = process.env.PORT || 4000;
 // ملف تاني عمله require (زي tests/) بيستخدم الـapp من غير ما يفتح بورت حقيقي، عشان supertest يقدر
 // يبعت طلبات للـapp في نفس الـprocess من غير سيرفر شغال فعليًا
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`Satamoni backend running on port ${PORT}`));
+  const server = app.listen(PORT, () => console.log(`Satamoni backend running on port ${PORT}`));
+
+  // المرحلة 6 (6I): من غير ده، أي إيقاف للسيرفر (نشر جديد، إعادة تشغيل، docker/orchestrator بيبعت
+  // SIGTERM عادةً) كان بيقطع الطلبات الجارية فورًا (نص عملية بيع/دفع ممكن تتقطع في نص التنفيذ) ويسيب
+  // اتصالات pg pool مفتوحة من غير إغلاق نظيف. دلوقتي: (1) وقف استقبال اتصالات جديدة فورًا، (2) استنى
+  // الطلبات الجارية تخلص طبيعي، (3) اقفل pg pool، (4) اخرج بكود نظيف - مع مهلة أمان (10 ثواني) تجبر
+  // الخروج لو طلب عالق مش بيخلص، عشان الـprocess ما يفضلش معلّق للأبد لحد ما orchestrator يضطر لـSIGKILL
+  let shuttingDown = false;
+  function shutdown(signal) {
+    if (shuttingDown) return; // إشارة تانية أثناء الإغلاق - نتجاهلها، إحنا ماشيين في الطريق أصلًا
+    shuttingDown = true;
+    console.log(`[shutdown] ${signal} استُلمت - بدء إيقاف آمن (مفيش اتصالات جديدة، الطلبات الجارية هتخلص عادي)...`);
+
+    const forceExitTimer = setTimeout(() => {
+      console.error("[shutdown] استنفدنا مهلة الإيقاف الآمن (10 ثواني) - إغلاق إجباري");
+      process.exit(1);
+    }, 10000);
+    forceExitTimer.unref();
+
+    server.close(async (err) => {
+      if (err) console.error(`[shutdown] خطأ وقت إغلاق السيرفر: ${err.message}`);
+      try {
+        await pool.end();
+        console.log("[shutdown] اتقفل pg pool - خروج نظيف");
+        process.exit(err ? 1 : 0);
+      } catch (poolErr) {
+        console.error(`[shutdown] خطأ وقت إغلاق pg pool: ${poolErr.message}`);
+        process.exit(1);
+      }
+    });
+  }
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 module.exports = app;
