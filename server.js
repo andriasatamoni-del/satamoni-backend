@@ -5,10 +5,13 @@ const cors = require("cors");
 const { getCorsOptions } = require("./middleware/cors");
 const { securityHeaders } = require("./middleware/security-headers");
 const { errorSanitizer } = require("./middleware/error-sanitizer");
+const { requestLogger } = require("./middleware/request-logger");
+const pool = require("./db/pool");
 
 const app = express();
 app.use(securityHeaders);
 app.use(errorSanitizer);
+app.use(requestLogger);
 
 // المرحلة 6 (6B): كان cors() من غير أي إعدادات - بيسمح لأي origin يبعت طلب، وده خطر حقيقي أول ما
 // السيرفر ده يتعرض على الإنترنت العام (حتى مع Bearer token مش cookies - أي origin برضه يقدر يقرا
@@ -50,7 +53,32 @@ app.use("/api/goods-receipts", require("./routes/goods-receipts"));
 app.use("/api/accounting", require("./routes/accounting"));
 app.use("/api/supplier-payments", require("./routes/supplier-payments"));
 
-app.get("/health", (req, res) => res.json({ status: "ok" }));
+// المرحلة 6 (6F): /health كان بيرجّع "ok" ثابتة دايمًا حتى لو قاعدة البيانات مش شغالة خالص - ده بيخلي
+// أي مراقبة/health-check بتعتمد عليه (لوحة تحكم استضافة، uptime monitor) تعتقد السيرفر تمام رغم إن
+// كل طلب حقيقي هيفشل. دلوقتي بيتحقق فعليًا من الاتصال بقاعدة البيانات (SELECT 1 بمهلة قصيرة)، وبيفرّق
+// صراحة بين "السيرفر شغال بس القاعدة مش وصلة" (503) و"كله تمام" (200) - من غير تسريب أي تفصيل داخلي
+// (رسالة خطأ Postgres الخام، اسم القاعدة، إلخ) في الرد نفسه.
+app.get("/health", async (req, res) => {
+  // ملحوظة: Promise.race لوحده بيسيب الـsetTimeout شغال (timer معلّق) حتى لو الـquery خلصت أول
+  // منه - بيفضل يستهلك event loop لحد 3 ثواني بعد كل health check لوحده. بنمسحه صراحة بـclearTimeout
+  // في الحالتين (نجاح أو فشل) عشان ما يفضلش تايمر معلّق، خصوصًا مهم وقت إيقاف السيرفر بأمان (graceful
+  // shutdown في 6I) وعشان الاختبارات تقفل بنظافة.
+  let timeoutId;
+  try {
+    await Promise.race([
+      pool.query("SELECT 1"),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("timeout")), 3000);
+      }),
+    ]);
+    clearTimeout(timeoutId);
+    res.json({ status: "ok", db: "ok" });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    console.error(JSON.stringify({ timestamp: new Date().toISOString(), event: "health_check_db_failure", message: err.message }));
+    res.status(503).json({ status: "degraded", db: "unreachable" });
+  }
+});
 
 const PORT = process.env.PORT || 4000;
 // بيشتغل السيرفر فعليًا بس لو الملف ده اتشغل مباشرة (node server.js / npm start / npm run dev) - لو
