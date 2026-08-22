@@ -27,6 +27,22 @@ function requirePosAuthIfNeeded(req, res, next) {
   next();
 }
 
+// المرحلة 6 (6G): quantity من غير أي تحقق كان ممكن يوصل بأي قيمة - صفر أو سالب كان بيعدي بهدوء ويقلب
+// إجمالي الطلب سالب (subtotal/total NUMERIC بيقبلوا القيمة دي من غير مشكلة على مستوى القاعدة)، وده
+// طريق ملتوي يهرّب تأثير "استرجاع" من غير ما يعدي على تدفق الاسترجاع/الإلغاء الرسمي أو يترحّل بمحاسبة
+// صحيحة. NaN/Infinity كانت بتترفض بس على مستوى عمود order_items.quantity (INTEGER) بخطأ Postgres خام
+// مش برسالة واضحة، وبعد ما orders (subtotal/total NUMERIC بيقبل NaN فعليًا) كان ممكن يتحفظ الأول قبل
+// ما order_items يرفض ويعمل rollback - نفس النتيجة النهائية (لا حاجة تتسجل) بس بمسار مربك. التحقق ده
+// بيرفض بوضوح ورسالة عربي قبل أي حساب أو استعلام
+const MAX_ORDER_ITEM_QUANTITY = 10000;
+function validateQuantity(quantity) {
+  if (typeof quantity !== "number" || !Number.isFinite(quantity) || !Number.isInteger(quantity)) {
+    throw new Error("الكمية لازم تكون رقم صحيح");
+  }
+  if (quantity <= 0) throw new Error("الكمية لازم تكون أكبر من صفر");
+  if (quantity > MAX_ORDER_ITEM_QUANTITY) throw new Error(`الكمية أكبر من الحد المسموح (${MAX_ORDER_ITEM_QUANTITY})`);
+}
+
 // بيتأكد من سعر كل سطر في الطلب من المنيو الحقيقي في قاعدة البيانات - مش بيصدّق unitPrice/priceDelta
 // الجايين من الواجهة خالص، عشان جهاز كاشير متلاعب فيه (أو نداء API مباشر) ميقدرش يبيع صنف بسعر
 // مزوّر أو يهرّب "خصم" مقنّع في هيئة مرفق بسعر سالب يتخطى نظام موافقة الخصومات بالكامل.
@@ -36,6 +52,7 @@ async function resolveOrderItems(client, items, source) {
   const useTalabatPrice = source === "talabat";
   const resolved = [];
   for (const it of items) {
+    validateQuantity(it.quantity);
     if (it.comboId) {
       const combo = await client.query(
         "SELECT price FROM combos WHERE id = $1 AND is_active = TRUE",

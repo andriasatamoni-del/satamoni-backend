@@ -633,8 +633,16 @@ router.get("/item-performance", requireAuth, canSeeReports, async (req, res) => 
 
 // GET /api/reports/catalog?from=&to=&branchId= - كل الأصناف والأحجام (حتى اللي مبيعتش خالص في
 // الفترة دي)، مع إجمالي المبيعات لكل واحد - عشان تعرف مين محتاج يتشال من المنيو
+// المرحلة 6 (6G): من غير from/to كان بيدّي مدى "من أول الزمن" (1900-2999) كـdefault - يعني استعلام
+// المبيعات الفرعي (subquery) بيمسح كل أوردر اتعمل في تاريخ المطعم كله في كل مرة، حتى لو الرد النهائي
+// (عدد أصناف المنيو) صغير وثابت. تكلفة المسح بتكبر مع الوقت من غير أي فايدة - القائمة نفسها (كل
+// الأصناف) لسه بترجع حتى من غير تحديد مدى، بس المبيعات المجمّعة بقت افتراضيًا آخر 90 يوم (قابلة
+// للتغيير صراحة بـfrom/to لمراجعة أوسع)
 router.get("/catalog", requireAuth, canSeeReports, async (req, res) => {
-  const range = resolveDateRange(req.query) || { from: "1900-01-01", to: "2999-12-31" };
+  const range = resolveDateRange(req.query) || {
+    from: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+    to: new Date().toISOString().slice(0, 10),
+  };
   let branchId = req.query.branchId ? Number(req.query.branchId) : null;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
 
@@ -1864,20 +1872,34 @@ router.get("/purchasing-recommendations", requireAuth, canSeePurchasing, async (
       [branchId]
     );
 
+    // المرحلة 6 (6G): كان في الأول بيبعت query منفصل لـsupplier_items لكل صنف تحت نقطة إعادة الطلب لوحده
+    // (N+1 حقيقي ومقاس فعليًا - 150 صنف تحت الحد = 151 رحلة قاعدة بيانات متتالية، ~170ms على localhost
+    // ومتوقع أسوأ بكتير على شبكة حقيقية). دلوقتي استعلام واحد بس بـinventory_item_id = ANY(...) لكل
+    // الأصناف مع بعض، والتجميع حسب الصنف بيحصل في الذاكرة
+    const itemIds = belowReorder.rows.map((r) => r.inventory_item_id);
+    const supplierItemsRes = itemIds.length
+      ? await pool.query(
+          `SELECT si.*, s.name AS supplier_name
+           FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id
+           WHERE si.inventory_item_id = ANY($1::int[]) AND si.effective_to IS NULL AND s.status = 'ACTIVE'`,
+          [itemIds]
+        )
+      : { rows: [] };
+    const supplierItemsByItem = new Map();
+    for (const si of supplierItemsRes.rows) {
+      if (!supplierItemsByItem.has(si.inventory_item_id)) supplierItemsByItem.set(si.inventory_item_id, []);
+      supplierItemsByItem.get(si.inventory_item_id).push(si);
+    }
+
     const recommendations = [];
     for (const row of belowReorder.rows) {
       const target = row.max_stock != null ? Number(row.max_stock) : Number(row.reorder_point) * 2;
       const suggestedQuantity = Math.max(0, target - Number(row.quantity));
 
-      const supplierItems = await pool.query(
-        `SELECT si.*, s.name AS supplier_name
-         FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id
-         WHERE si.inventory_item_id = $1 AND si.effective_to IS NULL AND s.status = 'ACTIVE'`,
-        [row.inventory_item_id]
-      );
+      const supplierItems = supplierItemsByItem.get(row.inventory_item_id) || [];
       let recommendedSupplier = null;
       let bestCost = Infinity;
-      for (const si of supplierItems.rows) {
+      for (const si of supplierItems) {
         const { normalizedCost, incomplete } = await normalizedSupplierCost(pool, si, row.stock_unit);
         if (si.preferred_supplier) { recommendedSupplier = { supplierId: si.supplier_id, supplierName: si.supplier_name, normalizedCost, reason: "preferred" }; break; }
         if (!incomplete && normalizedCost < bestCost) {
@@ -2111,10 +2133,22 @@ router.get("/balance-sheet", requireAuth, requireRole("admin", "accountant"), as
 });
 
 // GET /api/reports/general-ledger?accountId=&from=&to=&branchId= - كشف حساب واحد بالتفصيل مع رصيد جاري
+// المرحلة 6 (6G): من غير from صريحة كان بيرجّع كل سطور الحساب من أول قيد في تاريخ الشركة كله - نمو
+// غير محدود مع الوقت (كل عملية بيع/شراء بترحّل سطر جديد)، حساب زي "الصندوق" أو "الإيرادات" بعد سنة
+// تشغيل ممكن يوصل لعشرات آلاف السطور في رد واحد. لو from مش محددة بنرجّع آخر سنة بس كـdefault معقول
+// (قابل للتغيير صراحة لمراجعة تاريخية أبعد لو محتاج) + LIMIT كشبكة أمان أخيرة مع علم truncated صريح
+const GENERAL_LEDGER_ROW_LIMIT = 20000;
 router.get("/general-ledger", requireAuth, canSeeAccounting, async (req, res) => {
   const { accountId } = req.query;
   if (!accountId) return res.status(400).json({ error: "لازم تحدد accountId" });
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  const to = req.query.to || null;
+  let from = req.query.from || null;
+  if (!from) {
+    const defaultFrom = to ? new Date(to) : new Date();
+    defaultFrom.setFullYear(defaultFrom.getFullYear() - 1);
+    from = defaultFrom.toISOString().slice(0, 10);
+  }
   try {
     const accountRes = await pool.query("SELECT * FROM accounts WHERE id = $1", [accountId]);
     if (accountRes.rows.length === 0) return res.status(404).json({ error: "الحساب مش موجود" });
@@ -2127,11 +2161,12 @@ router.get("/general-ledger", requireAuth, canSeeAccounting, async (req, res) =>
        FROM journal_entry_lines jel
        JOIN journal_entries je ON je.id = jel.journal_entry_id
        WHERE jel.account_id = $1 AND je.status <> 'DRAFT'
-         AND ($2::date IS NULL OR je.entry_date >= $2)
+         AND je.entry_date >= $2
          AND ($3::date IS NULL OR je.entry_date <= $3)
          AND ($4::int IS NULL OR jel.branch_id = $4)
-       ORDER BY je.entry_date, je.id, jel.id`,
-      [accountId, req.query.from || null, req.query.to || null, branchId]
+       ORDER BY je.entry_date, je.id, jel.id
+       LIMIT $5`,
+      [accountId, from, to, branchId, GENERAL_LEDGER_ROW_LIMIT]
     );
 
     let running = 0;
@@ -2148,8 +2183,9 @@ router.get("/general-ledger", requireAuth, canSeeAccounting, async (req, res) =>
 
     res.json({
       account: { id: account.id, code: account.code, name: account.name, accountType: account.account_type },
-      from: req.query.from || null, to: req.query.to || null, branchId,
+      from, to, branchId,
       lines, closingBalance: running,
+      truncated: result.rows.length >= GENERAL_LEDGER_ROW_LIMIT,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

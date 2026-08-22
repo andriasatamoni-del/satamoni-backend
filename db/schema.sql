@@ -209,7 +209,14 @@ CREATE TABLE order_items (
   item_id                  INTEGER REFERENCES menu_items(id),
   variant_id               INTEGER REFERENCES menu_item_variants(id),
   combo_id                 INTEGER REFERENCES combos(id), -- لو السطر ده عرض/كومبو مش صنف مفرد (item_id/variant_id بيبقوا NULL)
-  quantity                 INTEGER NOT NULL DEFAULT 1,
+  -- المرحلة 6 (6G): quantity INTEGER كان بيرفض NaN/Infinity/كسور تلقائيًا على مستوى النوع نفسه، بس
+  -- مبيمنعش صفر أو رقم سالب - سطر بكمية سالبة كان بيعدي بهدوء ويقلب إجمالي الطلب (subtotal/total) سالب
+  -- من غير ما يعدي على تدفق الاسترجاع/الإلغاء الرسمي، وده بيكسر أي تسوية محاسبية بعديها. الحد الأعلى
+  -- (10000) شبكة أمان ضد قيمة غلط بمراحل (زي إدخال خطأ بصفر زيادة) مش قيد عملي حقيقي - طلبات جملة/كاترينج
+  -- كبيرة لسه ممكنة تحت الحد ده براحة. التحقق الأساسي بيحصل في التطبيق (routes/orders.js) قبل أي حساب؛
+  -- الـCHECK هنا خط دفاع تاني على مستوى القاعدة نفسها (defense in depth) - أي إدخال مباشر لقاعدة البيانات
+  -- (مش بس عن طريق الـAPI) محمي برضه
+  quantity                 INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0 AND quantity <= 10000),
   unit_price                NUMERIC NOT NULL,
   line_total                NUMERIC NOT NULL,
   cost_at_sale              NUMERIC, -- تكلفة الريسبي وقت البيع فعليًا (مش محسوبة لحظيًا من الريسبي الحالي) - لدقة قائمة الدخل التاريخية

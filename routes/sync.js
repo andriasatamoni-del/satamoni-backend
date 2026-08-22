@@ -27,48 +27,93 @@ async function assertBranchExists(branchId) {
 // status/payment_status/voided قابلين للتحديث لو الطلب اتغيّر محليًا بعد أول مزامنة (زي استرجاع
 // طلب بعد ما كان اتبعت أصلًا) - عشان كده ON CONFLICT بيعمل UPDATE مش DO NOTHING، وبنمسح order_items
 // القديمة ونعيد إدخالها من جديد في كل مزامنة (مفيش هوية ثابتة لكل سطر صنف يوضح إنه هو نفسه القديم).
+// المرحلة 6 (6G): كان في الأول بيعمل INSERT/UPDATE منفصل لكل طلب في الحلقة (+DELETE وINSERT منفصلين
+// لكل سطر صنف جواه) - N+1 حقيقي على مسار المزامنة نفسه (لو فرع اتقطع نت يوم كامل وبعدين رجع، batch
+// المزامنة ممكن يوصل مئات الطلبات دفعة واحدة، يعني مئات الرحلات المتتالية لقاعدة البيانات، كل واحدة
+// مستنية رد اللي قبلها - على شبكة حقيقية بينها وبين قاعدة البيانات المركزية ده تأخير كبير محسوس، مش
+// بس على localhost). دلوقتي كل الطلبات في الـbatch بتتعمل upsert في استعلام واحد بس (UNNEST)، وكل سطور
+// الأصناف كمان استعلام واحد بس - العدد الكلي للرحلات لقاعدة البيانات بقى ثابت (3) مهما كان حجم الـbatch.
+//
+// ملحوظة: لو نفس sync_uuid اتكرر أكتر من مرة جوه نفس الـbatch (مش متوقع عمليًا - كل طلب بيتولّد له
+// sync_uuid واحد بس عند إنشائه محليًا - لكن للأمان)، بنحتفظ بآخر ظهور بس قبل الـupsert، لأن ON CONFLICT
+// DO UPDATE في نفس استعلام الـINSERT مبيقدرش يعالج نفس صف الصراع مرتين (Postgres بيرمي خطأ صريح لو
+// حاولنا) - وده أصلًا نفس سلوك الكود القديم اللي كان بيعالج كل تكرار بالتتابع فآخر واحد هو اللي بيفضل
 router.post("/orders", async (req, res) => {
   const { branchId, orders } = req.body;
   if (!branchId || !Array.isArray(orders)) return res.status(400).json({ error: "بيانات ناقصة" });
   if (!(await assertBranchExists(branchId))) {
     return res.status(400).json({ error: `مفيش فرع بالرقم ${branchId} في السيرفر المركزي` });
   }
+  if (orders.length === 0) return res.json({ ok: true, processed: 0, received: 0 });
+
+  const bySyncUuid = new Map();
+  for (const o of orders) bySyncUuid.set(o.sync_uuid, o); // آخر ظهور بيكسب
+  const uniqueOrders = [...bySyncUuid.values()];
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    let processed = 0;
-    for (const o of orders) {
-      const result = await client.query(
-        `INSERT INTO orders
-          (branch_id, source, order_type, table_number, address_details,
-           customer_name, customer_phone, subtotal, delivery_fee, discount, total,
-           status, payment_status, voided, void_reason, created_at, sync_uuid, synced_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now())
-         ON CONFLICT (sync_uuid) DO UPDATE SET
-           status = EXCLUDED.status,
-           payment_status = EXCLUDED.payment_status,
-           voided = EXCLUDED.voided,
-           void_reason = EXCLUDED.void_reason,
-           synced_at = now()
-         RETURNING id`,
-        [branchId, o.source, o.order_type, o.table_number, o.address_details,
-         o.customer_name, o.customer_phone, o.subtotal, o.delivery_fee, o.discount, o.total,
-         o.status, o.payment_status, o.voided || false, o.void_reason || null, o.created_at, o.sync_uuid]
-      );
-      processed++;
-      const orderId = result.rows[0].id;
-      await client.query("DELETE FROM order_items WHERE order_id = $1", [orderId]);
+
+    const source = [], orderType = [], tableNumber = [], addressDetails = [], customerName = [], customerPhone = [];
+    const subtotal = [], deliveryFee = [], discount = [], total = [], status = [], paymentStatus = [];
+    const voided = [], voidReason = [], createdAt = [], syncUuid = [];
+    for (const o of uniqueOrders) {
+      source.push(o.source); orderType.push(o.order_type); tableNumber.push(o.table_number);
+      addressDetails.push(o.address_details); customerName.push(o.customer_name); customerPhone.push(o.customer_phone);
+      subtotal.push(o.subtotal); deliveryFee.push(o.delivery_fee); discount.push(o.discount); total.push(o.total);
+      status.push(o.status); paymentStatus.push(o.payment_status);
+      voided.push(o.voided || false); voidReason.push(o.void_reason || null);
+      createdAt.push(o.created_at); syncUuid.push(o.sync_uuid);
+    }
+
+    const upsertRes = await client.query(
+      `INSERT INTO orders
+        (branch_id, source, order_type, table_number, address_details,
+         customer_name, customer_phone, subtotal, delivery_fee, discount, total,
+         status, payment_status, voided, void_reason, created_at, sync_uuid, synced_at)
+       SELECT $1, s.source, s.order_type, s.table_number, s.address_details, s.customer_name, s.customer_phone,
+              s.subtotal, s.delivery_fee, s.discount, s.total, s.status, s.payment_status, s.voided, s.void_reason,
+              s.created_at, s.sync_uuid, now()
+       FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[],
+                    $8::numeric[], $9::numeric[], $10::numeric[], $11::numeric[], $12::text[], $13::text[],
+                    $14::boolean[], $15::text[], $16::timestamptz[], $17::uuid[])
+         AS s(source, order_type, table_number, address_details, customer_name, customer_phone,
+              subtotal, delivery_fee, discount, total, status, payment_status, voided, void_reason, created_at, sync_uuid)
+       ON CONFLICT (sync_uuid) DO UPDATE SET
+         status = EXCLUDED.status,
+         payment_status = EXCLUDED.payment_status,
+         voided = EXCLUDED.voided,
+         void_reason = EXCLUDED.void_reason,
+         synced_at = now()
+       RETURNING id, sync_uuid`,
+      [branchId, source, orderType, tableNumber, addressDetails, customerName, customerPhone,
+       subtotal, deliveryFee, discount, total, status, paymentStatus, voided, voidReason, createdAt, syncUuid]
+    );
+
+    const orderIdBySyncUuid = new Map(upsertRes.rows.map((r) => [r.sync_uuid, r.id]));
+    const orderIds = upsertRes.rows.map((r) => r.id);
+
+    await client.query("DELETE FROM order_items WHERE order_id = ANY($1::int[])", [orderIds]);
+
+    const itemOrderId = [], itemQuantity = [], itemUnitPrice = [], itemLineTotal = [], itemCostAtSale = [], itemCostIncomplete = [];
+    for (const o of uniqueOrders) {
+      const orderId = orderIdBySyncUuid.get(o.sync_uuid);
       for (const it of o.items || []) {
-        await client.query(
-          `INSERT INTO order_items (order_id, quantity, unit_price, line_total, cost_at_sale, cost_at_sale_incomplete)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [orderId, it.quantity, it.unit_price, it.line_total, it.cost_at_sale, it.cost_at_sale_incomplete || false]
-        );
+        itemOrderId.push(orderId); itemQuantity.push(it.quantity); itemUnitPrice.push(it.unit_price);
+        itemLineTotal.push(it.line_total); itemCostAtSale.push(it.cost_at_sale ?? null);
+        itemCostIncomplete.push(it.cost_at_sale_incomplete || false);
       }
     }
+    if (itemOrderId.length > 0) {
+      await client.query(
+        `INSERT INTO order_items (order_id, quantity, unit_price, line_total, cost_at_sale, cost_at_sale_incomplete)
+         SELECT * FROM UNNEST($1::int[], $2::int[], $3::numeric[], $4::numeric[], $5::numeric[], $6::boolean[])`,
+        [itemOrderId, itemQuantity, itemUnitPrice, itemLineTotal, itemCostAtSale, itemCostIncomplete]
+      );
+    }
+
     await client.query("COMMIT");
-    res.json({ ok: true, processed, received: orders.length });
+    res.json({ ok: true, processed: orders.length, received: orders.length });
   } catch (err) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
