@@ -233,8 +233,19 @@ router.post("/reconcile", requireAuth, stockManagers, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // المرحلة 6 (6A.3): الرصيد الحالي لازم يتقفل (FOR UPDATE) قبل ما نحسب الفرق (variance) بيه، مش
+    // بعد كده - نفس نمط باج التزامن اللي اتصلح قبل كده في المرحلة 5/6A.2: من غير قفل، طلبين جرد
+    // متزامنين على نفس الصنف/الفرع ممكن الاتنين يقروا نفس previousQuantity القديم، وبعدين الاتنين
+    // يطبّقوا نفس الفرق (variance) بدل ما كل طلب يحسب فرقه فعليًا مقابل آخر قيمة حقيقية - يعني تسوية
+    // واحدة بتتطبّق مرتين غلط. postInventoryMovement بتضمن وجود الصف أول حاجة، فبنعمل نفس الضمان هنا
+    // قبل القفل مباشرة عشان القفل ميفشلش لو الصف لسه مش موجود أصلًا
+    await client.query(
+      `INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity)
+       VALUES ($1, $2, 0) ON CONFLICT (branch_id, inventory_item_id) DO NOTHING`,
+      [branchId, inventoryItemId]
+    );
     const current = await client.query(
-      "SELECT quantity FROM branch_inventory_stock WHERE branch_id = $1 AND inventory_item_id = $2",
+      "SELECT quantity FROM branch_inventory_stock WHERE branch_id = $1 AND inventory_item_id = $2 FOR UPDATE",
       [branchId, inventoryItemId]
     );
     const previousQuantity = current.rows.length > 0 ? Number(current.rows[0].quantity) : 0;
@@ -717,9 +728,13 @@ router.patch("/discrepancies/:id/resolve", requireAuth, requireRole("admin"), as
   try {
     await client.query("BEGIN");
     const disc = await client.query("SELECT * FROM inventory_discrepancies WHERE id = $1 FOR UPDATE", [req.params.id]);
-    if (disc.rows.length === 0) return res.status(404).json({ error: "السجل مش موجود" });
+    // المرحلة 6 (6A.3): الـROLLBACK كان ناقص هنا على الرجوع المبكر - كان بيسيب الـtransaction مفتوحة
+    // (BEGIN اتعمل + قفل FOR UPDATE اتاخد) ويرجّع الاتصال لقايمة الـpool بـclient.release() من غير
+    // COMMIT/ROLLBACK - أي طلب تاني ياخد نفس الاتصال بعد كده هيلاقي نفسه جوه transaction معلّقة من
+    // طلب سابق، والقفل نفسه هيفضل ماسك الصف لحد ما حد يعمل COMMIT/ROLLBACK بالصدفة على نفس الاتصال
+    if (disc.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "السجل مش موجود" }); }
     const d = disc.rows[0];
-    if (d.resolved_at) return res.status(400).json({ error: "الفرق ده اتحل بالفعل" });
+    if (d.resolved_at) { await client.query("ROLLBACK"); return res.status(400).json({ error: "الفرق ده اتحل بالفعل" }); }
 
     const correction = Number(d.stock_balance) - Number(d.ledger_sum);
     if (correction !== 0) {
