@@ -265,6 +265,110 @@ describe("6A.3 Transaction Leak Fix: تصحيح فرق متحل بالفعل - �
   });
 });
 
+// ============================================================
+// 6A.4: تدقيق تزامن شامل عبر الباك اند - لقينا باجين إضافيين حقيقيين بنفس النمط أثناء المراجعة:
+// (أ) إلغاء سند استلام (GRN) POSTED كان بيقرا الحالة قبل BEGIN/قفل، فطلبين إلغاء متزامنين كانوا هيرجّعوا
+//     المخزون للمورد مرتين (RETURN_TO_SUPPLIER مرتين)
+// (ب) PATCH /api/orders/:id/status لما status='cancelled' كان بيخصم نقاط ولاء العميل من غير أي transaction
+//     أو قفل خالص - طلبين إلغاء متزامنين كانوا هيخصموا نفس النقاط مرتين من رصيد العميل
+// ============================================================
+describe("6A.4 Concurrency: إلغاء سند استلام (GRN) POSTED - إلغاء واحد بس يرجّع المخزون للمورد", () => {
+  let branchId, itemId, supplierId, adminToken, managerToken, grnId, poId;
+
+  beforeAll(async () => {
+    const b = await pool.query("INSERT INTO branches (name) VALUES ('فرع-م6-استلام-جست') RETURNING id");
+    branchId = b.rows[0].id;
+    await seedUser({ name: "أدمن-م6-استلام", email: "admin-p6-grn@jest.test", role: "admin" });
+    await seedUser({ branchId, name: "مدير-م6-استلام", email: "manager-p6-grn@jest.test", role: "branch_manager" });
+    adminToken = await login("admin-p6-grn@jest.test");
+    managerToken = await login("manager-p6-grn@jest.test");
+
+    // negative_stock_policy = ALLOW_WITH_APPROVAL عمدًا: لو الصنف STRICT (الافتراضي)، محاولة إلغاء
+    // تانية متزامنة كانت هترفض تلقائيًا بـINSUFFICIENT_STOCK بغض النظر عن إصلاح القفل هنا - ده كان
+    // بيخفي الباج الحقيقي بدل ما يثبته. ALLOW_WITH_APPROVAL هو اللي بيكشف السباق الفعلي، وهو سياسة
+    // حقيقية مستخدمة فعليًا (مش سيناريو مصطنع) - وdefault handler هنا أصلًا بيمرّر
+    // negativeStockOverrideApproved: true بشكل غير مشروط
+    const item = await pool.query(
+      "INSERT INTO inventory_items (name, unit, unit_cost, negative_stock_policy) VALUES ('صنف-م6-استلام-جست', 'KG', 0, 'ALLOW_WITH_APPROVAL') RETURNING id"
+    );
+    itemId = item.rows[0].id;
+    await pool.query("INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity) VALUES ($1,$2,0)", [branchId, itemId]);
+    const supplier = await pool.query("INSERT INTO suppliers (name, status) VALUES ('مورد-م6-استلام-جست', 'ACTIVE') RETURNING id");
+    supplierId = supplier.rows[0].id;
+
+    const po = await request(app).post("/api/purchase-orders").set(authed(managerToken)).send({
+      supplierId, branchId, items: [{ inventoryItemId: itemId, orderedQuantity: 50, unitPrice: 20 }],
+    });
+    poId = po.body.id;
+    await request(app).post(`/api/purchase-orders/${poId}/submit`).set(authed(managerToken)).expect(200);
+    await request(app).post(`/api/purchase-orders/${poId}/approve`).set(authed(adminToken)).expect(200);
+    const detail = await request(app).get(`/api/purchase-orders/${poId}`).set(authed(adminToken));
+    const poItemId = detail.body.items[0].id;
+
+    const grn = await request(app).post("/api/goods-receipts").set(authed(managerToken)).send({
+      purchaseOrderId: poId, supplierDocumentNumber: "P6-GRN-1",
+      items: [{ purchaseOrderItemId: poItemId, receivedQuantity: 50, acceptedQuantity: 50, rejectedQuantity: 0 }],
+    });
+    grnId = grn.body.id;
+    await request(app).post(`/api/goods-receipts/${grnId}/post`).set(authed(managerToken)).expect(200);
+  });
+
+  test("3 طلبات إلغاء متزامنة لنفس سند الاستلام الـPOSTED - نجاح واحد بس، ورصيد المخزون بيرجع لصفر مش سالب", async () => {
+    const stockAfterPost = await pool.query("SELECT quantity FROM branch_inventory_stock WHERE branch_id=$1 AND inventory_item_id=$2", [branchId, itemId]);
+    expect(Number(stockAfterPost.rows[0].quantity)).toBe(50);
+
+    const results = await Promise.all(
+      Array.from({ length: 3 }, () => request(app).post(`/api/goods-receipts/${grnId}/cancel`).set(authed(adminToken)).send({ reason: "اختبار تزامن" }))
+    );
+    const successCount = results.filter((r) => r.status === 200).length;
+    expect(successCount).toBe(1);
+
+    const stockAfterCancel = await pool.query("SELECT quantity FROM branch_inventory_stock WHERE branch_id=$1 AND inventory_item_id=$2", [branchId, itemId]);
+    expect(Number(stockAfterCancel.rows[0].quantity)).toBe(0); // رجعت مرة واحدة بس - مش -50
+
+    const returnMovements = await pool.query(
+      "SELECT COUNT(*) AS c FROM inventory_movements WHERE reference_type='goods_receipt' AND reference_id=$1 AND movement_type='RETURN_TO_SUPPLIER'",
+      [grnId]
+    );
+    expect(Number(returnMovements.rows[0].c)).toBe(1);
+  });
+});
+
+describe("6A.4 Concurrency: إلغاء طلب دليفري (PATCH /:id/status → cancelled) - خصم نقاط الولاء مرة واحدة بس", () => {
+  let branchId, adminToken, orderId;
+  const customerPhone = "01099998888";
+
+  beforeAll(async () => {
+    const b = await pool.query("INSERT INTO branches (name) VALUES ('فرع-م6-ولاء-جست') RETURNING id");
+    branchId = b.rows[0].id;
+    await seedUser({ name: "أدمن-م6-ولاء", email: "admin-p6-loyalty@jest.test", role: "admin" });
+    adminToken = await login("admin-p6-loyalty@jest.test");
+
+    await pool.query(
+      `INSERT INTO customers (phone, name, loyalty_points) VALUES ($1, 'عميل-م6-ولاء-جست', 100)`,
+      [customerPhone]
+    );
+    const order = await pool.query(
+      `INSERT INTO orders (branch_id, source, order_type, customer_phone, total, status, loyalty_points_earned)
+       VALUES ($1, 'pos', 'delivery', $2, 200, 'preparing', 30) RETURNING id`,
+      [branchId, customerPhone]
+    );
+    orderId = order.rows[0].id;
+  });
+
+  test("3 طلبات إلغاء متزامنة لنفس الطلب - نجاح واحد بس، ونقاط الولاء بتتخصم مرة واحدة بس (30 مش 90)", async () => {
+    const results = await Promise.all(
+      Array.from({ length: 3 }, () => request(app).patch(`/api/orders/${orderId}/status`).set(authed(adminToken)).send({ status: "cancelled" }))
+    );
+    const successCount = results.filter((r) => r.status === 200).length;
+    expect(successCount).toBe(1);
+    expect(results.filter((r) => r.status === 400).length).toBe(2);
+
+    const customer = await pool.query("SELECT loyalty_points FROM customers WHERE phone = $1", [customerPhone]);
+    expect(Number(customer.rows[0].loyalty_points)).toBe(70); // 100 - 30 مرة واحدة بس، مش 100 - 90
+  });
+});
+
 afterAll(async () => {
   await pool.end();
 });

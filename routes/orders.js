@@ -572,54 +572,68 @@ router.patch(
     if (!ORDER_STATUSES.includes(status)) {
       return res.status(400).json({ error: "حالة غير معروفة" });
     }
+    // المرحلة 6 (6A.4): القفل والقراءة لازم يبقوا جوه transaction واحدة قبل أي فحص حالة - نفس نمط باج
+    // التزامن اللي اتصلح قبل كده في المرحلة 5/6A - قبل الإصلاح، طلبين "cancelled" متزامنين على نفس
+    // الطلب كانوا هيعدّوا فحص "مش terminal بالفعل" مع بعض، والاتنين هيخصموا نقاط الولاء اللي كانت
+    // اتضافت وقت الإنشاء مرتين بدل مرة واحدة (كل واحد بيستخدم نفس current.loyalty_points_earned
+    // القديم، مش قيمة محدّثة بعد أول خصم)
+    const client = await pool.connect();
     try {
-      const existing = await pool.query(
-        "SELECT branch_id, status, customer_phone, loyalty_points_earned FROM orders WHERE id = $1",
+      await client.query("BEGIN");
+      const existing = await client.query(
+        "SELECT branch_id, status, customer_phone, loyalty_points_earned FROM orders WHERE id = $1 FOR UPDATE",
         [req.params.id]
       );
-      if (existing.rows.length === 0) return res.status(404).json({ error: "الطلب مش موجود" });
+      if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلب مش موجود" }); }
       const current = existing.rows[0];
 
       if ((req.user.role === "cashier" || req.user.role === "branch_manager") && !assertOwnBranch(req.user, current.branch_id)) {
+        await client.query("ROLLBACK");
         return res.status(403).json({ error: "معندكش صلاحية تعدّل طلب فرع تاني" });
       }
       if (TERMINAL_STATUSES.includes(current.status)) {
+        await client.query("ROLLBACK");
         return res.status(400).json({ error: "الطلب ده اتسلم أو اتلغى بالفعل، مينفعش تتعدل حالته" });
       }
       if (status === "out_for_delivery" && !driverName) {
+        await client.query("ROLLBACK");
         return res.status(400).json({ error: "لازم اسم الطيار عشان تنقل الطلب لحالة (في الطريق)" });
       }
 
       // synced_at بيترجع NULL عمدًا هنا - لو الطلب كان اتبعت للمركزي قبل كده (مزامنة الفروع)،
       // ده بيخلي db/sync-worker.js يلقطه تاني ويبعت الحالة الجديدة بدل ما يفضل واقف على القديمة
-      const result = await pool.query(
+      const result = await client.query(
         `UPDATE orders SET status = $1, driver_name = COALESCE($2, driver_name), synced_at = NULL WHERE id = $3 RETURNING *`,
         [status, driverName || null, req.params.id]
       );
-      await pool.query(
+      await client.query(
         `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, $4)`,
         [req.params.id, status, req.user.id, notes || null]
       );
 
       // لو الطلب اتلغى قبل ما يكتمل، لازم نرجّع نقاط الولاء اللي كانت اتضافت للعميل وقت الإنشاء
       if (status === "cancelled" && current.customer_phone && current.loyalty_points_earned > 0) {
-        await pool.query(
+        await client.query(
           `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
           [current.loyalty_points_earned, current.customer_phone]
         );
       }
 
       if (status === "cancelled") {
-        await logAudit(pool, {
+        await logAudit(client, {
           branchId: current.branch_id, userId: req.user.id, action: "ORDER_CANCELLED",
           entityType: "order", entityId: Number(req.params.id),
           oldValues: { status: current.status }, newValues: { status }, metadata: { notes }, req,
         });
       }
 
+      await client.query("COMMIT");
       res.json(result.rows[0]);
     } catch (err) {
+      await client.query("ROLLBACK");
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   }
 );

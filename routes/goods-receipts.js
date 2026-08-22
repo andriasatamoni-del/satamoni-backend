@@ -317,12 +317,22 @@ router.post("/:id/cancel", requireAuth, requirePermission("purchasing.cancel"), 
   const { reason } = req.body;
   const client = await pool.connect();
   try {
-    const grn = await client.query("SELECT * FROM goods_receipts WHERE id = $1", [req.params.id]);
-    if (grn.rows.length === 0) return res.status(404).json({ error: "سند الاستلام مش موجود" });
-    if (!assertOwnBranch(req.user, grn.rows[0].branch_id)) return res.status(403).json({ error: "معندكش صلاحية تلغي سند استلام فرع تاني" });
-    if (grn.rows[0].status === "CANCELLED") return res.status(400).json({ error: "سند الاستلام ده اتلغى بالفعل" });
-
+    // المرحلة 6 (6A.4): نفس نمط باج التزامن اللي اتصلح قبل كده (orders.js/kitchen-transfers.js/
+    // production.js/inventory.js) - القراءة الأولى للحالة كانت من غير قفل وقبل BEGIN، فطلبين إلغاء
+    // متزامنين لنفس سند الاستلام الـPOSTED كانوا هيعدّوا فحص "مش ملغي بالفعل" مع بعض ويرجّعوا حركات
+    // RETURN_TO_SUPPLIER (وعكس محاسبي) مرتين بدل مرة واحدة
     await client.query("BEGIN");
+    const grn = await client.query("SELECT * FROM goods_receipts WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (grn.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "سند الاستلام مش موجود" }); }
+    if (!assertOwnBranch(req.user, grn.rows[0].branch_id)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية تلغي سند استلام فرع تاني" });
+    }
+    if (grn.rows[0].status === "CANCELLED") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "سند الاستلام ده اتلغى بالفعل" });
+    }
+
     if (grn.rows[0].status === "POSTED") {
       const items = await client.query(
         "SELECT * FROM goods_receipt_items WHERE goods_receipt_id = $1 AND accepted_quantity > 0", [req.params.id]
