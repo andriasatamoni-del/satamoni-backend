@@ -978,11 +978,103 @@ CREATE TABLE employees (
   hourly_rate            NUMERIC NOT NULL DEFAULT 0,
   phone                  TEXT,
   notes                  TEXT,
-  is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+  is_active              BOOLEAN NOT NULL DEFAULT TRUE, -- المرحلة 4D: بقى مشتق تلقائيًا من status (trigger تحت) - فضل كعمود حقيقي عشان توافق رجعي مع services/payroll-engine.js اللي بيفلتر عليه مباشرة، بس مصدر الحقيقة بقى status
   count_day_31           BOOLEAN NOT NULL DEFAULT FALSE,
-  restricted_branch_id   INTEGER REFERENCES branches(id), -- "احسب الراتب من فرع واحد بس" (اختياري)
+  restricted_branch_id   INTEGER REFERENCES branches(id), -- "احسب الراتب من فرع واحد بس" (اختياري) - المرحلة 4D بتستخدمه كمان كـ"فرع الموظف" لصلاحيات مدير الفرع (نفس العمود، مفيش تكرار)
+  -- المرحلة 4D: دورة حياة الموظف الموثّقة
+  employee_code          TEXT, -- كود فريد لكل موظف - بيتولّد تلقائيًا (EMP-000001...) وقت الإنشاء لو مش متبعت، فضل NULL للموظفين القدام لحد ما schema.sql يعمل backfill تحت
+  status                 TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'resigned', 'terminated')),
+  termination_date       DATE,
+  termination_reason     TEXT,
   created_at             TIMESTAMPTZ DEFAULT now()
 );
+CREATE UNIQUE INDEX idx_employees_employee_code ON employees(employee_code) WHERE employee_code IS NOT NULL;
+CREATE INDEX idx_employees_status ON employees(status);
+CREATE INDEX idx_employees_restricted_branch ON employees(restricted_branch_id);
+CREATE INDEX idx_employees_department ON employees(department);
+
+-- مصدر أكواد الموظفين (EMP-000001...) - نفس أسلوب journal_entry_number_seq بالظبط
+CREATE SEQUENCE employee_code_seq START 1;
+
+-- Backfill لموظفين قبل المرحلة 4D: كود لكل موظف مالوش كود لسه، وحالة status متسقة مع is_active الحالي
+-- (is_active=FALSE قبل كده معناها الغالب "خلص شغله" - أقرب تفسير محافظ لـ'terminated'؛ لو غلط لموظف معيّن
+-- التصحيح سهل بعد كده عن طريق PATCH /api/hr/employees/:id/status، مش بإعادة تفسير البيانات القديمة تلقائيًا تاني)
+UPDATE employees SET employee_code = 'EMP-' || LPAD(nextval('employee_code_seq')::text, 6, '0') WHERE employee_code IS NULL;
+UPDATE employees SET status = 'terminated' WHERE is_active = FALSE AND status = 'active';
+
+-- توافق رجعي: is_active بيتشتق دايمًا من status (اتجاه واحد بس) - أي كود قديم (أو جديد) بيكتب على
+-- employees بيفضل شغال، لكن is_active الفعلي بعد الكتابة بيتحدد من status دايمًا، مش من القيمة المبعوتة
+-- مباشرة - عشان services/payroll-engine.js (اللي بيفلتر WHERE is_active = TRUE) يفضل شغال صح من غير ما
+-- نلمسه خالص، بغض النظر مين وأي endpoint عدّل الموظف
+CREATE OR REPLACE FUNCTION sync_employee_is_active() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.is_active := (NEW.status = 'active');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sync_employee_is_active
+  BEFORE INSERT OR UPDATE ON employees
+  FOR EACH ROW EXECUTE FUNCTION sync_employee_is_active();
+
+-- سجل تغييرات جوهرية على بيانات الموظف (فرع/قسم/وظيفة/حالة...) - append-only زي أي سجل تدقيق في
+-- المشروع، مفيش UPDATE ولا DELETE عليه أبدًا من التطبيق. سطر واحد لكل حقل اتغيّر (مش سطر واحد لكل
+-- عملية PATCH مهما كان عدد الحقول) عشان الفلترة/التقرير حسب حقل معيّن يبقى مباشر
+CREATE TABLE employee_history (
+  id             SERIAL PRIMARY KEY,
+  employee_id    INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  field_name     TEXT NOT NULL,
+  old_value      TEXT,
+  new_value      TEXT,
+  effective_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  changed_by     INTEGER REFERENCES users(id),
+  reason         TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_employee_history_employee ON employee_history(employee_id);
+CREATE INDEX idx_employee_history_effective_date ON employee_history(effective_date);
+CREATE INDEX idx_employee_history_field ON employee_history(field_name);
+
+-- إنذارات الموظفين - append-only بالكامل (مفيش endpoint حذف ولا تعديل أبدًا - تصحيح غلط بيتسجل بملاحظة
+-- توضيحية في إنذار جديد، مش بمسح القديم)
+CREATE TABLE employee_warnings (
+  id           SERIAL PRIMARY KEY,
+  employee_id  INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  severity     TEXT NOT NULL CHECK (severity IN ('verbal', 'written', 'final')), -- شفهي/كتابي/إنذار نهائي
+  warning_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  reason       TEXT NOT NULL,
+  issued_by    INTEGER REFERENCES users(id),
+  notes        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_employee_warnings_employee ON employee_warnings(employee_id);
+CREATE INDEX idx_employee_warnings_date ON employee_warnings(warning_date);
+CREATE INDEX idx_employee_warnings_severity ON employee_warnings(severity);
+
+-- إجازات الموظفين - سجل HR بحت، بيتسجل مباشرة من الأدمن/مدير الفرع نيابة عن الموظف (مش self-service -
+-- أغلب الموظفين مالهمش حساب دخول أصلًا). عمدًا وصراحة: مش متصل بمحرك الرواتب (services/payroll-engine.js)
+-- ولا بيأثر على حساب الراتب - مجرد سجل يُراجع، وتقرير رصيد الإجازات (leave-balance) تقديري بس. تصحيح
+-- غلط في تاريخ بيتم بإلغاء (status='cancelled') مش DELETE، زي فلسفة "لا حذف صامت" في كل المشروع
+CREATE TABLE employee_leaves (
+  id                   SERIAL PRIMARY KEY,
+  employee_id          INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  leave_type           TEXT NOT NULL CHECK (leave_type IN ('annual', 'sick', 'unpaid', 'casual')),
+  start_date           DATE NOT NULL,
+  end_date             DATE NOT NULL CHECK (end_date >= start_date),
+  days                 INTEGER NOT NULL CHECK (days > 0),
+  notes                TEXT,
+  branch_id            INTEGER REFERENCES branches(id),
+  status               TEXT NOT NULL DEFAULT 'recorded' CHECK (status IN ('recorded', 'cancelled')),
+  cancelled_by         INTEGER REFERENCES users(id),
+  cancelled_at         TIMESTAMPTZ,
+  cancellation_reason  TEXT,
+  created_by           INTEGER REFERENCES users(id),
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_employee_leaves_employee ON employee_leaves(employee_id);
+CREATE INDEX idx_employee_leaves_branch ON employee_leaves(branch_id);
+CREATE INDEX idx_employee_leaves_dates ON employee_leaves(start_date, end_date);
+CREATE INDEX idx_employee_leaves_type ON employee_leaves(leave_type);
 
 -- كود بصمة الموظف عند كل فرع (موظف ممكن يكون ليه كود في أكتر من فرع لو بيتنقل زي الطيار)
 CREATE TABLE employee_fingerprint_codes (

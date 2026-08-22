@@ -88,6 +88,7 @@
     <div class="tabbtn" data-tab="manual">حضور المطبخ المركزي</div>
     <div class="tabbtn" data-tab="adjustments">السلف والجزاءات والمكافآت</div>
     <div class="tabbtn" data-tab="runs">تشغيلات الرواتب</div>
+    <div class="tabbtn" data-tab="hrreports">تقارير HR</div>
   </div>
 
   <!-- ملخص الرواتب -->
@@ -118,49 +119,193 @@
 
   <!-- الموظفين -->
   <div class="panel" id="panel-employees">
-    <h1>إضافة موظف</h1>
-    <div class="formbox">
-      <div class="row">
-        <input id="empName" placeholder="الاسم بالكامل" />
-        <select id="empDepartment"></select>
-        <input id="empJobTitle" placeholder="الوظيفة" />
-        <select id="empAttendanceSystem">
-          <option value="fingerprint_auto">بصمة تلقائي</option>
-          <option value="manual">يدوي (المطبخ المركزي)</option>
-          <option value="none">بدون تتبع حضور</option>
-        </select>
+    <div id="empManageBox">
+      <h1>إضافة موظف</h1>
+      <div class="formbox">
+        <div class="row">
+          <input id="empName" placeholder="الاسم بالكامل" />
+          <select id="empDepartment"></select>
+          <input id="empJobTitle" placeholder="الوظيفة" />
+          <select id="empAttendanceSystem">
+            <option value="fingerprint_auto">بصمة تلقائي</option>
+            <option value="manual">يدوي (المطبخ المركزي)</option>
+            <option value="none">بدون تتبع حضور</option>
+          </select>
+        </div>
+        <div class="row">
+          <select id="empWageType">
+            <option value="fixed_monthly">شهري ثابت</option>
+            <option value="hourly">بالساعة</option>
+          </select>
+          <input id="empBaseSalary" type="number" placeholder="الراتب الأساسي الشهري" />
+          <input id="empHourlyRate" type="number" placeholder="أجر الساعة (لو بالساعة)" />
+          <input id="empWorkingDays" type="number" placeholder="أيام العمل بالشهر" value="26" />
+        </div>
+        <div class="row">
+          <select id="empShift">
+            <option value="">بدون شيفت ثابت</option>
+            <option value="morning">صباحي</option>
+            <option value="evening">مسائي</option>
+            <option value="flexible">بيني</option>
+          </select>
+          <input id="empHireDate" type="date" placeholder="تاريخ التعيين" />
+          <input id="empPhone" placeholder="الهاتف (اختياري)" />
+          <label class="chk"><input type="checkbox" id="empCountDay31" /> يُحسب له يوم 31 كامل</label>
+        </div>
+        <div class="row"><input id="empNotes" placeholder="ملاحظات (اختياري)" /><button id="empSubmit">إضافة الموظف</button></div>
+        <div class="err" id="empErr"></div>
       </div>
-      <div class="row">
-        <select id="empWageType">
-          <option value="fixed_monthly">شهري ثابت</option>
-          <option value="hourly">بالساعة</option>
-        </select>
-        <input id="empBaseSalary" type="number" placeholder="الراتب الأساسي الشهري" />
-        <input id="empHourlyRate" type="number" placeholder="أجر الساعة (لو بالساعة)" />
-        <input id="empWorkingDays" type="number" placeholder="أيام العمل بالشهر" value="26" />
+
+      <h1>الموظفين الحاليين</h1>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الوظيفة</th><th>نظام الحضور</th><th>الراتب</th><th>الحالة</th><th>أكواد البصمة</th><th></th></tr></thead>
+          <tbody id="employeesBody"></tbody>
+        </table>
       </div>
-      <div class="row">
-        <select id="empShift">
-          <option value="">بدون شيفت ثابت</option>
-          <option value="morning">صباحي</option>
-          <option value="evening">مسائي</option>
-          <option value="flexible">بيني</option>
-        </select>
-        <input id="empHireDate" type="date" placeholder="تاريخ التعيين" />
-        <input id="empPhone" placeholder="الهاتف (اختياري)" />
-        <label class="chk"><input type="checkbox" id="empCountDay31" /> يُحسب له يوم 31 كامل</label>
-      </div>
-      <div class="row"><input id="empNotes" placeholder="ملاحظات (اختياري)" /><button id="empSubmit">إضافة الموظف</button></div>
-      <div class="err" id="empErr"></div>
     </div>
 
-    <h1>الموظفين الحاليين</h1>
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th>الاسم</th><th>القسم</th><th>الوظيفة</th><th>نظام الحضور</th><th>الراتب</th><th>أكواد البصمة</th><th></th></tr></thead>
-        <tbody id="employeesBody"></tbody>
-      </table>
+    <!-- مدير الفرع: نفس القائمة لكن من غير بيانات مالية (اسم/كود/قسم/وظيفة/حالة بس - عن طريق /api/hr/employees) -->
+    <div id="empListBranchMgr" style="display:none">
+      <h1>موظفين فرعي</h1>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الوظيفة</th><th>تاريخ التعيين</th><th>الحالة</th><th></th></tr></thead>
+          <tbody id="employeesBranchMgrBody"></tbody>
+        </table>
+      </div>
     </div>
+
+    <!-- الملف الوظيفي - مشترك بين أدمن ومدير الفرع (عن طريق /api/hr/*) - محاسب مالوش وصول للسطح ده -->
+    <div id="empProfileWrap" style="display:none">
+      <h1>الملف الوظيفي - <span id="empProfileName"></span></h1>
+      <button class="linkbtn" id="empProfileCloseBtn">إغلاق الملف</button>
+      <div class="err" id="empProfileErr"></div>
+
+      <h2>حالة الموظف</h2>
+      <div class="formbox">
+        <div class="row">
+          <select id="empStatusSelect">
+            <option value="active">شغّال</option>
+            <option value="suspended">موقوف</option>
+            <option value="resigned">استقال</option>
+            <option value="terminated">تم إنهاء خدمته</option>
+          </select>
+          <input id="empTerminationDate" type="date" placeholder="تاريخ الاستقالة/الإنهاء (لو ينطبق)" />
+        </div>
+        <div class="row">
+          <input id="empTerminationReason" placeholder="سبب الاستقالة/الإنهاء (لو ينطبق)" />
+          <input id="empStatusReason" placeholder="سبب التغيير (يُسجَّل في التاريخ الوظيفي)" />
+          <button id="empStatusSaveBtn">تحديث الحالة</button>
+        </div>
+      </div>
+
+      <h2>التاريخ الوظيفي</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>التاريخ</th><th>الحقل</th><th>من</th><th>إلى</th><th>السبب</th><th>بواسطة</th></tr></thead>
+          <tbody id="empHistoryBody"></tbody>
+        </table>
+      </div>
+
+      <h2>الإنذارات</h2>
+      <div class="formbox">
+        <div class="row">
+          <select id="warnSeverity">
+            <option value="verbal">شفهي</option>
+            <option value="written">كتابي</option>
+            <option value="final">إنذار نهائي</option>
+          </select>
+          <input id="warnDate" type="date" />
+        </div>
+        <div class="row"><input id="warnReason" placeholder="السبب" /><input id="warnNotes" placeholder="ملاحظات (اختياري)" /><button id="warnSubmitBtn">تسجيل إنذار</button></div>
+        <div class="err" id="warnErr"></div>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>التاريخ</th><th>الدرجة</th><th>السبب</th><th>ملاحظات</th><th>بواسطة</th></tr></thead>
+          <tbody id="empWarningsBody"></tbody>
+        </table>
+      </div>
+
+      <h2>الإجازات</h2>
+      <div class="formbox">
+        <div class="row">
+          <select id="leaveType">
+            <option value="annual">سنوية</option>
+            <option value="sick">مرضية</option>
+            <option value="unpaid">بدون أجر</option>
+            <option value="casual">عارضة</option>
+          </select>
+          <input id="leaveStart" type="date" /><input id="leaveEnd" type="date" />
+        </div>
+        <div class="row"><input id="leaveNotes" placeholder="ملاحظات (اختياري)" /><button id="leaveSubmitBtn">تسجيل إجازة</button></div>
+        <div class="err" id="leaveErr"></div>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>النوع</th><th>من</th><th>إلى</th><th>الأيام</th><th>الحالة</th><th></th></tr></thead>
+          <tbody id="empLeavesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- تقارير HR -->
+  <div class="panel" id="panel-hrreports">
+    <div id="hrReportsAdminOnly">
+      <h2>عدد الموظفين حسب الفرع (أدمن بس)</h2>
+      <div class="tablewrap">
+        <table><thead><tr><th>الفرع</th><th>عدد الموظفين</th></tr></thead><tbody id="hrByBranchBody"></tbody></table>
+      </div>
+    </div>
+
+    <div class="formbox">
+      <div class="row">
+        <select id="hrDeptFilter"><option value="">كل الأقسام</option></select>
+        <select id="hrStatusFilter">
+          <option value="">كل الحالات</option>
+          <option value="active">شغّال</option>
+          <option value="suspended">موقوف</option>
+          <option value="resigned">استقال</option>
+          <option value="terminated">تم إنهاء خدمته</option>
+        </select>
+        <button id="hrReportsRefreshBtn">تحديث كل التقارير</button>
+      </div>
+    </div>
+
+    <h2>عدد الموظفين حسب القسم</h2>
+    <div class="tablewrap"><table><thead><tr><th>القسم</th><th>عدد الموظفين</th></tr></thead><tbody id="hrByDeptBody"></tbody></table></div>
+
+    <h2>عدد الموظفين حسب المسمى الوظيفي</h2>
+    <div class="tablewrap"><table><thead><tr><th>المسمى الوظيفي</th><th>عدد الموظفين</th></tr></thead><tbody id="hrByJobTitleBody"></tbody></table></div>
+
+    <h2>الحالة الوظيفية</h2>
+    <div class="tablewrap"><table><thead><tr><th>الحالة</th><th>عدد الموظفين</th></tr></thead><tbody id="hrByStatusBody"></tbody></table></div>
+
+    <h2>متوسط مدة الخدمة ومعدل الدوران</h2>
+    <div class="formbox">
+      <div class="row"><input id="hrTurnoverFrom" type="date" /><input id="hrTurnoverTo" type="date" /><button id="hrTenureTurnoverBtn">تحديث</button></div>
+      <div class="row" style="font-size:12px;color:var(--faint)"><span id="hrTenureText"></span></div>
+      <div class="row" style="font-size:12px;color:var(--faint)"><span id="hrTurnoverText"></span></div>
+    </div>
+
+    <h2>التعيينات الجديدة</h2>
+    <div class="formbox"><div class="row"><input id="hrHiresFrom" type="date" /><input id="hrHiresTo" type="date" /><button id="hrHiresBtn">تحديث</button></div></div>
+    <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الوظيفة</th><th>تاريخ التعيين</th></tr></thead><tbody id="hrHiresBody"></tbody></table></div>
+
+    <h2>الاستقالات وإنهاء الخدمة</h2>
+    <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الحالة</th><th>التاريخ</th><th>السبب</th></tr></thead><tbody id="hrTerminationsBody"></tbody></table></div>
+
+    <h2>رصيد الإجازات التقديري</h2>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:8px" id="hrLeaveBalanceNote"></div>
+    <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>المستحق تقديريًا</th><th>المأخوذ</th><th>المتبقي تقديريًا</th></tr></thead><tbody id="hrLeaveBalanceBody"></tbody></table></div>
+
+    <h2>سجل الإنذارات</h2>
+    <div class="tablewrap"><table><thead><tr><th>التاريخ</th><th>الموظف</th><th>القسم</th><th>الدرجة</th><th>السبب</th></tr></thead><tbody id="hrWarningsBody"></tbody></table></div>
+
+    <h2>سجل الإجازات</h2>
+    <div class="tablewrap"><table><thead><tr><th>الموظف</th><th>النوع</th><th>من</th><th>إلى</th><th>الأيام</th><th>الحالة</th></tr></thead><tbody id="hrLeavesBody"></tbody></table></div>
   </div>
 
   <!-- البصمة -->
@@ -283,7 +428,13 @@
 
 <script>
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
-const allowedRoles = ["admin", "accountant"];
+// المرحلة 4D: مدير الفرع بقى يقدر يدخل الصفحة دي (كان أدمن/محاسب بس قبل كده) - لكن بيشوف تبويبي
+// "الموظفين" و"تقارير HR" بس، وبيانات HR (من غير راتب) لموظفي فرعه بس - كل التبويبات المالية التانية
+// (ملخص/بصمة/سلف/تشغيلات) تفضل أدمن/محاسب بس زي ما هي
+const allowedRoles = ["admin", "accountant", "branch_manager"];
+// محاسب: نفس صلاحيات قبل المرحلة دي بالظبط (قائمة الموظفين + الراتب) - سطح HR الجديد (حالة/تاريخ/
+// إنذارات/إجازات/تقارير HR) أدمن ومدير فرع بس، زي ما اتحدد صراحة في نطاق المرحلة (permissions section)
+const canSeeHrProfile = () => ["admin", "branch_manager"].includes(auth.user.role);
 const DEPARTMENTS = ["بيتزا", "فطير", "تشغيل الفرع", "الإدارة", "حسابات", "كول سنتر", "المطبخ المركزي"];
 
 const auth = {
@@ -340,10 +491,13 @@ document.getElementById("loginBtn").onclick = async () => {
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
 
+// المرحلة 4D: تبويب "تقارير HR" بيتحمّل أول مرة يتفتح بس (lazy) - نفس نمط satamoni-accounting.html
+let hrReportsLoaded = false;
 document.querySelectorAll(".tabbtn").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    if (btn.dataset.tab === "hrreports" && !hrReportsLoaded) { hrReportsLoaded = true; loadAllHrReports(); }
   };
 });
 
@@ -362,11 +516,37 @@ function populatePeriodSelectors(yearId, monthId) {
   monthSel.value = now.getMonth() + 1;
 }
 
+// المرحلة 4D: مدير الفرع بيشوف تبويبي "الموظفين" و"تقارير HR" بس - باقي التبويبات (ملخص/بصمة/حضور
+// المطبخ المركزي/سلف/تشغيلات) بيانات مالية/تشغيلية أوسع من صلاحيته، فبتتخفي تمامًا (زي مافيش)
+const BRANCH_MANAGER_TABS = ["employees", "hrreports"];
+
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
 
   document.getElementById("empDepartment").innerHTML = DEPARTMENTS.map(d => `<option value="${d}">${d}</option>`).join("");
+  document.getElementById("hrDeptFilter").innerHTML += DEPARTMENTS.map(d => `<option value="${d}">${d}</option>`).join("");
+
+  if (auth.user.role === "branch_manager") {
+    document.querySelectorAll(".tabbtn").forEach(btn => {
+      if (!BRANCH_MANAGER_TABS.includes(btn.dataset.tab)) btn.style.display = "none";
+    });
+    // التبويب الافتراضي "ملخص الرواتب" مخفي لمدير الفرع - لازم نفعّل تبويب "الموظفين" يدويًا، وإلا
+    // الصفحة تفضل من غير أي تبويب ظاهر خالص (panel-summary بيفضل active بس مخفي)
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b.dataset.tab === "employees"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-employees"));
+    document.getElementById("empManageBox").style.display = "none";
+    document.getElementById("empListBranchMgr").style.display = "block";
+    document.getElementById("hrReportsAdminOnly").style.display = "none";
+    await loadEmployeesBranchMgr();
+    return;
+  }
+
+  if (!canSeeHrProfile()) {
+    // محاسب: نفس الصفحة القديمة بالظبط - تبويب تقارير HR مش متاح له، وسطح الملف الوظيفي (تفاصيل/حالة/
+    // إنذارات/إجازات) مش شغال له في الباك إند أصلًا فمش بيظهر في القائمة
+    document.querySelector('.tabbtn[data-tab="hrreports"]').style.display = "none";
+  }
 
   populatePeriodSelectors("sumYear", "sumMonth");
   populatePeriodSelectors("attYear", "attMonth");
@@ -374,6 +554,10 @@ async function boot() {
   populatePeriodSelectors("adjFilterYear", "adjFilterMonth");
   populatePeriodSelectors("runYear", "runMonth");
   document.getElementById("adjDate").value = todayStr();
+  document.getElementById("hrTurnoverFrom").value = `${new Date().getFullYear()}-01-01`;
+  document.getElementById("hrTurnoverTo").value = todayStr();
+  document.getElementById("hrHiresFrom").value = `${new Date().getFullYear()}-01-01`;
+  document.getElementById("hrHiresTo").value = todayStr();
 
   branchesCache = await api("/api/branches/all");
   const branchOpts = branchesCache.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
@@ -418,26 +602,39 @@ async function loadSummary() {
 document.getElementById("sumRefresh").onclick = loadSummary;
 
 // ---------------- الموظفين ----------------
+const STATUS_LABELS = { active: "شغّال", suspended: "موقوف", resigned: "استقال", terminated: "تم إنهاء خدمته" };
+
 async function loadEmployees() {
   employeesCache = await api("/api/payroll/employees");
   const attLabels = { fingerprint_auto: "بصمة تلقائي", manual: "يدوي", none: "بدون تتبع" };
   document.getElementById("employeesBody").innerHTML = employeesCache.map(emp => `
     <tr data-emprow="${emp.id}">
+      <td>${emp.employee_code || "—"}</td>
       <td>${emp.name}</td><td>${emp.department}</td><td>${emp.job_title || "—"}</td>
       <td>${attLabels[emp.attendance_system] || emp.attendance_system}</td>
       <td>${emp.wage_type === "hourly" ? `${money(emp.hourly_rate)}/ساعة` : money(emp.base_salary)}</td>
+      <td><span class="badge ${emp.status === "active" ? "" : "warn"}">${STATUS_LABELS[emp.status] || emp.status}</span></td>
       <td>${emp.fingerprint_codes.map(c => `${c.branchName}:${c.deviceCode}`).join("، ") || "—"}
         ${emp.attendance_system === "fingerprint_auto" ? `<button class="linkbtn" data-editcodes="${emp.id}">تعديل</button>` : ""}
       </td>
-      <td><button class="linkbtn ${emp.is_active ? "danger" : ""}" data-toggleemp="${emp.id}" data-active="${emp.is_active}">${emp.is_active ? "تعطيل" : "تفعيل"}</button></td>
+      <td>
+        <button class="linkbtn ${emp.is_active ? "danger" : ""}" data-toggleemp="${emp.id}" data-active="${emp.is_active}">${emp.is_active ? "تعطيل" : "تفعيل"}</button>
+        ${canSeeHrProfile() ? `<button class="linkbtn" data-openprofile="${emp.id}">الملف الوظيفي</button>` : ""}
+      </td>
     </tr>
-  `).join("") || `<tr><td colspan="7">لسه مفيش موظفين</td></tr>`;
+  `).join("") || `<tr><td colspan="9">لسه مفيش موظفين</td></tr>`;
 
   document.querySelectorAll("[data-toggleemp]").forEach(btn => {
     btn.onclick = async () => {
       const isActive = btn.dataset.active === "true";
       await api(`/api/payroll/employees/${btn.dataset.toggleemp}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
       loadEmployees();
+    };
+  });
+  document.querySelectorAll("[data-openprofile]").forEach(btn => {
+    btn.onclick = () => {
+      const emp = employeesCache.find(x => String(x.id) === btn.dataset.openprofile);
+      openEmployeeProfile(emp.id, emp.name);
     };
   });
   document.querySelectorAll("[data-editcodes]").forEach(btn => {
@@ -493,6 +690,257 @@ document.getElementById("empSubmit").onclick = async () => {
     await loadEmployees();
   } catch (e) { errBox.textContent = e.message; }
 };
+
+// ---------------- المرحلة 4D: قائمة الموظفين لمدير الفرع (HR-safe، من غير راتب) ----------------
+async function loadEmployeesBranchMgr() {
+  const list = await api("/api/hr/employees");
+  document.getElementById("employeesBranchMgrBody").innerHTML = list.map(emp => `
+    <tr>
+      <td>${emp.employee_code || "—"}</td><td>${emp.name}</td><td>${emp.department}</td><td>${emp.job_title || "—"}</td>
+      <td>${emp.hire_date ? emp.hire_date.slice(0, 10) : "—"}</td>
+      <td><span class="badge ${emp.status === "active" ? "" : "warn"}">${STATUS_LABELS[emp.status] || emp.status}</span></td>
+      <td><button class="linkbtn" data-openprofile="${emp.id}">الملف الوظيفي</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="7">مفيش موظفين مسجلين لفرعك</td></tr>`;
+  document.querySelectorAll("#employeesBranchMgrBody [data-openprofile]").forEach(btn => {
+    btn.onclick = () => {
+      const emp = list.find(x => String(x.id) === btn.dataset.openprofile);
+      openEmployeeProfile(emp.id, emp.name);
+    };
+  });
+}
+
+// ---------------- المرحلة 4D: الملف الوظيفي (مشترك أدمن/مدير فرع - /api/hr/*) ----------------
+let currentProfileEmpId = null;
+
+async function openEmployeeProfile(empId, empName) {
+  currentProfileEmpId = empId;
+  document.getElementById("empProfileName").textContent = empName;
+  document.getElementById("empProfileWrap").style.display = "block";
+  document.getElementById("empProfileWrap").scrollIntoView({ behavior: "smooth" });
+  await refreshEmployeeProfile();
+}
+
+async function refreshEmployeeProfile() {
+  const errBox = document.getElementById("empProfileErr");
+  errBox.textContent = "";
+  try {
+    const emp = await api(`/api/hr/employees/${currentProfileEmpId}`);
+    document.getElementById("empStatusSelect").value = emp.status;
+    document.getElementById("empTerminationDate").value = emp.termination_date ? emp.termination_date.slice(0, 10) : "";
+    document.getElementById("empTerminationReason").value = emp.termination_reason || "";
+
+    const history = await api(`/api/hr/employees/${currentProfileEmpId}/history`);
+    document.getElementById("empHistoryBody").innerHTML = history.map(h => `
+      <tr>
+        <td>${h.effective_date.slice(0, 10)}</td><td>${h.field_name}</td>
+        <td>${h.old_value ?? "—"}</td><td>${h.new_value ?? "—"}</td>
+        <td>${h.reason || "—"}</td><td>${h.changed_by_name || "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6">مفيش تغييرات مسجّلة لسه</td></tr>`;
+
+    const warnings = await api(`/api/hr/employees/${currentProfileEmpId}/warnings`);
+    const warnLabels = { verbal: "شفهي", written: "كتابي", final: "إنذار نهائي" };
+    document.getElementById("empWarningsBody").innerHTML = warnings.map(w => `
+      <tr>
+        <td>${w.warning_date.slice(0, 10)}</td><td><span class="badge warn">${warnLabels[w.severity] || w.severity}</span></td>
+        <td>${w.reason}</td><td>${w.notes || "—"}</td><td>${w.issued_by_name || "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="5">مفيش إنذارات مسجّلة</td></tr>`;
+
+    const leaves = await api(`/api/hr/leaves?${new URLSearchParams({ employeeId: currentProfileEmpId })}`);
+    const leaveLabels = { annual: "سنوية", sick: "مرضية", unpaid: "بدون أجر", casual: "عارضة" };
+    document.getElementById("empLeavesBody").innerHTML = leaves.map(l => `
+      <tr>
+        <td>${leaveLabels[l.leave_type] || l.leave_type}</td><td>${l.start_date.slice(0, 10)}</td><td>${l.end_date.slice(0, 10)}</td>
+        <td>${l.days}</td>
+        <td><span class="badge ${l.status === "cancelled" ? "warn" : ""}">${l.status === "cancelled" ? "ملغاة" : "مسجّلة"}</span></td>
+        <td>${l.status === "recorded" ? `<button class="linkbtn danger" data-cancelleave="${l.id}">إلغاء</button>` : "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6">مفيش إجازات مسجّلة</td></tr>`;
+
+    document.querySelectorAll("[data-cancelleave]").forEach(btn => {
+      btn.onclick = async () => {
+        const reason = prompt("سبب إلغاء تسجيل الإجازة؟");
+        if (!reason) return;
+        try {
+          await api(`/api/hr/leaves/${btn.dataset.cancelleave}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+          await refreshEmployeeProfile();
+        } catch (e) { errBox.textContent = e.message; }
+      };
+    });
+  } catch (e) { errBox.textContent = e.message; }
+}
+
+document.getElementById("empProfileCloseBtn").onclick = () => {
+  document.getElementById("empProfileWrap").style.display = "none";
+  currentProfileEmpId = null;
+};
+
+document.getElementById("empStatusSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("empProfileErr");
+  errBox.textContent = "";
+  try {
+    await api(`/api/hr/employees/${currentProfileEmpId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: document.getElementById("empStatusSelect").value,
+        terminationDate: document.getElementById("empTerminationDate").value || null,
+        terminationReason: document.getElementById("empTerminationReason").value.trim() || null,
+        reason: document.getElementById("empStatusReason").value.trim() || null,
+      }),
+    });
+    document.getElementById("empStatusReason").value = "";
+    await refreshEmployeeProfile();
+    if (auth.user.role === "branch_manager") await loadEmployeesBranchMgr(); else await loadEmployees();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+document.getElementById("warnSubmitBtn").onclick = async () => {
+  const errBox = document.getElementById("warnErr");
+  errBox.textContent = "";
+  try {
+    await api(`/api/hr/employees/${currentProfileEmpId}/warnings`, {
+      method: "POST",
+      body: JSON.stringify({
+        severity: document.getElementById("warnSeverity").value,
+        warningDate: document.getElementById("warnDate").value || null,
+        reason: document.getElementById("warnReason").value.trim(),
+        notes: document.getElementById("warnNotes").value.trim() || null,
+      }),
+    });
+    document.getElementById("warnDate").value = "";
+    document.getElementById("warnReason").value = "";
+    document.getElementById("warnNotes").value = "";
+    await refreshEmployeeProfile();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+document.getElementById("leaveSubmitBtn").onclick = async () => {
+  const errBox = document.getElementById("leaveErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/hr/leaves", {
+      method: "POST",
+      body: JSON.stringify({
+        employeeId: currentProfileEmpId,
+        leaveType: document.getElementById("leaveType").value,
+        startDate: document.getElementById("leaveStart").value,
+        endDate: document.getElementById("leaveEnd").value,
+        notes: document.getElementById("leaveNotes").value.trim() || null,
+      }),
+    });
+    document.getElementById("leaveStart").value = "";
+    document.getElementById("leaveEnd").value = "";
+    document.getElementById("leaveNotes").value = "";
+    await refreshEmployeeProfile();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- المرحلة 4D: تقارير HR ----------------
+async function loadAllHrReports() {
+  const dept = document.getElementById("hrDeptFilter").value;
+  const status = document.getElementById("hrStatusFilter").value;
+  const qs = new URLSearchParams();
+  if (dept) qs.set("department", dept);
+  if (status) qs.set("status", status);
+
+  if (auth.user.role === "admin") {
+    const byBranch = await api("/api/hr/reports/employees-by-branch" + (qs.toString() ? `?${qs}` : ""));
+    document.getElementById("hrByBranchBody").innerHTML = byBranch.map(r => `<tr><td>${r.branchName}</td><td>${r.employeeCount}</td></tr>`).join("")
+      || `<tr><td colspan="2">مفيش بيانات</td></tr>`;
+  }
+
+  const byDept = await api("/api/hr/reports/employees-by-department" + (status ? `?status=${status}` : ""));
+  document.getElementById("hrByDeptBody").innerHTML = byDept.map(r => `<tr><td>${r.department}</td><td>${r.employeeCount}</td></tr>`).join("")
+    || `<tr><td colspan="2">مفيش بيانات</td></tr>`;
+
+  const byJobTitle = await api("/api/hr/reports/employees-by-job-title" + (qs.toString() ? `?${qs}` : ""));
+  document.getElementById("hrByJobTitleBody").innerHTML = byJobTitle.map(r => `<tr><td>${r.jobTitle}</td><td>${r.employeeCount}</td></tr>`).join("")
+    || `<tr><td colspan="2">مفيش بيانات</td></tr>`;
+
+  const byStatus = await api("/api/hr/reports/employee-status" + (dept ? `?department=${encodeURIComponent(dept)}` : ""));
+  document.getElementById("hrByStatusBody").innerHTML = byStatus.map(r => `<tr><td>${STATUS_LABELS[r.status] || r.status}</td><td>${r.employeeCount}</td></tr>`).join("")
+    || `<tr><td colspan="2">مفيش بيانات</td></tr>`;
+
+  await loadHrTenureTurnover();
+  await loadHrHires();
+  await loadHrTerminations();
+  await loadHrLeaveBalance();
+  await loadHrWarningsReport();
+  await loadHrLeavesReport();
+}
+document.getElementById("hrReportsRefreshBtn").onclick = loadAllHrReports;
+
+async function loadHrTenureTurnover() {
+  const from = document.getElementById("hrTurnoverFrom").value;
+  const to = document.getElementById("hrTurnoverTo").value;
+  const tenure = await api("/api/hr/reports/average-tenure");
+  document.getElementById("hrTenureText").textContent =
+    `متوسط مدة الخدمة: ${tenure.averageTenureMonths !== null ? tenure.averageTenureMonths.toFixed(1) + " شهر" : "—"} (على ${tenure.employeeCount} موظف)`;
+  const turnover = await api(`/api/hr/reports/turnover?${new URLSearchParams({ from, to })}`);
+  document.getElementById("hrTurnoverText").textContent =
+    `معدل الدوران (${from} → ${to}): ${turnover.turnoverRate !== null ? (turnover.turnoverRate * 100).toFixed(1) + "%" : "—"} (${turnover.departures} حالة خروج)`;
+}
+document.getElementById("hrTenureTurnoverBtn").onclick = loadHrTenureTurnover;
+
+async function loadHrHires() {
+  const from = document.getElementById("hrHiresFrom").value;
+  const to = document.getElementById("hrHiresTo").value;
+  const hires = await api(`/api/hr/reports/new-hires?${new URLSearchParams({ from, to })}`);
+  document.getElementById("hrHiresBody").innerHTML = hires.map(h => `
+    <tr><td>${h.employee_code || "—"}</td><td>${h.name}</td><td>${h.department}</td><td>${h.job_title || "—"}</td><td>${h.hire_date.slice(0, 10)}</td></tr>
+  `).join("") || `<tr><td colspan="5">مفيش تعيينات في المدى ده</td></tr>`;
+}
+document.getElementById("hrHiresBtn").onclick = loadHrHires;
+
+async function loadHrTerminations() {
+  const terms = await api("/api/hr/reports/terminations");
+  document.getElementById("hrTerminationsBody").innerHTML = terms.map(t => `
+    <tr>
+      <td>${t.employee_code || "—"}</td><td>${t.name}</td><td>${t.department}</td>
+      <td>${STATUS_LABELS[t.status] || t.status}</td><td>${t.termination_date ? t.termination_date.slice(0, 10) : "—"}</td>
+      <td>${t.termination_reason || "—"}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">مفيش استقالات/إنهاءات خدمة مسجّلة</td></tr>`;
+}
+
+async function loadHrLeaveBalance() {
+  const dept = document.getElementById("hrDeptFilter").value;
+  const status = document.getElementById("hrStatusFilter").value || "active";
+  const qs = new URLSearchParams();
+  if (dept) qs.set("department", dept);
+  qs.set("status", status);
+  const data = await api(`/api/hr/reports/leave-balance?${qs}`);
+  document.getElementById("hrLeaveBalanceNote").textContent = `${data.note} - أساس الحساب: ${data.paidLeaveDaysPerMonth} يوم/شهر`;
+  document.getElementById("hrLeaveBalanceBody").innerHTML = data.employees.map(e => `
+    <tr>
+      <td>${e.employeeCode || "—"}</td><td>${e.name}</td><td>${e.department}</td>
+      <td>${e.estimatedEntitledDays}</td><td>${e.daysTaken}</td>
+      <td class="${e.estimatedRemainingDays < 0 ? "diffneg" : "diffpos"}">${e.estimatedRemainingDays}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">مفيش بيانات</td></tr>`;
+}
+
+async function loadHrWarningsReport() {
+  const warnings = await api("/api/hr/warnings");
+  const warnLabels = { verbal: "شفهي", written: "كتابي", final: "إنذار نهائي" };
+  document.getElementById("hrWarningsBody").innerHTML = warnings.map(w => `
+    <tr><td>${w.warning_date.slice(0, 10)}</td><td>${w.employee_name}</td><td>${w.department}</td><td>${warnLabels[w.severity] || w.severity}</td><td>${w.reason}</td></tr>
+  `).join("") || `<tr><td colspan="5">مفيش إنذارات مسجّلة</td></tr>`;
+}
+
+async function loadHrLeavesReport() {
+  const leaves = await api("/api/hr/leaves");
+  const leaveLabels = { annual: "سنوية", sick: "مرضية", unpaid: "بدون أجر", casual: "عارضة" };
+  document.getElementById("hrLeavesBody").innerHTML = leaves.map(l => `
+    <tr>
+      <td>${l.employee_name}</td><td>${leaveLabels[l.leave_type] || l.leave_type}</td>
+      <td>${l.start_date.slice(0, 10)}</td><td>${l.end_date.slice(0, 10)}</td><td>${l.days}</td>
+      <td><span class="badge ${l.status === "cancelled" ? "warn" : ""}">${l.status === "cancelled" ? "ملغاة" : "مسجّلة"}</span></td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">مفيش إجازات مسجّلة</td></tr>`;
+}
 
 // ---------------- البصمة ----------------
 function parsePasteRows(text) {

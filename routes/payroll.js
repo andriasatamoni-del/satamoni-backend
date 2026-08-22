@@ -5,6 +5,7 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
 const { computePayrollSummary, toCents } = require("../services/payroll-engine");
+const { recordEmployeeHistoryChanges } = require("../db/employee-history");
 
 // نظام الرواتب حساس ماليًا وشامل كل الفروع - أدمن ومحاسب بس (مش مقفول على فرع زي المصروفات العادية)
 const payrollAccess = requireRole("admin", "accountant");
@@ -94,11 +95,12 @@ router.get("/employees", async (req, res) => {
   }
 });
 
+// المرحلة 4D: employeeCode اختياري - لو مبعتش، بيتولّد تلقائيًا (EMP-000001...) من employee_code_seq
 router.post("/employees", async (req, res) => {
   const {
     name, department, jobTitle, attendanceSystem, hireDate, baseSalary = 0,
     workingDaysPerMonth = 26, shift, wageType = "fixed_monthly", hourlyRate = 0,
-    phone, notes, countDay31 = false, restrictedBranchId,
+    phone, notes, countDay31 = false, restrictedBranchId, employeeCode,
   } = req.body;
   if (!name || !department || !attendanceSystem) {
     return res.status(400).json({ error: "لازم الاسم والقسم ونظام الحضور" });
@@ -107,40 +109,79 @@ router.post("/employees", async (req, res) => {
     const result = await pool.query(
       `INSERT INTO employees
         (name, department, job_title, attendance_system, hire_date, base_salary,
-         working_days_per_month, shift, wage_type, hourly_rate, phone, notes, count_day_31, restricted_branch_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+         working_days_per_month, shift, wage_type, hourly_rate, phone, notes, count_day_31, restricted_branch_id,
+         employee_code)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+         COALESCE($15, 'EMP-' || LPAD(nextval('employee_code_seq')::text, 6, '0')))
+       RETURNING *`,
       [name, department, jobTitle || null, attendanceSystem, hireDate || null, baseSalary,
        workingDaysPerMonth, shift || null, wageType, hourlyRate, phone || null, notes || null,
-       countDay31, restrictedBranchId || null]
+       countDay31, restrictedBranchId || null, employeeCode || null]
     );
+    await logAudit(pool, {
+      userId: req.user.id, action: "EMPLOYEE_CREATED", entityType: "employee", entityId: result.rows[0].id,
+      newValues: result.rows[0], req,
+    });
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ error: "كود الموظف ده مستخدم بالفعل" });
     res.status(500).json({ error: err.message });
   }
 });
 
+// المرحلة 4D: isActive القديم لسه شغال (توافق رجعي) - بيتترجم لـstatus داخليًا لو status مش متبعت صراحة
+// معاه؛ status بقى مصدر الحقيقة الفعلي (trigger على مستوى القاعدة بيشتق is_active منه دايمًا - انظر
+// db/schema.sql). أي تغيير على department/jobTitle/restrictedBranchId/status بيتسجل في employee_history
 router.patch("/employees/:id", async (req, res) => {
   const { id } = req.params;
+  const before = await pool.query("SELECT * FROM employees WHERE id = $1", [id]);
+  if (before.rows.length === 0) return res.status(404).json({ error: "الموظف مش موجود" });
+
+  const body = { ...req.body };
+  if (body.isActive !== undefined && body.status === undefined) {
+    body.status = body.isActive ? "active" : "terminated";
+  }
+  delete body.isActive; // is_active مشتق من status بالـtrigger، مش عمود يتكتب فيه مباشرة
+
   const map = {
     name: "name", department: "department", jobTitle: "job_title", attendanceSystem: "attendance_system",
     hireDate: "hire_date", baseSalary: "base_salary", workingDaysPerMonth: "working_days_per_month",
     shift: "shift", wageType: "wage_type", hourlyRate: "hourly_rate", phone: "phone", notes: "notes",
-    isActive: "is_active", countDay31: "count_day_31", restrictedBranchId: "restricted_branch_id",
+    countDay31: "count_day_31", restrictedBranchId: "restricted_branch_id",
+    employeeCode: "employee_code", status: "status", terminationDate: "termination_date",
+    terminationReason: "termination_reason",
   };
   const fields = [];
   const values = [];
   let i = 1;
   for (const [key, col] of Object.entries(map)) {
-    if (req.body[key] !== undefined) { fields.push(`${col} = $${i++}`); values.push(req.body[key]); }
+    if (body[key] !== undefined) { fields.push(`${col} = $${i++}`); values.push(body[key]); }
   }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
   values.push(id);
+  const client = await pool.connect();
   try {
-    const result = await pool.query(`UPDATE employees SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`, values);
-    if (result.rows.length === 0) return res.status(404).json({ error: "الموظف مش موجود" });
+    await client.query("BEGIN");
+    const result = await client.query(`UPDATE employees SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`, values);
+    if (result.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الموظف مش موجود" }); }
+    await recordEmployeeHistoryChanges(client, {
+      employeeId: Number(id), before: before.rows[0],
+      changes: { department: body.department, job_title: body.jobTitle, restricted_branch_id: body.restrictedBranchId, status: body.status },
+      changedBy: req.user.id, reason: body.reason || null,
+    });
+    await logAudit(client, {
+      userId: req.user.id, action: "EMPLOYEE_UPDATED", entityType: "employee", entityId: Number(id),
+      oldValues: before.rows[0], newValues: result.rows[0], req,
+    });
+    await client.query("COMMIT");
     res.json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
+    if (err.code === "23505") return res.status(409).json({ error: "كود الموظف ده مستخدم بالفعل" });
+    if (err.code === "23514") return res.status(400).json({ error: "قيمة غير صحيحة (تحقق من status)" });
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
