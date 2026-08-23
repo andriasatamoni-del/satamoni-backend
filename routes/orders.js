@@ -819,4 +819,413 @@ router.post(
   }
 );
 
+// PUT /api/orders/:id - تعديل طلب لسه "تحت التحضير" بس (قبل ما ينتقل لحالة "في الطريق" أو يتسلم أو يتلغي).
+// بيسمح بتغيير الأصناف/العنوان/بيانات العميل/الخصم، وبيعيد بناء كل أثر الطلب من الصفر (المخزون، تكلفة
+// الوصفة المجمّدة، القيد المحاسبي، نقاط الولاء) - رجوع الأثر القديم بالكامل (نفس منطق POST /:id/void
+// بالظبط) ثم تطبيق الجديد (نفس منطق POST / بالظبط)، كله جوه transaction واحدة ذرّية مقفولة بـFOR UPDATE
+// من أول لحظة. الفحص status==='preparing' هو نفسه الضمانة إن محدش يعدّل طلب اتحرك أو اتسلم أو اتلغى بالفعل.
+router.put(
+  "/:id",
+  requireAuth,
+  requireRole("cashier", "branch_manager", "admin", "callcenter"),
+  async (req, res) => {
+    const {
+      deliveryAreaId, addressDetails, distinguishingMark,
+      customerName, customerPhone, customerPhone2,
+      paymentMethodId, items: rawItems,
+      discountApprovedBy, inventoryOverrideApprovedBy, tableNumber,
+    } = req.body;
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const orderRes = await client.query("SELECT * FROM orders WHERE id = $1 FOR UPDATE", [req.params.id]);
+      if (orderRes.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلب مش موجود" }); }
+      const order = orderRes.rows[0];
+
+      if ((req.user.role === "cashier" || req.user.role === "branch_manager") && !assertOwnBranch(req.user, order.branch_id)) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "معندكش صلاحية تعدّل طلب فرع تاني" });
+      }
+      if (order.status !== "preparing" || order.voided) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "التعديل متاح بس للطلبات تحت التحضير" });
+      }
+
+      // مفيش قيمة افتراضية صفر لـdeliveryFee/discount هنا عمدًا (زي POST /) - ده PATCH-style، لو الفرونت إند
+      // مبعتش الحقل ده أصلًا لازم تفضل قيمته الأصلية زي ما هي، مش تتصفّر بهدوء
+      const deliveryFee = req.body.deliveryFee !== undefined ? req.body.deliveryFee : Number(order.delivery_fee);
+      const discount = req.body.discount !== undefined ? req.body.discount : Number(order.discount);
+
+      if (!Array.isArray(rawItems) || rawItems.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "لازم صنف واحد على الأقل في الطلب" });
+      }
+      let items;
+      try {
+        items = await resolveOrderItems(client, rawItems, order.source);
+      } catch (err) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: err.message });
+      }
+
+      const subtotal = items.reduce((s, it) => s + it.lineTotal, 0);
+
+      // نفس فحص موافقة الخصم بالظبط زي POST / - مبني على القيم الجديدة بعد التعديل
+      let discountApprover = null;
+      if (discount > 0 && subtotal > 0) {
+        const settings = await client.query(
+          "SELECT max_unapproved_discount_percent, discount_manager_max_percent FROM pos_settings WHERE id = 1"
+        );
+        const maxUnapproved = Number(settings.rows[0]?.max_unapproved_discount_percent ?? 0.1);
+        const managerMax = Number(settings.rows[0]?.discount_manager_max_percent ?? 0.15);
+        const discountRatio = discount / subtotal;
+        if (discountRatio > maxUnapproved) {
+          if (!discountApprovedBy) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ error: "الخصم ده محتاج موافقة مدير الفرع أو الأدمن" });
+          }
+          const requiresAdminOnly = discountRatio > managerMax;
+          const approver = await client.query(
+            `SELECT id, name, role FROM users
+             WHERE id = $1 AND is_active = TRUE
+               AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2 AND NOT $3))`,
+            [discountApprovedBy, order.branch_id, requiresAdminOnly]
+          );
+          if (approver.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+              error: requiresAdminOnly ? "الخصم ده كبير جدًا، محتاج موافقة الأدمن بس" : "الموافقة على الخصم غير صالحة",
+            });
+          }
+          discountApprover = approver.rows[0];
+        }
+      }
+
+      let inventoryOverrideApprover = null;
+      if (inventoryOverrideApprovedBy) {
+        const overrideApprover = await client.query(
+          `SELECT id, name FROM users
+           WHERE id = $1 AND is_active = TRUE
+             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
+          [inventoryOverrideApprovedBy, order.branch_id]
+        );
+        if (overrideApprover.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: "الموافقة على تجاوز نقص المخزون غير صالحة" });
+        }
+        inventoryOverrideApprover = overrideApprover.rows[0];
+      }
+
+      // ---- رجوع أثر الطلب القديم بالكامل (مخزون + نقاط ولاء + قيد محاسبي) - نفس منطق POST /:id/void ----
+      if (order.branch_id) {
+        const reversalIngredients = `
+          SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * oi.quantity::numeric AS qty
+          FROM order_items oi
+          JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi.variant_id
+          WHERE oi.order_id = $1 AND oi.variant_id IS NOT NULL
+          UNION ALL
+          SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi.quantity::numeric AS qty
+          FROM order_items oi
+          JOIN combo_items ci ON ci.combo_id = oi.combo_id
+          JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = ci.variant_id
+          WHERE oi.order_id = $1 AND oi.combo_id IS NOT NULL`;
+        const grouped = await client.query(
+          `SELECT sub.inventory_item_id, SUM(sub.qty) AS qty FROM (${reversalIngredients}) sub GROUP BY sub.inventory_item_id`,
+          [order.id]
+        );
+        for (const row of grouped.rows) {
+          await postInventoryMovement(client, {
+            branchId: order.branch_id, inventoryItemId: row.inventory_item_id, quantity: Number(row.qty),
+            movementType: "SALE_REVERSAL", referenceType: "order", referenceId: order.id,
+            userId: req.user.id,
+          });
+        }
+      }
+
+      if (order.customer_phone && order.loyalty_points_earned > 0) {
+        await client.query(
+          `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
+          [order.loyalty_points_earned, order.customer_phone]
+        );
+      }
+
+      const originalEntry = await client.query(
+        "SELECT id FROM journal_entries WHERE source_type = 'order_sale' AND source_id = $1 AND status = 'POSTED'",
+        [order.id]
+      );
+      if (originalEntry.rows.length > 0) {
+        await reverseJournalEntry(client, {
+          originalEntryId: originalEntry.rows[0].id, entryDate: new Date().toISOString().slice(0, 10),
+          reason: "تعديل الطلب", userId: req.user.id,
+        });
+      }
+
+      // مسح الأصناف القديمة - order_item_modifiers وorder_item_ingredient_costs بيتشالوا معاهم أوتوماتيك (ON DELETE CASCADE)
+      await client.query("DELETE FROM order_items WHERE order_id = $1", [order.id]);
+
+      // ---- تطبيق الأصناف الجديدة - نفس منطق POST / بالظبط ----
+      for (const it of items) {
+        const inserted = await client.query(
+          `INSERT INTO order_items (order_id, item_id, variant_id, combo_id, quantity, unit_price, line_total)
+           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+          [order.id, it.comboId ? null : it.itemId, it.comboId ? null : it.variantId, it.comboId || null,
+           it.quantity, it.unitPrice, it.lineTotal]
+        );
+        const orderItemId = inserted.rows[0].id;
+        for (const mod of it.modifiers || []) {
+          await client.query(
+            `INSERT INTO order_item_modifiers (order_item_id, modifier_id, name_at_sale, price_at_sale)
+             VALUES ($1,$2,$3,$4)`,
+            [orderItemId, mod.id, mod.name, mod.priceDelta || 0]
+          );
+        }
+      }
+
+      await client.query(
+        `UPDATE order_items oi
+         SET recipe_version_id = rv.id
+         FROM recipes r JOIN recipe_versions rv ON rv.recipe_id = r.id AND rv.status = 'ACTIVE'
+         WHERE r.recipe_type = 'sellable_variant' AND r.variant_id = oi.variant_id
+           AND oi.order_id = $1 AND oi.variant_id IS NOT NULL`,
+        [order.id]
+      );
+
+      if (order.branch_id) {
+        await client.query(
+          `UPDATE order_items oi
+           SET cost_at_sale = sub.cost, cost_at_sale_incomplete = sub.incomplete
+           FROM (
+             SELECT oi2.id AS order_item_id,
+                    COALESCE(SUM(mvi.quantity_per_unit::numeric * ii.unit_cost::numeric * oi2.quantity::numeric), 0) AS cost,
+                    (COUNT(mvi.id) = 0 OR BOOL_OR(ii.unit_cost IS NULL)) AS incomplete
+             FROM order_items oi2
+             LEFT JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi2.variant_id
+             LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+             WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL
+             GROUP BY oi2.id
+           ) sub
+           WHERE oi.id = sub.order_item_id`,
+          [order.id]
+        );
+        await client.query(
+          `UPDATE order_items oi
+           SET cost_at_sale = sub.cost, cost_at_sale_incomplete = sub.incomplete
+           FROM (
+             SELECT oi2.id AS order_item_id,
+                    COALESCE(SUM(mvi.quantity_per_unit::numeric * ii.unit_cost::numeric * ci.quantity::numeric * oi2.quantity::numeric), 0) AS cost,
+                    (COUNT(mvi.id) = 0 OR BOOL_OR(ii.unit_cost IS NULL)) AS incomplete
+             FROM order_items oi2
+             JOIN combo_items ci ON ci.combo_id = oi2.combo_id
+             LEFT JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = ci.variant_id
+             LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+             WHERE oi2.order_id = $1 AND oi2.combo_id IS NOT NULL
+             GROUP BY oi2.id
+           ) sub
+           WHERE oi.id = sub.order_item_id`,
+          [order.id]
+        );
+        await client.query(
+          `INSERT INTO order_item_ingredient_costs (order_item_id, ingredient_item_id, quantity, unit_cost, total_cost)
+           SELECT oi2.id, mvi.inventory_item_id, mvi.quantity_per_unit::numeric * oi2.quantity::numeric,
+                  ii.unit_cost, mvi.quantity_per_unit::numeric * oi2.quantity::numeric * ii.unit_cost::numeric
+           FROM order_items oi2
+           JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi2.variant_id
+           JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+           WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL`,
+          [order.id]
+        );
+        await client.query(
+          `INSERT INTO order_item_ingredient_costs (order_item_id, ingredient_item_id, quantity, unit_cost, total_cost)
+           SELECT oi2.id, mvi.inventory_item_id, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi2.quantity::numeric,
+                  ii.unit_cost, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi2.quantity::numeric * ii.unit_cost::numeric
+           FROM order_items oi2
+           JOIN combo_items ci ON ci.combo_id = oi2.combo_id
+           JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = ci.variant_id
+           JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+           WHERE oi2.order_id = $1 AND oi2.combo_id IS NOT NULL`,
+          [order.id]
+        );
+      }
+
+      const negativeStockOverrides = [];
+      if (order.branch_id) {
+        for (const it of items) {
+          let variantsToDeduct = [];
+          if (it.comboId) {
+            const comboItems = await client.query(
+              "SELECT variant_id, quantity FROM combo_items WHERE combo_id = $1",
+              [it.comboId]
+            );
+            variantsToDeduct = comboItems.rows.map((ci) => ({
+              variantId: ci.variant_id,
+              multiplier: ci.quantity * it.quantity,
+            }));
+          } else if (it.variantId) {
+            variantsToDeduct = [{ variantId: it.variantId, multiplier: it.quantity }];
+          }
+
+          for (const v of variantsToDeduct) {
+            const recipe = await client.query(
+              "SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1",
+              [v.variantId]
+            );
+            for (const ing of recipe.rows) {
+              const deduction = await client.query(
+                "SELECT ($1::numeric * $2::numeric) AS qty", [ing.quantity_per_unit, v.multiplier]
+              );
+              const { movement: saleMovement, negativeOverrideUsed } = await postInventoryMovement(client, {
+                branchId: order.branch_id, inventoryItemId: ing.inventory_item_id, quantity: -Number(deduction.rows[0].qty),
+                movementType: "SALE", referenceType: "order", referenceId: order.id,
+                userId: req.user.id, negativeStockOverrideApproved: !!inventoryOverrideApprover,
+              });
+              if (negativeOverrideUsed) {
+                negativeStockOverrides.push({
+                  inventoryItemId: ing.inventory_item_id, quantityBefore: saleMovement.quantity_before,
+                  quantityRequested: Number(deduction.rows[0].qty),
+                });
+              }
+            }
+          }
+        }
+      }
+
+      if (negativeStockOverrides.length > 0) {
+        await logAudit(client, {
+          branchId: order.branch_id, userId: req.user.id, action: "NEGATIVE_STOCK_OVERRIDE", entityType: "order", entityId: order.id,
+          newValues: { items: negativeStockOverrides },
+          metadata: { approverId: inventoryOverrideApprover.id, approverName: inventoryOverrideApprover.name }, req,
+        });
+      }
+
+      const total = subtotal + deliveryFee - discount;
+      const finalCustomerPhone = customerPhone !== undefined ? customerPhone : order.customer_phone;
+      const finalCustomerName = customerName !== undefined ? customerName : order.customer_name;
+      const finalAddressDetails = addressDetails !== undefined ? addressDetails : order.address_details;
+      const finalDeliveryAreaId = deliveryAreaId !== undefined ? deliveryAreaId : order.delivery_area_id;
+      const finalPaymentMethodId = paymentMethodId !== undefined ? paymentMethodId : order.payment_method_id;
+      const finalTableNumber = tableNumber !== undefined ? tableNumber : order.table_number;
+
+      let loyaltyPointsEarned = 0;
+      if (finalCustomerPhone && total > 0) {
+        const loyaltySettings = await client.query("SELECT loyalty_points_per_egp FROM pos_settings WHERE id = 1");
+        const rate = Number(loyaltySettings.rows[0]?.loyalty_points_per_egp ?? 0);
+        loyaltyPointsEarned = Math.floor(total * rate);
+      }
+
+      await client.query(
+        `UPDATE orders SET
+           table_number = $1, delivery_area_id = $2, address_details = $3,
+           customer_name = $4, customer_phone = $5, payment_method_id = $6,
+           subtotal = $7, delivery_fee = $8, discount = $9, discount_approved_by = $10,
+           total = $11, loyalty_points_earned = $12, synced_at = NULL
+         WHERE id = $13`,
+        [
+          finalTableNumber, finalDeliveryAreaId, finalAddressDetails, finalCustomerName, finalCustomerPhone,
+          finalPaymentMethodId, subtotal, deliveryFee, discount, discountApprovedBy || null,
+          total, loyaltyPointsEarned, order.id,
+        ]
+      );
+
+      if (discountApprover) {
+        await logAudit(client, {
+          branchId: order.branch_id, userId: req.user.id, action: "ORDER_DISCOUNT_APPROVED", entityType: "order", entityId: order.id,
+          newValues: { discount, subtotal }, metadata: { approverId: discountApprover.id, approverName: discountApprover.name }, req,
+        });
+      }
+
+      // نفس منطق upsert بيانات العميل بتاع POST / بالظبط - بيانات الدليفري (تليفون تاني، عنوان، منطقة،
+      // علامة مميزة) بتتحدّث هنا كمان لو الطلب دليفري، ونقاط الولاء الجديدة بتتضاف لرصيد العميل
+      if (finalCustomerPhone) {
+        await client.query(
+          `INSERT INTO customers (phone, name, phone2, address_details, delivery_area_id, distinguishing_mark, loyalty_points)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (phone) DO UPDATE SET
+             name = COALESCE(EXCLUDED.name, customers.name),
+             phone2 = COALESCE(EXCLUDED.phone2, customers.phone2),
+             address_details = COALESCE(EXCLUDED.address_details, customers.address_details),
+             delivery_area_id = COALESCE(EXCLUDED.delivery_area_id, customers.delivery_area_id),
+             distinguishing_mark = COALESCE(EXCLUDED.distinguishing_mark, customers.distinguishing_mark),
+             loyalty_points = customers.loyalty_points + $7,
+             updated_at = now()`,
+          [
+            finalCustomerPhone, finalCustomerName,
+            order.order_type === "delivery" ? customerPhone2 || null : null,
+            order.order_type === "delivery" ? finalAddressDetails || null : null,
+            order.order_type === "delivery" ? finalDeliveryAreaId || null : null,
+            order.order_type === "delivery" ? distinguishingMark || null : null,
+            loyaltyPointsEarned,
+          ]
+        );
+      }
+
+      // ---- إعادة ترحيل قيد البيع محاسبيًا بالإجمالي الجديد - نفس منطق اختيار الحساب المدين بتاع POST / بالظبط ----
+      if (order.branch_id && total > 0) {
+        let paymentKind = "cash";
+        if (finalPaymentMethodId) {
+          const pm = await client.query("SELECT kind FROM payment_methods WHERE id = $1", [finalPaymentMethodId]);
+          if (pm.rows.length > 0) paymentKind = pm.rows[0].kind;
+        }
+
+        const costRes = await client.query(
+          `SELECT COALESCE(SUM(cost_at_sale), 0) AS total_cost, BOOL_OR(cost_at_sale_incomplete) AS incomplete
+           FROM order_items WHERE order_id = $1`,
+          [order.id]
+        );
+        const costTotal = Number(costRes.rows[0].total_cost);
+        const costIncomplete = costRes.rows[0].incomplete;
+
+        let debitAccount;
+        if (order.source === "talabat") {
+          debitAccount = await getAccountByCode(client, "1350");
+        } else if (paymentKind === "cash" && order.payment_status === "collected") {
+          debitAccount = await getOrCreateBranchCashAccount(client, order.branch_id);
+        } else if (order.payment_status === "pending_collection") {
+          debitAccount = await getAccountByCode(client, "1300");
+        } else {
+          debitAccount = await getAccountByCode(client, "1200");
+        }
+
+        const revenueLines = [{ accountId: debitAccount.id, debit: total, description: "قيمة الطلب (بعد التعديل)" }];
+        if (subtotal > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4100")).id, credit: subtotal });
+        if (deliveryFee > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4200")).id, credit: deliveryFee });
+        if (discount > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: discount });
+
+        if (costTotal > 0) {
+          revenueLines.push({ accountId: (await getAccountByCode(client, "5100")).id, debit: costTotal, description: costIncomplete ? "تكلفة جزئية (بيانات تكلفة ناقصة لبعض الأصناف)" : null });
+          revenueLines.push({ accountId: (await getAccountByCode(client, "1400")).id, credit: costTotal });
+        }
+
+        await postJournalEntry(client, {
+          entryDate: new Date().toISOString().slice(0, 10), description: `بيع (بعد تعديل) - طلب #${order.id}`,
+          sourceType: "order_sale", sourceId: order.id, branchId: order.branch_id,
+          lines: revenueLines, userId: req.user.id,
+        });
+      }
+
+      await client.query(
+        `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, 'تعديل الطلب')`,
+        [order.id, order.status, req.user.id]
+      );
+
+      await logAudit(client, {
+        branchId: order.branch_id, userId: req.user.id, action: "ORDER_EDITED", entityType: "order", entityId: order.id,
+        oldValues: { subtotal: Number(order.subtotal), total: Number(order.total) },
+        newValues: { subtotal, total }, req,
+      });
+
+      await client.query("COMMIT");
+      const updated = await pool.query("SELECT * FROM orders WHERE id = $1", [order.id]);
+      res.json(updated.rows[0]);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message, code: "INSUFFICIENT_STOCK" });
+      if (err.code === "INSUFFICIENT_STOCK_NEEDS_APPROVAL") return res.status(400).json({ error: err.message, code: "INSUFFICIENT_STOCK_NEEDS_APPROVAL" });
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 module.exports = router;

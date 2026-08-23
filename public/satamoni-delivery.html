@@ -66,6 +66,31 @@
   #pinModalBox input { width: 100%; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 16px; text-align: center; margin-bottom: 8px; }
   #pinModalBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; margin-top: 6px; }
   #pinModalBox button#pinModalCancel { background: transparent; border: 1px solid var(--line); color: var(--faint); font-weight: 700; }
+
+  #editModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 65; }
+  #editModalOverlay.show { display: flex; }
+  #editModalBox { background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 20px; width: 420px; max-width: 92vw; max-height: 85vh; overflow-y: auto; }
+  #editModalBox h3 { color: var(--gold-bright); margin: 0 0 14px; font-size: 16px; }
+  .edit-field { margin-bottom: 10px; }
+  .edit-field label { display: block; font-size: 12px; color: var(--faint); margin-bottom: 4px; }
+  .edit-field input, .edit-field select { width: 100%; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  #editAddRow { display: flex; gap: 6px; }
+  #editAddRow select { flex: 1; }
+  #editAddRow button { border: 1px solid var(--gold); background: transparent; color: var(--gold-bright); border-radius: 6px; padding: 0 12px; cursor: pointer; font-weight: 700; }
+  #editItemsList { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 10px 0; padding: 6px 0; min-height: 40px; }
+  .edit-item-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+  .edit-item-row:last-child { border-bottom: none; }
+  .edit-item-row .n { flex: 1; font-size: 13px; }
+  .edit-item-row .n .mods { font-size: 11px; color: var(--gold-bright); }
+  .edit-item-row .qty-ctrl { display: flex; align-items: center; gap: 6px; }
+  .edit-item-row .qty-ctrl button { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg-alt); color: var(--ink); cursor: pointer; font-size: 14px; }
+  .edit-item-row .lt { font-family: 'Courier New', monospace; color: var(--gold-bright); font-size: 12px; min-width: 55px; text-align: left; }
+  .edit-item-row .rm { border: none; background: transparent; color: #F08A83; cursor: pointer; font-size: 14px; }
+  #editTotalsRow { text-align: left; font-weight: 800; color: var(--gold-bright); margin-bottom: 10px; }
+  #editErr { color: #F08A83; font-size: 12px; margin-bottom: 8px; min-height: 16px; }
+  #editSaveBtn { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; }
+  #editSaveBtn:disabled { background: #3A3630; cursor: not-allowed; }
+  #editCancelBtn { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 13px; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -115,6 +140,28 @@
     <div id="pinModalErr" style="color:#F08A83;font-size:12px;margin-bottom:8px;min-height:16px"></div>
     <button id="pinModalSubmit">تأكيد</button>
     <button id="pinModalCancel">إلغاء</button>
+  </div>
+</div>
+
+<div id="editModalOverlay">
+  <div id="editModalBox">
+    <h3>تعديل الطلب #<span id="editOrderId"></span></h3>
+    <div class="edit-field">
+      <label>العنوان</label>
+      <input id="editAddressInput" placeholder="تفاصيل العنوان" />
+    </div>
+    <div class="edit-field">
+      <label>إضافة صنف</label>
+      <div id="editAddRow">
+        <select id="editAddItemSelect"></select>
+        <button id="editAddItemBtn" type="button">+ إضافة</button>
+      </div>
+    </div>
+    <div id="editItemsList"></div>
+    <div id="editTotalsRow"></div>
+    <div id="editErr"></div>
+    <button id="editSaveBtn">حفظ التعديل</button>
+    <button id="editCancelBtn">إلغاء</button>
   </div>
 </div>
 
@@ -268,6 +315,7 @@ function renderActions(card, order) {
   const btns = [];
   if (order.status === "preparing") {
     btns.push(`<button class="primary" data-act="ticket">🖨️ تذكرة المطبخ</button>`);
+    btns.push(`<button data-act="edit">✏️ تعديل</button>`);
     if (order.order_type === "delivery") btns.push(`<button class="primary" data-act="dispatch">🛵 خروج مع الطيار</button>`);
     else btns.push(`<button class="primary" data-act="complete">✅ اتسلم</button>`);
     btns.push(`<button class="danger" data-act="cancel">❌ إلغاء</button>`);
@@ -290,6 +338,7 @@ function renderActions(card, order) {
 async function handleAction(order, act) {
   try {
     if (act === "ticket") { printKitchenTicket(order); return; }
+    if (act === "edit") { openEditModal(order); return; }
     if (act === "dispatch") {
       const driverName = prompt("اسم الطيار:");
       if (!driverName) return;
@@ -348,6 +397,140 @@ document.getElementById("pinModalSubmit").onclick = async () => {
     closePinModal(data);
   } catch (e) {
     errBox.textContent = e.message || "PIN غير صحيح";
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// ---------------- تعديل طلب تحت التحضير (PUT /api/orders/:id) ----------------
+let editState = null;
+let menuFullCache = null;
+
+async function ensureMenuLoaded() {
+  if (!menuFullCache) {
+    const data = await api("/api/config/full");
+    menuFullCache = data.menu;
+  }
+  return menuFullCache;
+}
+
+function editLineTotal(it) { return Number(it.unitPrice) * it.qty; }
+
+async function openEditModal(order) {
+  try {
+    const full = await api(`/api/orders/${order.id}`);
+    await ensureMenuLoaded();
+    editState = {
+      order: full,
+      items: full.items.map(it => ({
+        itemId: it.item_id, variantId: it.variant_id, comboId: it.combo_id,
+        name: it.item_name || it.combo_name || "صنف", label: it.variant_label || "",
+        unitPrice: Number(it.unit_price), qty: it.quantity,
+        // مرفقات الصنف الأصلية (unit_price فوق أصلًا شامل سعرها) - بتفضل معاه طالما الكمية بس اتغيّرت،
+        // مش قابلة للتعديل من الشاشة دي (لو الموظف عايز يغيّرها يشيل الصنف ويضيفه تاني من غير مرفقات)
+        modifiers: (it.modifiers || []).map(m => ({ id: m.modifier_id, name: m.name_at_sale })),
+      })),
+    };
+    document.getElementById("editOrderId").textContent = order.id;
+    document.getElementById("editAddressInput").value = full.address_details || "";
+    document.getElementById("editErr").textContent = "";
+    renderEditAddItemOptions();
+    renderEditItems();
+    document.getElementById("editModalOverlay").classList.add("show");
+  } catch (e) { alert(e.message); }
+}
+
+function renderEditAddItemOptions() {
+  const sel = document.getElementById("editAddItemSelect");
+  const opts = [];
+  menuFullCache.forEach(mi => {
+    (mi.variants || []).forEach(v => {
+      opts.push(`<option value="${mi.id}__${v.id}">${mi.name}${v.label ? " (" + v.label + ")" : ""} — ${money(v.price)}</option>`);
+    });
+  });
+  sel.innerHTML = opts.join("");
+}
+
+function renderEditItems() {
+  const wrap = document.getElementById("editItemsList");
+  if (editState.items.length === 0) {
+    wrap.innerHTML = `<div style="color:var(--faint);text-align:center;padding:10px;font-size:12px">مفيش أصناف - لازم تسيب صنف واحد على الأقل</div>`;
+  } else {
+    wrap.innerHTML = editState.items.map((it, idx) => `
+      <div class="edit-item-row" data-idx="${idx}">
+        <div class="n">${it.name}${it.label ? " (" + it.label + ")" : ""}${it.modifiers.length ? "<br/><span class='mods'>+ " + it.modifiers.map(m => m.name).join("، ") + "</span>" : ""}</div>
+        <div class="qty-ctrl"><button data-d="-1">−</button><span>${it.qty}</span><button data-d="1">+</button></div>
+        <div class="lt">${money(editLineTotal(it))}</div>
+        <button class="rm" data-rm="1" title="حذف الصنف">🗑️</button>
+      </div>`).join("");
+    wrap.querySelectorAll(".edit-item-row").forEach(row => {
+      const idx = Number(row.dataset.idx);
+      row.querySelectorAll(".qty-ctrl button").forEach(btn => {
+        btn.onclick = () => changeEditQty(idx, Number(btn.dataset.d));
+      });
+      row.querySelector(".rm").onclick = () => { editState.items.splice(idx, 1); renderEditItems(); };
+    });
+  }
+  const subtotal = editState.items.reduce((s, it) => s + editLineTotal(it), 0);
+  const deliveryFee = Number(editState.order.delivery_fee);
+  const discount = Number(editState.order.discount);
+  const total = Math.max(subtotal + deliveryFee - discount, 0);
+  document.getElementById("editTotalsRow").textContent =
+    `الفرعي ${money(subtotal)} + التوصيل ${money(deliveryFee)}${discount > 0 ? " - خصم " + money(discount) : ""} = الإجمالي ${money(total)}`;
+}
+
+function changeEditQty(idx, delta) {
+  const it = editState.items[idx];
+  it.qty += delta;
+  if (it.qty <= 0) editState.items.splice(idx, 1);
+  renderEditItems();
+}
+
+document.getElementById("editAddItemBtn").onclick = () => {
+  const sel = document.getElementById("editAddItemSelect");
+  if (!sel.value) return;
+  const [itemIdStr, variantIdStr] = sel.value.split("__");
+  const itemId = Number(itemIdStr), variantId = Number(variantIdStr);
+  const mi = menuFullCache.find(m => m.id === itemId);
+  const v = mi.variants.find(v => v.id === variantId);
+  const existing = editState.items.find(it => it.itemId === itemId && it.variantId === variantId && it.modifiers.length === 0);
+  if (existing) existing.qty += 1;
+  else editState.items.push({ itemId, variantId, comboId: null, name: mi.name, label: v.label, unitPrice: Number(v.price), qty: 1, modifiers: [] });
+  renderEditItems();
+};
+
+document.getElementById("editCancelBtn").onclick = () => {
+  document.getElementById("editModalOverlay").classList.remove("show");
+  editState = null;
+};
+
+document.getElementById("editSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("editErr");
+  errBox.textContent = "";
+  if (!editState || editState.items.length === 0) { errBox.textContent = "لازم صنف واحد على الأقل"; return; }
+  const btn = document.getElementById("editSaveBtn");
+  btn.disabled = true;
+  try {
+    const o = editState.order;
+    const payload = {
+      deliveryAreaId: o.delivery_area_id,
+      addressDetails: document.getElementById("editAddressInput").value.trim(),
+      customerName: o.customer_name,
+      customerPhone: o.customer_phone,
+      paymentMethodId: o.payment_method_id,
+      tableNumber: o.table_number,
+      deliveryFee: Number(o.delivery_fee),
+      discount: Number(o.discount),
+      items: editState.items.map(it => it.comboId
+        ? { comboId: it.comboId, quantity: it.qty }
+        : { itemId: it.itemId, variantId: it.variantId, quantity: it.qty, modifiers: it.modifiers.map(m => ({ id: m.id })) }),
+    };
+    await api(`/api/orders/${o.id}`, { method: "PUT", body: JSON.stringify(payload) });
+    document.getElementById("editModalOverlay").classList.remove("show");
+    editState = null;
+    loadOrders();
+  } catch (e) {
+    errBox.textContent = e.message;
   } finally {
     btn.disabled = false;
   }
