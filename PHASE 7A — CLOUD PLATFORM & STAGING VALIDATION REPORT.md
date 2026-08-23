@@ -260,17 +260,35 @@ request was found via the Network panel directly.
 Kitchen, Void/Refund, Purchase, Production, Branch Transfer, Waste, Expense, Payroll flows: **not yet
 executed** against this instance.
 
-## 11, 14–24. CORS, Authentication (deeper checks), Rate Limiting, Logging, Graceful Shutdown, Branch
-Isolation, Concurrency, Retry Safety, Performance, Backup, Restore, Frontend (deeper checks)
+## 19. Frontend — real finding fixed live (role-based navigation gap)
 
-**Still NOT VERIFIED** — the live instance now exists (Sections 8–10, 13) and has processed one real
-transaction (Section 12), but these deeper functional/security/concurrency/backup checks have not yet
-been executed against it. Each has a fully specified, ready-to-execute procedure waiting in
-`docs/CLOUD-STAGING-RUNBOOK.md` (Steps 5–15), written against this exact codebase. What is already true
-independent of further testing:
+Logged in as the real cashier account (`youssef@gmail.com`, role `cashier`, scoped to branch الابراهيمية)
+and, on the deployed cloud instance, navigated directly by URL to `satamoni-customers.html`,
+`satamoni-audit.html`, and `satamoni-kitchen.html`. All three rendered full content instead of blocking
+access — every one of the 13 frontend pages only checked "is there a valid session token" (shared
+per-tab via `sessionStorage`), not "is this role appropriate for this page." Backend API calls from
+those pages would still be blocked for most sensitive actions by `requirePermission` (unverified in
+detail here, but consistent with the permission model audited in earlier phases), so this was page-level
+navigation/information exposure, not a proven data-write vulnerability — but real UX/exposure gap
+nonetheless, found only by actually testing as a cashier on the live deployment, not by code review.
 
-- **Frontend cloud-readiness**: audited (Section 2) — no hardcoded localhost dependency blocks cloud
-  use; confirmed by grep, not assumed.
+**Fixed live**: added a one-line guard (`if (auth.user.role === "cashier")
+location.replace("satamoni-pos.html")`) to all 12 non-POS pages plus `index.html`, matching each page's
+existing per-file `sessionStorage`-based auth pattern exactly — no new abstraction, no other role
+affected. Committed (`0b52f73`), pushed, Render auto-deployed from GitHub, and **re-verified live by the
+owner**: logging in as the cashier and navigating directly to any other page now redirects straight to
+`satamoni-pos.html`, confirming both the fix and that Render's auto-deploy-on-push pipeline itself works
+correctly end-to-end.
+
+## 11, 14–18, 20–24. CORS, Authentication (deeper checks), Rate Limiting, Logging, Graceful Shutdown,
+Branch Isolation (backend/API level), Concurrency, Retry Safety, Performance, Backup, Restore
+
+**Still NOT VERIFIED** — the live instance now exists (Sections 8–10, 13), has processed real
+transactions (Section 12), and one real frontend gap has been found and fixed (Section 19), but these
+deeper functional/security/concurrency/backup checks have not yet been executed against it. Each has a
+fully specified, ready-to-execute procedure waiting in `docs/CLOUD-STAGING-RUNBOOK.md` (Steps 5–15),
+written against this exact codebase. What is already true independent of further testing:
+
 - **Automated test suite**: 311/311 passing locally (308 pre-existing + 3 new for the SSL config) —
   this validates application logic, not cloud behavior.
 
@@ -285,7 +303,8 @@ real managed Postgres instance, external backup storage strategy (not yet decide
 KDS (not implemented).
 
 Moved to VERIFIED this update (Sections 8-10, 13): cloud deployment, PostgreSQL connectivity, HTTPS,
-health check.
+health check. Frontend cashier-navigation gap found live and fixed (Section 19) — auto-deploy pipeline
+itself also now confirmed working.
 
 ## 26. Remaining Risks
 
@@ -380,7 +399,7 @@ Scheduled Backup:
 NOT VERIFIED
 
 Frontend:
-PARTIALLY VERIFIED (code audit confirms no hardcoded localhost/cloud-blocking dependency; not tested against a live cloud URL)
+PARTIALLY VERIFIED (real cashier-role navigation gap found live and fixed - see Section 19; auto-deploy pipeline confirmed working; deeper per-page permission testing for other roles not yet done)
 
 Printing:
 NOT IMPLEMENTED
