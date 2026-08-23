@@ -219,13 +219,31 @@ described in Section 7. This is the strongest single signal available that the f
 Express → pg.Pool → managed Postgres with SSL) works end-to-end in the real cloud environment, not just
 locally.
 
-## 11–12, 14–24. CORS, Authentication, Rate Limiting, Logging, Graceful Shutdown, Branch Isolation, ERP
-Workflow Tests, Concurrency, Retry Safety, Performance, Backup, Restore, Frontend
+## 12. ERP Workflow Tests — PARTIALLY VERIFIED (Sales flow only)
 
-**Still NOT VERIFIED** — the live instance now exists (Sections 8–10, 13), but these deeper
-functional/security/concurrency/backup checks have not yet been executed against it. Each has a fully
-specified, ready-to-execute procedure waiting in `docs/CLOUD-STAGING-RUNBOOK.md` (Steps 5–15), written
-against this exact codebase. What is already true independent of further testing:
+Synthetic setup performed live in the browser via the deployed admin/POS pages (not the API directly):
+4 branches created (3 sale branches + 1 central kitchen — real branch names used by the owner rather than
+placeholder test names; no real transactional/financial data attached to them, so this is a labeling
+choice, not a production-data leak — accepted as-is by the owner), one cashier account created
+(`branch_manager`-scoped to a sale branch), one menu category + item with two priced variants added.
+
+**Sales flow — VERIFIED end-to-end on the real cloud deployment**: logged into `satamoni-pos.html` over
+HTTPS, added two variants of an item to cart (80 + 110 EGP), selected a cash payment method, submitted —
+order **#1** created successfully (`"تم تسجيل الطلب #1"`), confirming the full chain (frontend → HTTPS →
+Express → order creation → Postgres write) works in the real cloud environment for the first genuine
+business transaction, not just `/health`.
+
+Kitchen, Void/Refund, Purchase, Production, Branch Transfer, Waste, Expense, Payroll flows: **not yet
+executed** against this instance.
+
+## 11, 14–24. CORS, Authentication (deeper checks), Rate Limiting, Logging, Graceful Shutdown, Branch
+Isolation, Concurrency, Retry Safety, Performance, Backup, Restore, Frontend (deeper checks)
+
+**Still NOT VERIFIED** — the live instance now exists (Sections 8–10, 13) and has processed one real
+transaction (Section 12), but these deeper functional/security/concurrency/backup checks have not yet
+been executed against it. Each has a fully specified, ready-to-execute procedure waiting in
+`docs/CLOUD-STAGING-RUNBOOK.md` (Steps 5–15), written against this exact codebase. What is already true
+independent of further testing:
 
 - **Frontend cloud-readiness**: audited (Section 2) — no hardcoded localhost dependency blocks cloud
   use; confirmed by grep, not assumed.
@@ -317,7 +335,7 @@ Branch Isolation:
 NOT VERIFIED
 
 ERP Workflows:
-NOT VERIFIED (live instance now exists; workflow tests not yet executed against it)
+PARTIALLY VERIFIED (Sales flow confirmed end-to-end: real order #1 created via POS over HTTPS with cash payment; Kitchen/Void/Purchase/Production/Transfer/Waste/Expense/Payroll flows not yet tested)
 
 Cloud Concurrency:
 NOT VERIFIED
