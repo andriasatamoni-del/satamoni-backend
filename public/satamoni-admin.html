@@ -145,6 +145,7 @@ const auth = {
   user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
 };
 if (auth.user && auth.user.role === "cashier") location.replace("satamoni-pos.html");
+if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
 
 let branches = [];
 

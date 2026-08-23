@@ -30,6 +30,7 @@
 <script>
   const _u = JSON.parse(sessionStorage.getItem("satamoni_user") || "null");
   if (_u && _u.role === "cashier") location.replace("satamoni-pos.html");
+  if (_u && _u.role === "callcenter") location.replace("satamoni-callcenter.html");
 </script>
 <div id="wrap">
   <h1>🍕 ساتاموني</h1>
