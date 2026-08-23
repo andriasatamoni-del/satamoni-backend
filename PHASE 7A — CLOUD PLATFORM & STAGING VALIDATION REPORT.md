@@ -219,19 +219,43 @@ described in Section 7. This is the strongest single signal available that the f
 Express → pg.Pool → managed Postgres with SSL) works end-to-end in the real cloud environment, not just
 locally.
 
-## 12. ERP Workflow Tests — PARTIALLY VERIFIED (Sales flow only)
+## 12. ERP Workflow Tests — PARTIALLY VERIFIED (Sales flow only, incl. real recipe/inventory data)
 
 Synthetic setup performed live in the browser via the deployed admin/POS pages (not the API directly):
 4 branches created (3 sale branches + 1 central kitchen — real branch names used by the owner rather than
 placeholder test names; no real transactional/financial data attached to them, so this is a labeling
 choice, not a production-data leak — accepted as-is by the owner), one cashier account created
-(`branch_manager`-scoped to a sale branch), one menu category + item with two priced variants added.
+(`branch_manager`-scoped to a sale branch).
 
-**Sales flow — VERIFIED end-to-end on the real cloud deployment**: logged into `satamoni-pos.html` over
-HTTPS, added two variants of an item to cart (80 + 110 EGP), selected a cash payment method, submitted —
-order **#1** created successfully (`"تم تسجيل الطلب #1"`), confirming the full chain (frontend → HTTPS →
-Express → order creation → Postgres write) works in the real cloud environment for the first genuine
-business transaction, not just `/health`.
+**Real menu/recipe catalog loaded**: the repo already contained a real menu dataset from an earlier
+project phase (`db/seed-data/satamoni-menu.json`, committed to git) plus a matching import script
+(`db/import-menu-data.js`, already `npm run import-menu` in `package.json`). Run by the owner against
+the staging DB (`DB_SSL=true`) — result: 113 ingredients, 16 categories, 85 items, 128 priced variants
+loaded successfully. This is the owner's own non-sensitive catalog data (recipes/prices/ingredient
+names), not customer/financial/payroll data, and the owner explicitly requested it be loaded for wider
+testing.
+
+**Sales flow — VERIFIED end-to-end on the real cloud deployment**, including a real finding along the
+way:
+- First attempt with a manually-created test item (no recipe attached) succeeded immediately — order
+  **#1** (`"تم تسجيل الطلب #1"`).
+- Second attempt with real imported items (which *do* have recipes/ingredients attached) correctly
+  **failed** with `400 {"error":"الرصيد الحالي مش كافي (متاح 0، مطلوب 1) - الصنف ده سياسته STRICT ومفيش
+  تجاوز ليها","code":"INSUFFICIENT_STOCK"}` — this is not a bug, it is the negative-stock protection
+  (Phase 6A) correctly refusing a sale the branch has no inventory to fulfill, verified live on the real
+  cloud deployment for the first time (previously only verified against the local test DB).
+- After seeding `branch_inventory_stock` (1000 units per ingredient per branch, 452 rows, via a small
+  ad-hoc script — same pattern as the schema-apply step), the identical order succeeded — order **#5**
+  (`"تم تسجيل الطلب #5"`), confirming the full chain (frontend → HTTPS → Express → recipe-based inventory
+  deduction → Postgres write) works end-to-end against real recipe/ingredient data in the real cloud
+  environment.
+
+Diagnosed via the browser's own DevTools (Network tab, Response body) rather than guessing — the same
+discipline used throughout this whole project. One diagnostic false start is worth recording: clicking
+the blue link next to a Console error opened a new browser tab with a plain unauthenticated `GET
+/api/orders`, which returned an unrelated `{"error":"لازم تسجل دخول"}` — this was correctly identified as
+a red herring (different request, no auth header) before it led anywhere, and the actual failing `POST`
+request was found via the Network panel directly.
 
 Kitchen, Void/Refund, Purchase, Production, Branch Transfer, Waste, Expense, Payroll flows: **not yet
 executed** against this instance.
