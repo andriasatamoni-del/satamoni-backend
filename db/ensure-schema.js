@@ -1,10 +1,14 @@
-// بيتشغل قبل السيرفر مباشرة (فايدته الأساسية: ديبلوي أول مرة زي Render Blueprint).
-// لو الجداول موجودة بالفعل، بيتخطى الإنشاء ويكتفي بتحديث حساب الأدمن.
+// بيتشغل قبل السيرفر مباشرة مع كل بدء تشغيل (render.yaml: startCommand)، مش بس أول مرة.
+// لو الجداول مش موجودة خالص، بينشئها من db/schema.sql (تثبيت أول مرة زي Render Blueprint).
+// وفي الحالتين (تثبيت جديد أو قاعدة موجودة بالفعل) بيشغّل بعد كده أي ترحيل (migration) جديد لسه ما
+// اتطبّقش على القاعدة دي بالتحديد - كده أي عمود/جدول جديد بيتضاف في الكود بعد أول تثبيت بيوصل للقاعدة
+// الحقيقية تلقائي مع أول push، من غير ما حد يحتاج يشغّل ALTER TABLE يدوي على السيرفر (db/migrate.js)
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const bcrypt = require("bcryptjs");
 const pool = require("./pool");
+const { runMigrations } = require("./migrate");
 
 async function main() {
   const existing = await pool.query("SELECT to_regclass('public.users') AS exists");
@@ -15,6 +19,13 @@ async function main() {
     console.log("تم إنشاء الجداول.");
   } else {
     console.log("الجداول موجودة بالفعل، مفيش داعي لإعادة الإنشاء.");
+  }
+
+  const migrationClient = await pool.connect();
+  try {
+    await runMigrations(migrationClient);
+  } finally {
+    migrationClient.release();
   }
 
   const adminEmail = process.env.ADMIN_EMAIL;

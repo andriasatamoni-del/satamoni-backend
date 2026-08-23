@@ -9,6 +9,7 @@
     "migrate": "psql \"$DATABASE_URL\" -f db/schema.sql",
     "seed:admin": "node db/seed-admin.js",
     "ensure-schema": "node db/ensure-schema.js",
+    "migrate:apply": "node db/migrate.js",
     "import-menu": "node db/import-menu-data.js",
     "import-talabat-prices": "node db/import-talabat-prices.js",
     "import-kitchen-data": "node db/import-central-kitchen-data.js",

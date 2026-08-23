@@ -250,8 +250,15 @@ docker compose exec app npm run import-menu
 `inventory_items.negative_stock_policy`: **`STRICT`** (الافتراضي لكل صنف جديد) - ممنوع خالص، مفيش أي تجاوز حتى بموافقة. **`ALLOW_WITH_APPROVAL`** - ممنوع للكاشير لوحده، لازم موافقة مدير فرع/أدمن (بنفس نمط موافقة الخصم بالـPIN - `POST /api/orders` بيقبل `inventoryOverrideApprovedBy`). لو البيع هيودّي صنف `ALLOW_WITH_APPROVAL` تحت الصفر من غير موافقة، السيرفر بيرجّع `400` بكود `INSUFFICIENT_STOCK_NEEDS_APPROVAL` (مختلف عن `INSUFFICIENT_STOCK` بتاع `STRICT` اللي مفيهوش أي تجاوز أصلًا) - عشان الواجهة تقدر تفرّق وتفتح نافذة PIN المدير زي بالظبط نافذة تجاوز الخصم. أي استخدام فعلي للتجاوز بيتسجل في audit log (`NEGATIVE_STOCK_OVERRIDE`). الحركات اليدوية المقفولة على أدوار مخوّلة أصلًا (تسوية، هالك، إصدار/استلام تحويل) بتعتبر الدور نفسه هو الموافقة، مش محتاجة PIN إضافي.
 `PATCH /api/inventory/items/:id` بيقبل `negativeStockPolicy` (`"STRICT"` أو `"ALLOW_WITH_APPROVAL"`).
 
-### تتبّع تحديثات القاعدة (خفيف)
-جدول `schema_migrations` (اسم + وقت التطبيق) - مش migration runner كامل (ده تغيير أكبر لطريقة نشر التحديثات الحالية، مؤجل لحد ما يبقى لازم فعلًا)، بس بيضمن إن أي تحديث قاعدة مستقبلي يقدر يتأكد "هل ده اتطبّق قبل كده؟" قبل ما يكرر أي `ALTER`.
+### نظام الترحيل التلقائي (Migrations)
+`db/migrate.js` + `db/migrations/*.js` - أي عمود/جدول جديد بيتضاف على `db/schema.sql` بعد أول تثبيت بيتطبّق تلقائيًا على أي قاعدة حقيقية شغّالة بالفعل، مش محتاج حد يشغّل `ALTER TABLE` يدوي على السيرفر تاني. `db/ensure-schema.js` (اللي `render.yaml` بيشغّله مع كل بدء تشغيل للسيرفر أصلًا) بيستدعي `runMigrations()` بعد التأكد من وجود الجداول الأساسية - بيقرا ملفات `db/migrations/` بالترتيب، ويطبّق أي ملف لسه معندوش صف في جدول `schema_migrations`، كل واحد جوه transaction منفصلة.
+
+عشان تضيف تغيير جديد في القاعدة:
+1. عدّل `db/schema.sql` (أي تثبيت جديد من الصفر ياخد الشكل النهائي مباشرة).
+2. اعمل ملف جديد في `db/migrations/` برقم تسلسلي أكبر (مثلًا `0002_اسم-وصفي.js`) بنفس شكل `0001_loyalty_redeem_columns.js` - بيصدّر `{ async up(client) {...} }` واستخدم DDL آمن التكرار (`ADD COLUMN IF NOT EXISTS`...) عشان يفضل آمن حتى لو اتشغل أكتر من مرة بالغلط.
+3. push عادي - أول ديبلوي على Render هيطبّق الترحيل لوحده.
+
+للتشغيل اليدوي المحلي: `npm run migrate:apply`.
 
 ### Automated Test Suite
 `npm test` (Jest + Supertest، `tests/`) - Regression suite حقيقي ضد قاعدة Postgres حقيقية (مش mocks)، بيتصفّر تلقائيًا قبل كل تشغيل (`TEST_DATABASE_URL`، افتراضيًا `satamoni_jest_test` محلية). بيغطي: استلام مشتريات وتحويل وحدات، بيع واسترجاعه، السيناريو الكامل لتحويل دفعة (استلام→تحويل مرحلي→استلام جزئي→بيع بـFEFO→تقرير الصلاحية→الـaudit)، تقييد المسار الفوري ورفض تخطي الاعتماد، سياسة الرصيد السالب بمستوييها، idempotency (تكرار عادي ومتزامن حقيقي بـ`Promise.all`)، هالك/تسوية/جرد، وصلاحيات عبر الفروع.
