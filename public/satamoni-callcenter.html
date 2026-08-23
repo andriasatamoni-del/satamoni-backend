@@ -57,7 +57,7 @@
   .item-card .price { color: var(--gold-bright); font-family: 'Courier New', monospace; font-size: 13px; }
 
   /* ===== Cart column ===== */
-  #cartPane { width: 340px; min-width: 320px; background: var(--bg-alt); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  #cartPane { width: 340px; min-width: 320px; background: var(--bg-alt); border-right: 1px solid var(--line); display: flex; flex-direction: column; overflow-y: auto; }
   #cartHeader { padding: 14px 16px; border-bottom: 1px solid var(--line); font-weight: 800; }
   #orderTypeRow { display: flex; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .otype-btn { flex: 1; padding: 8px 0; text-align: center; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-size: 12px; font-weight: 700; }
@@ -186,8 +186,6 @@
     <div id="cartHeader">الطلب الحالي</div>
     <div id="orderTypeRow">
       <div class="otype-btn active" data-type="delivery">دليفري</div>
-      <div class="otype-btn" data-type="takeaway">تيك أواي</div>
-      <div class="otype-btn" data-type="dinein">صالة</div>
     </div>
     <div id="extraFields">
       <select id="branchSelect"></select>
@@ -627,7 +625,8 @@ function updateSubmitState() {
   const okArea = state.orderType !== "delivery" || (state.selectedAreaId && document.getElementById("addressInput").value.trim());
   const okTable = state.orderType !== "dinein" || document.getElementById("tableInput").value.trim();
   const okPhone = document.getElementById("phoneInput").value.trim();
-  const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okArea && okTable && okPhone;
+  const okName = document.getElementById("nameInput").value.trim();
+  const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okArea && okTable && okPhone && okName;
   document.getElementById("submitBtn").disabled = !ok;
 }
 
@@ -644,6 +643,7 @@ document.querySelectorAll(".otype-btn").forEach(btn => {
 document.getElementById("tableInput").addEventListener("input", updateSubmitState);
 document.getElementById("addressInput").addEventListener("input", updateSubmitState);
 document.getElementById("phoneInput").addEventListener("input", updateSubmitState);
+document.getElementById("nameInput").addEventListener("input", updateSubmitState);
 
 document.getElementById("submitBtn").onclick = async () => {
   const btn = document.getElementById("submitBtn");
