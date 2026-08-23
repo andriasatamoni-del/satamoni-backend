@@ -27,6 +27,10 @@
 </style>
 </head>
 <body>
+<script>
+  const _u = JSON.parse(sessionStorage.getItem("satamoni_user") || "null");
+  if (_u && _u.role === "cashier") location.replace("satamoni-pos.html");
+</script>
 <div id="wrap">
   <h1>🍕 ساتاموني</h1>
   <div class="sub">نظام إدارة المطعم — اختار الشاشة اللي هتجربها</div>

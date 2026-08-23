@@ -346,6 +346,7 @@ const auth = {
   token: sessionStorage.getItem("satamoni_token") || null,
   user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
 };
+if (auth.user && auth.user.role === "cashier") location.replace("satamoni-pos.html");
 
 function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
 function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
