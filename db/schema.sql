@@ -126,7 +126,12 @@ CREATE TABLE delivery_areas (
   name          TEXT NOT NULL,
   fee           NUMERIC DEFAULT 0,
   min_order     NUMERIC DEFAULT 0,
-  eta_minutes   INTEGER DEFAULT 30
+  eta_minutes   INTEGER DEFAULT 30,
+  branch_id     INTEGER REFERENCES branches(id),
+  -- المرحلة 7A: كانت مناطق التوصيل عامة مشتركة بين كل الفروع (مفيش عمود يربطها بفرع) - ده مش صح فعليًا،
+  -- كل فرع بيغطي مناطق مختلفة بسعر توصيل مختلف (اتأكد من بيانات حقيقية فعلية للفروع الثلاثة). NULL هنا
+  -- معناها منطقة "عامة" لسه مش متأكد أنهي فرع بيغطيها - القرار التشغيلي يتاخد بعدين لكل صف NULL على حدة
+  UNIQUE (name, branch_id) -- عشان استيراد بيانات المناطق يبقى آمن يتكرر (upsert بالاسم+الفرع)
 );
 
 CREATE TABLE payment_methods (

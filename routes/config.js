@@ -18,6 +18,7 @@ router.get("/", async (req, res) => {
         fee: Number(a.fee),
         etaMinutes: a.eta_minutes,
         minOrder: Number(a.min_order),
+        branchId: a.branch_id,
       })),
       paymentMethods: payments.rows.map((p) => ({
         id: p.id,
@@ -79,6 +80,7 @@ router.get("/full", async (req, res) => {
       deliveryAreas: areas.rows.map((a) => ({
         id: a.id, name: a.name, fee: Number(a.fee),
         etaMinutes: a.eta_minutes, minOrder: Number(a.min_order),
+        branchId: a.branch_id,
       })),
       paymentMethods: payments.rows.map((p) => ({
         id: p.id, name: p.name, note: p.note, kind: p.kind, enabled: p.enabled,
@@ -107,13 +109,13 @@ router.get("/delivery-areas", requireAuth, requireRole("admin"), async (req, res
 
 // POST /api/config/delivery-areas - إضافة منطقة توصيل جديدة
 router.post("/delivery-areas", requireAuth, requireRole("admin"), async (req, res) => {
-  const { name, fee = 0, minOrder = 0, etaMinutes = 30 } = req.body;
+  const { name, fee = 0, minOrder = 0, etaMinutes = 30, branchId = null } = req.body;
   if (!name) return res.status(400).json({ error: "لازم اسم المنطقة" });
   try {
     const result = await pool.query(
-      `INSERT INTO delivery_areas (name, fee, min_order, eta_minutes)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [name, fee, minOrder, etaMinutes]
+      `INSERT INTO delivery_areas (name, fee, min_order, eta_minutes, branch_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [name, fee, minOrder, etaMinutes, branchId]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -124,7 +126,7 @@ router.post("/delivery-areas", requireAuth, requireRole("admin"), async (req, re
 // PATCH /api/config/delivery-areas/:id
 router.patch("/delivery-areas/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { name, fee, minOrder, etaMinutes } = req.body;
+  const { name, fee, minOrder, etaMinutes, branchId } = req.body;
   const fields = [];
   const values = [];
   let i = 1;
@@ -132,6 +134,7 @@ router.patch("/delivery-areas/:id", requireAuth, requireRole("admin"), async (re
   if (fee !== undefined) { fields.push(`fee = $${i++}`); values.push(fee); }
   if (minOrder !== undefined) { fields.push(`min_order = $${i++}`); values.push(minOrder); }
   if (etaMinutes !== undefined) { fields.push(`eta_minutes = $${i++}`); values.push(etaMinutes); }
+  if (branchId !== undefined) { fields.push(`branch_id = $${i++}`); values.push(branchId); }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
 
   values.push(id);

@@ -13,6 +13,7 @@
     "import-talabat-prices": "node db/import-talabat-prices.js",
     "import-kitchen-data": "node db/import-central-kitchen-data.js",
     "import-payroll-data": "node db/import-payroll-data.js",
+    "import-delivery-areas": "node db/import-delivery-areas.js",
     "test": "jest --runInBand"
   },
   "dependencies": {

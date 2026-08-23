@@ -380,11 +380,13 @@ function renderBranchSelect() {
   sel.innerHTML = state.branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
   sel.value = state.selectedBranchId;
   state.selectedBranchId = sel.value; // لو القيمة الأصلية مش موجودة في القايمة، المتصفح بيختار أول عنصر - نتأكد الحالة متطابقة مع الظاهر فعليًا
-  sel.onchange = () => { state.selectedBranchId = sel.value; updateSubmitState(); };
+  sel.onchange = () => { state.selectedBranchId = sel.value; renderAreaSelect(); updateSubmitState(); };
 }
 function renderAreaSelect() {
   const sel = document.getElementById("areaSelect");
-  sel.innerHTML = state.deliveryAreas.map(a => `<option value="${a.id}">${a.name} (+${money(a.fee)})</option>`).join("");
+  // المرحلة 7A: مناطق التوصيل بقت مربوطة بفرع (branch_id) - كل فرع بيوري مناطقه بس، مش كل المناطق مع بعض
+  const areasForBranch = state.deliveryAreas.filter(a => String(a.branchId) === String(state.selectedBranchId));
+  sel.innerHTML = areasForBranch.map(a => `<option value="${a.id}">${a.name} (+${money(a.fee)})</option>`).join("");
   sel.value = state.selectedAreaId;
   state.selectedAreaId = sel.value; // نفس السبب فوق - كان بيسيب state.selectedAreaId فاضي رغم إن القايمة بتوري قيمة فعليًا
   sel.onchange = () => { state.selectedAreaId = sel.value; renderCart(); updateSubmitState(); };

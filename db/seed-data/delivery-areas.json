@@ -1,0 +1,296 @@
+[
+  {
+    "branchName": "الابراهيمية",
+    "name": "الأزاريطة",
+    "fee": 28.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "بهاري",
+    "fee": 40.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "كارفور",
+    "fee": 38.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "جليم",
+    "fee": 47.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "الإبراهيمية",
+    "fee": 18.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "لوران",
+    "fee": 38.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "ميامي",
+    "fee": 33.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "محرم بك",
+    "fee": 18.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "المنتزه",
+    "fee": 35.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "المنتزه",
+    "fee": 35.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "مصطفى كامل",
+    "fee": 36.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "محطة الرمل",
+    "fee": 33.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "رشدي",
+    "fee": 33.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "سابا باشا",
+    "fee": 43.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "سان ستيفانو",
+    "fee": 50.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "سموحة",
+    "fee": 38.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "الشاطبي",
+    "fee": 28.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "سيدي بشر محمد نجيب",
+    "fee": 33.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "سيدي جابر",
+    "fee": 31.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "ستانلي",
+    "fee": 35.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "كليوباترا",
+    "fee": 25.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "العصافرة",
+    "fee": 25.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "العصافرة",
+    "fee": 25.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "بولكلي",
+    "fee": 40.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "السيوف",
+    "fee": 35.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "معسكر سيزار",
+    "fee": 21.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "زيزينيا",
+    "fee": 43.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "المندرة",
+    "fee": 35.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "العطارين",
+    "fee": 38.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "العوايد",
+    "fee": 50.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "الحضارة",
+    "fee": 35.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "الحضارة البحرية",
+    "fee": 28.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "الحي اللاتيني",
+    "fee": 33.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "شاطئ المعمورة",
+    "fee": 40.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "المعمورة البلد",
+    "fee": 48.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "أبو قير",
+    "fee": 50.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "الرمل الميري",
+    "fee": 43.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "الورديان",
+    "fee": 45.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "باكوس",
+    "fee": 48.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "فليمنج",
+    "fee": 45.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "جاناكليس",
+    "fee": 45.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "الابراهيمية",
+    "name": "كفر عبده",
+    "fee": 38.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "كرموز",
+    "fee": 33.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "كوم الدكة",
+    "fee": 28.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "رأس التين",
+    "fee": 40.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "أحذية",
+    "fee": 43.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "سيدي بشر قبلي",
+    "fee": 28.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "العصافرة",
+    "name": "فيكتوريا",
+    "fee": 35.0,
+    "etaMinutes": 45
+  },
+  {
+    "branchName": "محرم بك",
+    "name": "وابور المايا",
+    "fee": 25.0,
+    "etaMinutes": 45
+  }
+]
