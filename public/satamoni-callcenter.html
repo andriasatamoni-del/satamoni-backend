@@ -37,6 +37,10 @@
   #customerStatus { font-size: 12px; font-weight: 700; min-height: 16px; color: var(--faint); }
   #customerFields { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
   #customerFields input, #customerFields select { background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%; }
+  #redeemRow { display: flex; gap: 6px; margin: 6px 0; }
+  #redeemRow input { flex: 1; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+  #redeemRow button { border: 1px solid var(--gold); background: transparent; color: var(--gold-bright); border-radius: 6px; padding: 0 10px; cursor: pointer; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  #redeemNote { font-size: 11px; color: var(--faint); min-height: 14px; margin-bottom: 6px; }
   #profileBox { display: none; }
   #profileBox .field { margin-bottom: 6px; font-size: 12px; }
   #profileBox .field b { color: var(--faint); font-weight: 400; }
@@ -227,6 +231,7 @@
         <input id="discountInput" type="number" min="0" value="0" style="width:90px;background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 8px;font-size:13px" />
       </div>
       <div id="discountApprovalNote" style="font-size:11px;color:var(--faint);margin-bottom:4px"></div>
+      <div class="row" id="loyaltyRedeemRow" style="display:none"><span>خصم نقاط الولاء</span><span id="loyaltyRedeemVal">0 ج.م</span></div>
       <div class="row total"><span>الإجمالي</span><span id="totalVal">0 ج.م</span></div>
       <div id="payRow"></div>
       <button id="submitBtn" disabled>سجّل الطلب</button>
@@ -265,6 +270,12 @@
       <h3>سجل العميل</h3>
       <div class="field"><b>عدد الطلبات:</b> <span id="pOrders"></span></div>
       <div class="field"><b>إجمالي الإنفاق:</b> <span id="pSpent"></span></div>
+      <div class="field"><b>نقاط الولاء:</b> <span id="pLoyalty"></span></div>
+      <div id="redeemRow">
+        <input id="redeemPointsInput" type="number" min="0" step="1" placeholder="نقاط هتُستخدم كخصم" />
+        <button id="redeemBtn" type="button">استخدام كخصم</button>
+      </div>
+      <div id="redeemNote"></div>
       <textarea id="profileNotes" placeholder="ملاحظات (عنوان مفضل، شكوى سابقة...)"></textarea>
       <button id="saveNoteBtn">حفظ الملاحظة</button>
 
@@ -344,6 +355,9 @@ const state = {
   selectedBranchId: "", selectedAreaId: "", selectedPaymentId: "",
   maxUnapprovedDiscountPercent: 0.1,
   discountApproval: null, // { approverId, approverName } - لما الخصم فوق الحد المسموح
+  loyaltyRedeemValueEgp: 0.1,
+  loyaltyPointsRedeemed: 0, // نقاط ولاء العميل الحالي اللي هتُستخدم كخصم على الطلب ده
+  customerLoyaltyPoints: 0, // رصيد نقاط العميل الحالي (من آخر بحث/تحميل بروفايل)
 };
 
 function menuForGroup() {
@@ -412,6 +426,7 @@ async function loadConfig() {
     try {
       const settings = await api("/api/pos-settings");
       state.maxUnapprovedDiscountPercent = Number(settings.max_unapproved_discount_percent);
+      state.loyaltyRedeemValueEgp = Number(settings.loyalty_redeem_value_egp);
     } catch (e) { /* لو فشل، هيفضل الحد الافتراضي 10% */ }
 
     renderBranchSelect();
@@ -612,15 +627,26 @@ function renderCart() {
   }
   const subtotal = rows.reduce((s, [, v]) => s + v.price * v.qty, 0);
   const deliveryFee = currentDeliveryFee();
+  const loyaltyRedeemValue = currentLoyaltyRedeemValue();
   document.getElementById("subtotalVal").textContent = money(subtotal);
   document.getElementById("deliveryVal").textContent = money(deliveryFee);
-  document.getElementById("totalVal").textContent = money(Math.max(subtotal + deliveryFee - currentDiscount(), 0));
+  const redeemRow = document.getElementById("loyaltyRedeemRow");
+  if (loyaltyRedeemValue > 0) {
+    redeemRow.style.display = "flex";
+    document.getElementById("loyaltyRedeemVal").textContent = "-" + money(loyaltyRedeemValue);
+  } else {
+    redeemRow.style.display = "none";
+  }
+  document.getElementById("totalVal").textContent = money(Math.max(subtotal + deliveryFee - currentDiscount() - loyaltyRedeemValue, 0));
   updateDiscountNote();
   updateSubmitState();
 }
 
 function currentDiscount() {
   return Number(document.getElementById("discountInput").value) || 0;
+}
+function currentLoyaltyRedeemValue() {
+  return Math.round(state.loyaltyPointsRedeemed * state.loyaltyRedeemValueEgp * 100) / 100;
 }
 function discountNeedsApproval() {
   const subtotal = Object.values(state.cart).reduce((s, v) => s + v.price * v.qty, 0);
@@ -737,6 +763,7 @@ document.getElementById("submitBtn").onclick = async () => {
       deliveryFee: currentDeliveryFee(),
       discount: currentDiscount(),
       discountApprovedBy: state.discountApproval ? state.discountApproval.approverId : null,
+      loyaltyPointsRedeemed: state.loyaltyPointsRedeemed || 0,
       items: Object.values(state.cart).map(v => ({ itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty, modifiers: v.modifiers || [] })),
     };
     const result = await api("/api/orders", { method: "POST", body: JSON.stringify(payload) });
@@ -753,6 +780,8 @@ document.getElementById("submitBtn").onclick = async () => {
 document.getElementById("newOrderBtn").onclick = () => {
   state.cart = {};
   state.discountApproval = null;
+  state.loyaltyPointsRedeemed = 0;
+  state.customerLoyaltyPoints = 0;
   document.getElementById("tableInput").value = "";
   document.getElementById("addressInput").value = "";
   document.getElementById("markInput").value = "";
@@ -760,12 +789,27 @@ document.getElementById("newOrderBtn").onclick = () => {
   document.getElementById("nameInput").value = "";
   document.getElementById("phoneInput").value = "";
   document.getElementById("discountInput").value = "0";
+  document.getElementById("redeemPointsInput").value = "";
+  document.getElementById("redeemNote").textContent = "";
   document.getElementById("customerStatus").textContent = "اكتب رقم موبايل العميل لمعرفة حالته";
   document.getElementById("customerStatus").style.color = "var(--faint)";
   document.getElementById("profileBox").style.display = "none";
   document.getElementById("resultsList").innerHTML = "";
   document.getElementById("searchInput").value = "";
   document.getElementById("confirmOverlay").classList.remove("show");
+  renderCart();
+};
+
+document.getElementById("redeemBtn").onclick = () => {
+  const noteEl = document.getElementById("redeemNote");
+  const input = document.getElementById("redeemPointsInput");
+  const points = parseInt(input.value, 10);
+  if (!Number.isInteger(points) || points < 0) { noteEl.textContent = "دخّل عدد نقاط صحيح"; noteEl.style.color = "#F08A83"; return; }
+  if (points > state.customerLoyaltyPoints) { noteEl.textContent = `العميل معاه ${state.customerLoyaltyPoints} نقطة بس`; noteEl.style.color = "#F08A83"; return; }
+  state.loyaltyPointsRedeemed = points;
+  const value = currentLoyaltyRedeemValue();
+  noteEl.textContent = points > 0 ? `✅ هيتخصم ${money(value)} من الإجمالي (${points} نقطة)` : "";
+  noteEl.style.color = "var(--green)";
   renderCart();
 };
 
@@ -812,9 +856,19 @@ async function loadProfile(phone) {
 // حالة التسجيل - ده اللي بيرد على "بمجرد ما نكتب رقم التليفون يظهر ان العميل متسجل ولا لا"
 function applyCustomerLookup(phone, p) {
   selectedPhone = phone;
+  // كان بيتنسى ملء رقم التليفون نفسه هنا - الموظف كان مضطر يكتبه تاني يدويًا حتى بعد ما يختاره من نتيجة
+  // بحث أو يدخله في خانة البحث بنفسه، لأن ده اللي زرار "سجّل الطلب" بيتفعّل بناءً عليه (updateSubmitState)
+  document.getElementById("phoneInput").value = phone;
   document.getElementById("pOrders").textContent = p.ordersCount;
   document.getElementById("pSpent").textContent = money(p.totalSpent);
+  document.getElementById("pLoyalty").textContent = p.loyaltyPoints ?? 0;
   document.getElementById("profileNotes").value = p.notes || "";
+  // كل بحث/تحميل بروفايل جديد بيبدأ من غير أي استخدام سابق لنقاط الولاء - الاستخدام مرتبط بالعميل الظاهر
+  // حاليًا بس، ولازم يتحسب على رصيده الفعلي الحالي (p.loyaltyPoints)، مش رصيد عميل تاني كان متحمّل قبل كده
+  state.customerLoyaltyPoints = p.loyaltyPoints ?? 0;
+  state.loyaltyPointsRedeemed = 0;
+  document.getElementById("redeemPointsInput").value = "";
+  document.getElementById("redeemNote").textContent = "";
 
   const statusEl = document.getElementById("customerStatus");
   if (p.isRegistered) {
@@ -825,18 +879,28 @@ function applyCustomerLookup(phone, p) {
     if (p.addressDetails && !document.getElementById("addressInput").value.trim()) document.getElementById("addressInput").value = p.addressDetails;
     if (p.distinguishingMark && !document.getElementById("markInput").value.trim()) document.getElementById("markInput").value = p.distinguishingMark;
     if (p.deliveryAreaId) {
+      // منطقة التوصيل المحفوظة للعميل ممكن تتبع فرع غير الفرع المختار حاليًا في الشاشة - areaSelect بيوري
+      // مناطق الفرع المختار بس (المرحلة 7A)، فلازم نبدّل الفرع المختار لفرع المنطقة دي الأول قبل ما نحاول
+      // نختارها، وإلا الاختيار هيفشل بصمت (المتصفح بيسيب أول عنصر زي ما هو) وتفضل خانة العنوان فاضية
+      const area = state.deliveryAreas.find(a => String(a.id) === String(p.deliveryAreaId));
+      if (area && String(area.branchId) !== String(state.selectedBranchId)) {
+        const branchSel = document.getElementById("branchSelect");
+        branchSel.value = area.branchId;
+        state.selectedBranchId = branchSel.value;
+        renderAreaSelect();
+      }
       const sel = document.getElementById("areaSelect");
       sel.value = p.deliveryAreaId;
       // لو المنطقة المحفوظة للعميل مش موجودة ضمن مناطق التوصيل الحالية، المتصفح بيسيب أول عنصر مختار -
       // نتأكد الحالة بتاعتنا متطابقة مع اللي فعليًا ظاهر، مش القيمة المحفوظة القديمة اللي ممكن تبقى غير صالحة
       state.selectedAreaId = sel.value;
       renderCart();
-      updateSubmitState();
     }
   } else {
     statusEl.textContent = "🆕 عميل جديد";
     statusEl.style.color = "var(--faint)";
   }
+  renderCart();
 }
 
 // دوّر على العميل تلقائيًا كل ما الموظف يكتب رقم موبايل كامل - عشان يعرف من أول لحظة إن العميل

@@ -140,6 +140,12 @@
         <button id="loyaltySaveBtn">حفظ</button>
       </div>
       <div style="font-size:11px;color:var(--faint)">مثال: 0.1 يعني نقطة واحدة لكل 10 ج.م صرف</div>
+      <div class="row" style="margin-top:14px">
+        <label style="flex:0;white-space:nowrap;font-size:12px;color:var(--faint)">قيمة النقطة عند الاستخدام (ج.م)</label>
+        <input id="loyaltyRedeemRateInput" type="number" step="0.01" min="0" style="max-width:120px" />
+        <button id="loyaltyRedeemSaveBtn">حفظ</button>
+      </div>
+      <div style="font-size:11px;color:var(--faint)">القيمة اللي كل نقطة بتساويها لما الكاشير/الكول سنتر يستخدموها كخصم على الطلب - مثال: 0.1 يعني 10 نقاط = خصم 1 ج.م</div>
       <div class="err" id="loyaltyErr"></div>
       <div class="ok" id="loyaltyOk"></div>
     </div>
@@ -349,6 +355,7 @@ async function loadLoyaltySettings() {
   try {
     const settings = await api("/api/pos-settings");
     document.getElementById("loyaltyRateInput").value = settings.loyalty_points_per_egp;
+    document.getElementById("loyaltyRedeemRateInput").value = settings.loyalty_redeem_value_egp;
   } catch (e) { /* لو مش أدمن مش هيتنفذ أصلًا */ }
 }
 document.getElementById("loyaltySaveBtn").onclick = async () => {
@@ -359,6 +366,18 @@ document.getElementById("loyaltySaveBtn").onclick = async () => {
     await api("/api/pos-settings", {
       method: "PATCH",
       body: JSON.stringify({ loyaltyPointsPerEgp: Number(document.getElementById("loyaltyRateInput").value) }),
+    });
+    okBox.textContent = "اتحفظ";
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("loyaltyRedeemSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("loyaltyErr");
+  const okBox = document.getElementById("loyaltyOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    await api("/api/pos-settings", {
+      method: "PATCH",
+      body: JSON.stringify({ loyaltyRedeemValueEgp: Number(document.getElementById("loyaltyRedeemRateInput").value) }),
     });
     okBox.textContent = "اتحفظ";
   } catch (e) { errBox.textContent = e.message; }

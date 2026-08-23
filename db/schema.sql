@@ -48,6 +48,7 @@ CREATE TABLE pos_settings (
   max_unapproved_discount_percent NUMERIC NOT NULL DEFAULT 0.10, -- خصم لغاية 10% الكاشير يعمله لوحده، فوق كده لازم موافقة PIN
   discount_manager_max_percent   NUMERIC NOT NULL DEFAULT 0.15, -- خصم لغاية 15% مدير الفرع يقدر يوافق عليه، فوق كده لازم أدمن
   loyalty_points_per_egp         NUMERIC NOT NULL DEFAULT 0.1, -- نقاط ولاء لكل جنيه يتصرف (افتراضيًا نقطة واحدة لكل 10 ج.م)
+  loyalty_redeem_value_egp       NUMERIC NOT NULL DEFAULT 0.1, -- قيمة النقطة بالجنيه لما العميل يستخدمها كخصم على طلب
   batch_consumption_method       TEXT NOT NULL DEFAULT 'FEFO' CHECK (batch_consumption_method IN ('FEFO', 'FIFO')), -- طريقة الصرف من الدفعات: الأقرب انتهاءً أو الأقدم دخولًا
   production_variance_alert_percent NUMERIC NOT NULL DEFAULT 10 -- فرق الإنتاج (مخطط مقابل فعلي) فوق النسبة دي لازم له سبب مكتوب
 );
@@ -167,6 +168,11 @@ CREATE TABLE orders (
   -- نقاط الولاء اللي اتضافت للعميل وقت إنشاء الطلب ده بالظبط (لو ليه رقم تليفون) - محفوظة هنا عشان
   -- لو الطلب اتلغى أو اتسترجع بعد كده، نقدر نرجّع نفس الكمية دي بالظبط من رصيد العميل (مش نعيد حسابها)
   loyalty_points_earned INTEGER NOT NULL DEFAULT 0,
+  -- نقاط ولاء استخدمها العميل كخصم على الطلب ده (بتتخصم من رصيده وقت الإنشاء) - loyalty_redeem_value
+  -- القيمة بالجنيه المجمّدة وقت الاستخدام (نقاط × pos_settings.loyalty_redeem_value_egp وقتها بالظبط)،
+  -- منفصلة عن discount العادي (مش محتاجة موافقة مدير/أدمن لأنها محدودة برصيد العميل الفعلي نفسه)
+  loyalty_points_redeemed INTEGER NOT NULL DEFAULT 0,
+  loyalty_redeem_value    NUMERIC NOT NULL DEFAULT 0,
   -- دورة حياة الطلب: تحت التحضير -> (للدليفري بس) في الطريق -> مكتمل/تم التسليم، أو ملغي في أي وقت
   status            TEXT NOT NULL DEFAULT 'preparing'
                       CHECK (status IN ('preparing', 'out_for_delivery', 'completed', 'cancelled')),

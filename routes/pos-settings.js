@@ -16,8 +16,8 @@ router.get("/", requireAuth, async (req, res) => {
 
 // PATCH /api/pos-settings - تعديل الحد المسموح للخصم من غير موافقة و/أو معدّل نقاط الولاء (أدمن بس)
 router.patch("/", requireAuth, requireRole("admin"), async (req, res) => {
-  const { maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp } = req.body;
-  if (maxUnapprovedDiscountPercent === undefined && discountManagerMaxPercent === undefined && loyaltyPointsPerEgp === undefined) {
+  const { maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp } = req.body;
+  if ([maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp].every((v) => v === undefined)) {
     return res.status(400).json({ error: "مفيش حاجة تتعدل" });
   }
   if (maxUnapprovedDiscountPercent !== undefined && (maxUnapprovedDiscountPercent < 0 || maxUnapprovedDiscountPercent > 1)) {
@@ -29,12 +29,16 @@ router.patch("/", requireAuth, requireRole("admin"), async (req, res) => {
   if (loyaltyPointsPerEgp !== undefined && loyaltyPointsPerEgp < 0) {
     return res.status(400).json({ error: "معدّل نقاط الولاء لازم يكون صفر أو أكبر" });
   }
+  if (loyaltyRedeemValueEgp !== undefined && loyaltyRedeemValueEgp < 0) {
+    return res.status(400).json({ error: "قيمة النقطة عند الاستخدام لازم تكون صفر أو أكبر" });
+  }
   const fields = [];
   const values = [];
   let i = 1;
   if (maxUnapprovedDiscountPercent !== undefined) { fields.push(`max_unapproved_discount_percent = $${i++}`); values.push(maxUnapprovedDiscountPercent); }
   if (discountManagerMaxPercent !== undefined) { fields.push(`discount_manager_max_percent = $${i++}`); values.push(discountManagerMaxPercent); }
   if (loyaltyPointsPerEgp !== undefined) { fields.push(`loyalty_points_per_egp = $${i++}`); values.push(loyaltyPointsPerEgp); }
+  if (loyaltyRedeemValueEgp !== undefined) { fields.push(`loyalty_redeem_value_egp = $${i++}`); values.push(loyaltyRedeemValueEgp); }
   try {
     const result = await pool.query(
       `UPDATE pos_settings SET ${fields.join(", ")} WHERE id = 1 RETURNING *`,

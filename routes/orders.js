@@ -109,10 +109,20 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       deliveryAreaId, addressDetails, customerName, customerPhone, customerPhone2,
       distinguishingMark, paymentMethodId, items: rawItems, deliveryFee = 0, discount = 0,
       discountApprovedBy, idempotencyKey, inventoryOverrideApprovedBy,
+      loyaltyPointsRedeemed = 0,
     } = req.body;
 
     if ((source === "pos" || source === "talabat") && !assertOwnBranch(req.user, branchId)) {
       return res.status(403).json({ error: "معندكش صلاحية تسجل طلب على فرع تاني" });
+    }
+
+    if (loyaltyPointsRedeemed) {
+      if (!Number.isInteger(loyaltyPointsRedeemed) || loyaltyPointsRedeemed < 0) {
+        return res.status(400).json({ error: "عدد نقاط الولاء المستخدمة غير صالح" });
+      }
+      if (!customerPhone) {
+        return res.status(400).json({ error: "استخدام نقاط الولاء محتاج رقم تليفون العميل" });
+      }
     }
 
     // Idempotency: لو نفس مفتاح الطلب اتبعت قبل كده، رجّع نفس نتيجة الطلب الأصلي من غير ما تعمل أي حاجة
@@ -192,7 +202,24 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
 
     await client.query("BEGIN");
 
-    const total = subtotal + deliveryFee - discount;
+    // خصم نقاط الولاء - قيمته بالجنيه بتتجمّد هنا وقت الاستخدام (نقاط × السعر الحالي)، منفصل عن discount
+    // العادي عمدًا: ده رصيد العميل الفعلي هو نفسه اللي بيحد الاستخدام (مش قرار تقديري من الموظف)، فمش
+    // محتاج نفس نظام موافقة الخصومات الكبيرة (PIN مدير/أدمن). القفل (FOR UPDATE) هنا يمنع استخدام نفس
+    // الرصيد مرتين في نفس اللحظة لو اتسجل طلبين للعميل ده بالتوازي
+    let loyaltyRedeemValue = 0;
+    if (loyaltyPointsRedeemed > 0) {
+      const custRow = await client.query("SELECT loyalty_points FROM customers WHERE phone = $1 FOR UPDATE", [customerPhone]);
+      const currentPoints = custRow.rows[0]?.loyalty_points || 0;
+      if (loyaltyPointsRedeemed > currentPoints) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: `العميل معاه ${currentPoints} نقطة بس` });
+      }
+      const redeemSettings = await client.query("SELECT loyalty_redeem_value_egp FROM pos_settings WHERE id = 1");
+      const redeemRate = Number(redeemSettings.rows[0]?.loyalty_redeem_value_egp ?? 0);
+      loyaltyRedeemValue = Math.round(loyaltyPointsRedeemed * redeemRate * 100) / 100;
+    }
+
+    const total = subtotal + deliveryFee - discount - loyaltyRedeemValue;
     const createdBy = source === "pos" || source === "callcenter" || source === "talabat" ? req.user.id : null;
 
     // حالة الطلب المبدئية: طلبات الدليفري بتدخل دورة حياة (تحت التحضير -> في الطريق -> اتسلمت)،
@@ -224,13 +251,13 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
         (branch_id, source, order_type, table_number, delivery_area_id,
          address_details, customer_name, customer_phone, payment_method_id,
          created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status,
-         loyalty_points_earned, idempotency_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+         loyalty_points_earned, loyalty_points_redeemed, loyalty_redeem_value, idempotency_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, customerName, customerPhone, paymentMethodId,
        createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus,
-       loyaltyPointsEarned, idempotencyKey || null]
+       loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, idempotencyKey || null]
     );
     const orderId = orderResult.rows[0].id;
 
@@ -259,7 +286,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
            address_details = COALESCE(EXCLUDED.address_details, customers.address_details),
            delivery_area_id = COALESCE(EXCLUDED.delivery_area_id, customers.delivery_area_id),
            distinguishing_mark = COALESCE(EXCLUDED.distinguishing_mark, customers.distinguishing_mark),
-           loyalty_points = customers.loyalty_points + $7,
+           loyalty_points = GREATEST(customers.loyalty_points + $7 - $8, 0),
            updated_at = now()`,
         [
           customerPhone, customerName || null,
@@ -267,7 +294,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
           orderType === "delivery" ? addressDetails || null : null,
           orderType === "delivery" ? deliveryAreaId || null : null,
           orderType === "delivery" ? distinguishingMark || null : null,
-          loyaltyPointsEarned,
+          loyaltyPointsEarned, loyaltyPointsRedeemed,
         ]
       );
     }
@@ -448,6 +475,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       if (subtotal > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4100")).id, credit: subtotal });
       if (deliveryFee > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4200")).id, credit: deliveryFee });
       if (discount > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: discount });
+      if (loyaltyRedeemValue > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: loyaltyRedeemValue, description: "خصم نقاط ولاء" });
 
       if (costTotal > 0) {
         revenueLines.push({ accountId: (await getAccountByCode(client, "5100")).id, debit: costTotal, description: costIncomplete ? "تكلفة جزئية (بيانات تكلفة ناقصة لبعض الأصناف)" : null });
@@ -598,7 +626,7 @@ router.patch(
     try {
       await client.query("BEGIN");
       const existing = await client.query(
-        "SELECT branch_id, status, customer_phone, loyalty_points_earned FROM orders WHERE id = $1 FOR UPDATE",
+        "SELECT branch_id, status, customer_phone, loyalty_points_earned, loyalty_points_redeemed FROM orders WHERE id = $1 FOR UPDATE",
         [req.params.id]
       );
       if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلب مش موجود" }); }
@@ -628,12 +656,16 @@ router.patch(
         [req.params.id, status, req.user.id, notes || null]
       );
 
-      // لو الطلب اتلغى قبل ما يكتمل، لازم نرجّع نقاط الولاء اللي كانت اتضافت للعميل وقت الإنشاء
-      if (status === "cancelled" && current.customer_phone && current.loyalty_points_earned > 0) {
-        await client.query(
-          `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
-          [current.loyalty_points_earned, current.customer_phone]
-        );
+      // لو الطلب اتلغى قبل ما يكتمل، لازم نرجّع نقاط الولاء اللي كانت اتضافت للعميل وقت الإنشاء، ونرجّع
+      // له كمان أي نقاط كان استخدمها كخصم على نفس الطلب (الطلب اتلغى، فمن حقه ياخد نقاطه اللي دفعها تاني)
+      if (status === "cancelled" && current.customer_phone) {
+        const netPoints = Number(current.loyalty_points_earned || 0) - Number(current.loyalty_points_redeemed || 0);
+        if (netPoints !== 0) {
+          await client.query(
+            `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
+            [netPoints, current.customer_phone]
+          );
+        }
       }
 
       if (status === "cancelled") {
@@ -778,12 +810,16 @@ router.post(
         }
       }
 
-      // إرجاع نقاط الولاء اللي كانت اتضافت للعميل وقت البيع - نفس منطق إرجاع المخزون بالظبط
-      if (order.customer_phone && order.loyalty_points_earned > 0) {
-        await client.query(
-          `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
-          [order.loyalty_points_earned, order.customer_phone]
-        );
+      // إرجاع نقاط الولاء اللي كانت اتضافت للعميل وقت البيع، ورجّع له أي نقاط كان استخدمها كخصم على
+      // نفس الطلب (اتسترجع، فمن حقه ياخد نقاطه اللي دفعها تاني) - نفس منطق إرجاع المخزون بالظبط
+      if (order.customer_phone) {
+        const netPoints = Number(order.loyalty_points_earned || 0) - Number(order.loyalty_points_redeemed || 0);
+        if (netPoints !== 0) {
+          await client.query(
+            `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
+            [netPoints, order.customer_phone]
+          );
+        }
       }
 
       // المرحلة 4B: عكس قيد البيع الأصلي محاسبيًا (لو كان موجود أصلًا - طلبات قبل تفعيل المرحلة 4B أو
@@ -852,10 +888,23 @@ router.put(
         return res.status(400).json({ error: "التعديل متاح بس للطلبات تحت التحضير" });
       }
 
-      // مفيش قيمة افتراضية صفر لـdeliveryFee/discount هنا عمدًا (زي POST /) - ده PATCH-style، لو الفرونت إند
-      // مبعتش الحقل ده أصلًا لازم تفضل قيمته الأصلية زي ما هي، مش تتصفّر بهدوء
+      // مفيش قيمة افتراضية صفر لـdeliveryFee/discount/loyaltyPointsRedeemed هنا عمدًا (زي POST /) - ده
+      // PATCH-style، لو الفرونت إند مبعتش الحقل ده أصلًا لازم تفضل قيمته الأصلية زي ما هي، مش تتصفّر بهدوء
       const deliveryFee = req.body.deliveryFee !== undefined ? req.body.deliveryFee : Number(order.delivery_fee);
       const discount = req.body.discount !== undefined ? req.body.discount : Number(order.discount);
+      const loyaltyPointsRedeemed = req.body.loyaltyPointsRedeemed !== undefined
+        ? req.body.loyaltyPointsRedeemed : Number(order.loyalty_points_redeemed || 0);
+      if (loyaltyPointsRedeemed) {
+        if (!Number.isInteger(loyaltyPointsRedeemed) || loyaltyPointsRedeemed < 0) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: "عدد نقاط الولاء المستخدمة غير صالح" });
+        }
+        const finalPhoneCheck = customerPhone !== undefined ? customerPhone : order.customer_phone;
+        if (!finalPhoneCheck) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: "استخدام نقاط الولاء محتاج رقم تليفون العميل" });
+        }
+      }
 
       if (!Array.isArray(rawItems) || rawItems.length === 0) {
         await client.query("ROLLBACK");
@@ -943,11 +992,16 @@ router.put(
         }
       }
 
-      if (order.customer_phone && order.loyalty_points_earned > 0) {
-        await client.query(
-          `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
-          [order.loyalty_points_earned, order.customer_phone]
-        );
+      // رجوع صافي أثر نقاط الولاء القديم (المكتسبة ناقص المستخدمة) على رصيد العميل الأصلي - قبل أي تطبيق
+      // لنقاط جديدة تحت، عشان لو التعديل مغيّرش رقم تليفون العميل يفضل الرصيد صحيح 100% في كل لحظة
+      if (order.customer_phone) {
+        const netOldPoints = Number(order.loyalty_points_earned || 0) - Number(order.loyalty_points_redeemed || 0);
+        if (netOldPoints !== 0) {
+          await client.query(
+            `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
+            [netOldPoints, order.customer_phone]
+          );
+        }
       }
 
       const originalEntry = await client.query(
@@ -1098,13 +1152,29 @@ router.put(
         });
       }
 
-      const total = subtotal + deliveryFee - discount;
       const finalCustomerPhone = customerPhone !== undefined ? customerPhone : order.customer_phone;
       const finalCustomerName = customerName !== undefined ? customerName : order.customer_name;
       const finalAddressDetails = addressDetails !== undefined ? addressDetails : order.address_details;
       const finalDeliveryAreaId = deliveryAreaId !== undefined ? deliveryAreaId : order.delivery_area_id;
       const finalPaymentMethodId = paymentMethodId !== undefined ? paymentMethodId : order.payment_method_id;
       const finalTableNumber = tableNumber !== undefined ? tableNumber : order.table_number;
+
+      // إعادة حساب خصم نقاط الولاء على رصيد العميل الحالي - بعد ما رجّعنا صافي أثر الطلب القديم فوق،
+      // الرصيد ده بقى معبّر عن الحقيقة (مش شايل رصيد الطلب اللي بنعدّله ده تحديدًا)
+      let loyaltyRedeemValue = 0;
+      if (loyaltyPointsRedeemed > 0) {
+        const custRow = await client.query("SELECT loyalty_points FROM customers WHERE phone = $1 FOR UPDATE", [finalCustomerPhone]);
+        const currentPoints = custRow.rows[0]?.loyalty_points || 0;
+        if (loyaltyPointsRedeemed > currentPoints) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: `العميل معاه ${currentPoints} نقطة بس` });
+        }
+        const redeemSettings = await client.query("SELECT loyalty_redeem_value_egp FROM pos_settings WHERE id = 1");
+        const redeemRate = Number(redeemSettings.rows[0]?.loyalty_redeem_value_egp ?? 0);
+        loyaltyRedeemValue = Math.round(loyaltyPointsRedeemed * redeemRate * 100) / 100;
+      }
+
+      const total = subtotal + deliveryFee - discount - loyaltyRedeemValue;
 
       let loyaltyPointsEarned = 0;
       if (finalCustomerPhone && total > 0) {
@@ -1118,12 +1188,13 @@ router.put(
            table_number = $1, delivery_area_id = $2, address_details = $3,
            customer_name = $4, customer_phone = $5, payment_method_id = $6,
            subtotal = $7, delivery_fee = $8, discount = $9, discount_approved_by = $10,
-           total = $11, loyalty_points_earned = $12, synced_at = NULL
-         WHERE id = $13`,
+           total = $11, loyalty_points_earned = $12, loyalty_points_redeemed = $13, loyalty_redeem_value = $14,
+           synced_at = NULL
+         WHERE id = $15`,
         [
           finalTableNumber, finalDeliveryAreaId, finalAddressDetails, finalCustomerName, finalCustomerPhone,
           finalPaymentMethodId, subtotal, deliveryFee, discount, discountApprovedBy || null,
-          total, loyaltyPointsEarned, order.id,
+          total, loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, order.id,
         ]
       );
 
@@ -1146,7 +1217,7 @@ router.put(
              address_details = COALESCE(EXCLUDED.address_details, customers.address_details),
              delivery_area_id = COALESCE(EXCLUDED.delivery_area_id, customers.delivery_area_id),
              distinguishing_mark = COALESCE(EXCLUDED.distinguishing_mark, customers.distinguishing_mark),
-             loyalty_points = customers.loyalty_points + $7,
+             loyalty_points = GREATEST(customers.loyalty_points + $7 - $8, 0),
              updated_at = now()`,
           [
             finalCustomerPhone, finalCustomerName,
@@ -1154,7 +1225,7 @@ router.put(
             order.order_type === "delivery" ? finalAddressDetails || null : null,
             order.order_type === "delivery" ? finalDeliveryAreaId || null : null,
             order.order_type === "delivery" ? distinguishingMark || null : null,
-            loyaltyPointsEarned,
+            loyaltyPointsEarned, loyaltyPointsRedeemed,
           ]
         );
       }
@@ -1190,6 +1261,7 @@ router.put(
         if (subtotal > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4100")).id, credit: subtotal });
         if (deliveryFee > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4200")).id, credit: deliveryFee });
         if (discount > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: discount });
+        if (loyaltyRedeemValue > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: loyaltyRedeemValue, description: "خصم نقاط ولاء" });
 
         if (costTotal > 0) {
           revenueLines.push({ accountId: (await getAccountByCode(client, "5100")).id, debit: costTotal, description: costIncomplete ? "تكلفة جزئية (بيانات تكلفة ناقصة لبعض الأصناف)" : null });
