@@ -1,13 +1,22 @@
 # PHASE 7A — Cloud Platform & Staging Validation Report
 
-**Status of this report**: Platform evaluation and staging deployment **preparation** are complete.
-**Actual cloud deployment has NOT been executed** — this session's network egress policy blocks outbound
-access to every cloud provider dashboard/API tested (`render.com`, and by the same policy mechanism,
-almost certainly the others too — confirmed concretely for Render via the proxy status endpoint, which
-reported `gateway answered 403 to CONNECT (policy denial)` for `api.render.com`, `render.com`, and
-`dashboard.render.com`). Provisioning a real service, a real managed database, and a real HTTPS URL
-requires a human with dashboard access (or a session with an open network policy) to execute
-[`docs/CLOUD-STAGING-RUNBOOK.md`](docs/CLOUD-STAGING-RUNBOOK.md). Nothing below is marked VERIFIED
+**Status of this report**: Platform evaluation and staging deployment preparation are complete, **and
+actual cloud deployment has now been executed successfully** by the project owner, guided step-by-step
+through [`docs/CLOUD-STAGING-RUNBOOK.md`](docs/CLOUD-STAGING-RUNBOOK.md) (this session's own network
+egress policy still blocks all outbound access to Render's dashboard/API and even the deployed
+`*.onrender.com` service directly — confirmed concretely, not assumed — so every cloud action below was
+performed by a human with real network access, with this session guiding each step and now recording the
+real, observed results).
+
+**What is now real**: a PostgreSQL 18 staging database (`satamoni-staging-db`, Frankfurt region, isolated
+from local/test/production) and a Node.js web service (`satamoni-staging`, commit `29bdee5` on
+`claude/restaurant-erp-system-jctgj5`) are both live on Render. `GET https://satamoni-staging.onrender.com/health`
+returns `200 {"status":"ok","db":"ok"}` over real HTTPS. Schema applied, one admin account seeded. This
+is genuinely new evidence, not a re-assertion of the preparation work below.
+
+**What is still not yet done**: the deeper functional/security/concurrency/backup validation (Sections
+8-24) has not been executed against this live instance yet — those results are still pending a
+continuation of the guided walkthrough. Nothing below is marked VERIFIED
 unless it was actually run against real infrastructure or the local codebase.
 
 ---
@@ -161,28 +170,63 @@ new database — not a redesign. This was a deliberate design property confirmed
 ## 7. Deployment Architecture
 
 ```
-GitHub (claude/restaurant-erp-system-jctgj5)
+GitHub (claude/restaurant-erp-system-jctgj5, commit 29bdee5)
    ↓
-Render Web Service (satamoni-staging) — auto-deploy on push, PORT auto-injected
-   ↓ HTTPS (Render-terminated TLS, automatic)
+Render Web Service (satamoni-staging, srv-da5ju7e417fc73fo44c0) — Node runtime, Free instance,
+Build: npm install, Start: node server.js — status: LIVE
+   ↓ HTTPS (Render-terminated TLS, automatic) — https://satamoni-staging.onrender.com
 Node.js / Express (server.js)
-   ↓ DATABASE_URL (Internal URL) + DB_SSL=true
-Render Managed PostgreSQL (satamoni-staging-db) — isolated from local/test/production DBs
+   ↓ DATABASE_URL (Internal URL) + DB_SSL=true + NODE_ENV=production + JWT_SECRET + CORS_ORIGINS
+Render Managed PostgreSQL (satamoni-staging-db, dpg-da5ial6k1f9s738o6nq0-a, Frankfurt, PG18) —
+isolated from local/test/production DBs, schema applied, one admin account seeded
 ```
 
-Full click-by-click setup: [`docs/CLOUD-STAGING-RUNBOOK.md`](docs/CLOUD-STAGING-RUNBOOK.md).
+This is now the **real, deployed architecture**, not a plan — set up by the project owner via
+[`docs/CLOUD-STAGING-RUNBOOK.md`](docs/CLOUD-STAGING-RUNBOOK.md), guided step-by-step since this
+session's own network policy cannot reach Render at all (confirmed by direct test against both
+`api.render.com` and the deployed `satamoni-staging.onrender.com` — both rejected).
 
-## 8–24. Deployment, PostgreSQL, HTTPS, CORS, Authentication, Rate Limiting, Health, Logging, Graceful
-Shutdown, Branch Isolation, ERP Workflow Tests, Concurrency, Retry Safety, Performance, Backup, Restore,
-Frontend
+## 8. Cloud Deployment — VERIFIED
 
-**All NOT VERIFIED** — no live cloud instance exists yet. Every one of these has a fully specified,
-ready-to-execute test procedure waiting in `docs/CLOUD-STAGING-RUNBOOK.md` (Steps 4–15), written against
-this exact codebase (not generic), with explicit `<<املأ هنا>>` fill-in points for real results. What is
-already true independent of deployment:
+Web service `satamoni-staging` deployed from GitHub, branch `claude/restaurant-erp-system-jctgj5`,
+commit `29bdee5`. Build (`npm install`) and start (`node server.js`) both completed without error;
+dashboard status is **Live**. Auto-detected "Docker" was deliberately overridden to "Node" during setup
+so the deploy uses the audited `npm install` + `node server.js` path (Section 2) rather than an
+unaudited Dockerfile.
 
-- **PostgreSQL / SSL readiness**: code-level fix shipped and tested locally (Section 2) — the *code* is
-  ready; the *live connection* is not yet attempted.
+## 9. PostgreSQL — VERIFIED
+
+`satamoni-staging-db` (PostgreSQL 18, Frankfurt, Free tier) created, isolated from every other database
+in this project. Schema applied successfully via a small ad-hoc Node/`pg` script (`node apply-schema.js`,
+run from the owner's machine with `ssl: { rejectUnauthorized: false }`) after the native `psql.exe` on
+that machine turned out to have a broken/incomplete local install (missing `libwinpthread-1.dll` —
+unrelated to this project, a pre-existing local Windows issue) — output: `SCHEMA APPLIED OK`. One admin
+account seeded via `node db/seed-admin.js` with `DB_SSL=true`, confirming the Phase 7A `DB_SSL` fix
+(Section 2) works against a real external connection, not just the mocked test. The web service itself
+connects over the **Internal** Database URL (same Render private network, lower latency than external).
+
+## 10. HTTPS — VERIFIED
+
+`GET https://satamoni-staging.onrender.com/health` returns `200` over real, Render-terminated HTTPS.
+No mixed-content issues (no other requests made yet from a browser page against the API, so not
+exhaustively exercised, but the base HTTPS path is confirmed working).
+
+## 13. Health — VERIFIED
+
+`GET /health` → `200 {"status":"ok","db":"ok"}` — confirms the deployed process is up, listening, and
+has successfully round-tripped a real query against the managed Postgres instance over the network path
+described in Section 7. This is the strongest single signal available that the full chain (HTTPS →
+Express → pg.Pool → managed Postgres with SSL) works end-to-end in the real cloud environment, not just
+locally.
+
+## 11–12, 14–24. CORS, Authentication, Rate Limiting, Logging, Graceful Shutdown, Branch Isolation, ERP
+Workflow Tests, Concurrency, Retry Safety, Performance, Backup, Restore, Frontend
+
+**Still NOT VERIFIED** — the live instance now exists (Sections 8–10, 13), but these deeper
+functional/security/concurrency/backup checks have not yet been executed against it. Each has a fully
+specified, ready-to-execute procedure waiting in `docs/CLOUD-STAGING-RUNBOOK.md` (Steps 5–15), written
+against this exact codebase. What is already true independent of further testing:
+
 - **Frontend cloud-readiness**: audited (Section 2) — no hardcoded localhost dependency blocks cloud
   use; confirmed by grep, not assumed.
 - **Automated test suite**: 311/311 passing locally (308 pre-existing + 3 new for the SSL config) —
@@ -190,13 +234,16 @@ already true independent of deployment:
 
 ## 25. NOT VERIFIED
 
-Cloud deployment, HTTPS in a real cloud environment, multi-instance behavior, scheduled backups
-(no scheduler exists anywhere yet — platform-level cron has not been configured), cloud-scale
-performance, CORS against a real second origin, rate limiting over a real network path, JWT lifecycle
-against a live deployed token issuer, branch isolation over the real API, cloud concurrency, network
-retry/double-submit over a real network, backup/restore against a real managed Postgres instance,
-external backup storage strategy (not yet decided or implemented — `db/backup.js` currently writes to
-local filesystem only, wherever it runs), printing (not implemented), KDS (not implemented).
+Multi-instance behavior, scheduled backups (no scheduler exists anywhere yet — platform-level cron has
+not been configured), cloud-scale performance, CORS against a real second origin, rate limiting over a
+real network path, JWT lifecycle against a live deployed token issuer, branch isolation over the real
+API, cloud concurrency, network retry/double-submit over a real network, backup/restore against this
+real managed Postgres instance, external backup storage strategy (not yet decided or implemented —
+`db/backup.js` currently writes to local filesystem only, wherever it runs), printing (not implemented),
+KDS (not implemented).
+
+Moved to VERIFIED this update (Sections 8-10, 13): cloud deployment, PostgreSQL connectivity, HTTPS,
+health check.
 
 ## 26. Remaining Risks
 
@@ -214,12 +261,14 @@ local filesystem only, wherever it runs), printing (not implemented), KDS (not i
 
 ## 27. Final Recommendation
 
-Execute `docs/CLOUD-STAGING-RUNBOOK.md` against a real Render account to move every item in Section 25
-from NOT VERIFIED to an actual result. Do not skip the `NODE_ENV=production`-for-staging decision
-(Section 2/runbook) — using `NODE_ENV=staging` literally would silently disable CORS lockdown, HSTS, and
-error sanitization. Once the runbook's results come back, this report will be extended with real
-Sections 8–24 outcomes and a real Overall classification. Until then, the honest classification is
-below.
+Continue executing `docs/CLOUD-STAGING-RUNBOOK.md` (Steps 5–15) against the now-live
+`satamoni-staging` instance to move the remaining Section 25 items from NOT VERIFIED to actual results.
+The `NODE_ENV=production`-for-staging decision (Section 2/runbook) was correctly applied during setup —
+using `NODE_ENV=staging` literally would have silently disabled CORS lockdown, HSTS, and error
+sanitization. Once the remaining functional/security/concurrency/backup checks are run, this report will
+be extended further and the Overall classification reassessed. Until then, the honest classification is
+below — deployment succeeded, but "works and is reachable" is not the same as "validated," so Overall
+stays NOT VERIFIED rather than being upgraded on partial evidence.
 
 ---
 
@@ -238,13 +287,13 @@ AWS Elastic Beanstalk + RDS (most capable, disproportionate operational overhead
 App Runner specifically not recommended — reported deprecated for new workloads)
 
 Cloud Deployment:
-NOT VERIFIED
+VERIFIED (satamoni-staging, commit 29bdee5, Live on Render)
 
 HTTPS:
-NOT VERIFIED
+VERIFIED (https://satamoni-staging.onrender.com/health returns 200 over real HTTPS)
 
 PostgreSQL:
-NOT VERIFIED (SSL support code-level fix VERIFIED locally — 3/3 new tests passing; live cloud connection NOT VERIFIED)
+VERIFIED (schema applied, admin seeded, web service connects successfully over Internal Database URL with DB_SSL=true)
 
 CORS:
 NOT VERIFIED
@@ -256,7 +305,7 @@ Rate Limiting:
 NOT VERIFIED
 
 Health:
-NOT VERIFIED
+VERIFIED (200 {"status":"ok","db":"ok"})
 
 Logging:
 NOT VERIFIED
@@ -268,7 +317,7 @@ Branch Isolation:
 NOT VERIFIED
 
 ERP Workflows:
-NOT VERIFIED (no live cloud instance to run them against)
+NOT VERIFIED (live instance now exists; workflow tests not yet executed against it)
 
 Cloud Concurrency:
 NOT VERIFIED
@@ -304,17 +353,17 @@ Overall:
 NOT VERIFIED
 
 Critical Issues:
-None found in the application code itself. The blocker is purely environmental: this session cannot reach any cloud provider's network.
+None found in the application code itself, and none observed in the real deployment so far.
 
 High Issues:
-db/pool.js had no SSL configuration — would have failed the first connection attempt to any managed cloud Postgres. Fixed and tested in this phase (tests/pool-ssl.test.js, 3/3 passing).
+db/pool.js had no SSL configuration — would have failed the first connection attempt to any managed cloud Postgres. Fixed and tested in this phase (tests/pool-ssl.test.js, 3/3 passing) and now confirmed working against the real deployment (Section 9).
 
 NOT VERIFIED:
-Everything in Section 25 — full list there. Summary: all cloud-dependent validation (deployment, HTTPS, CORS, auth-over-network, rate limiting, health, logging, shutdown, branch isolation, ERP workflows, concurrency, retry safety, performance, backup, restore, scheduled backup) plus external backup storage strategy.
+Everything remaining in Section 25 — full list there. Summary: CORS against a real second origin, authentication/JWT lifecycle over the network, rate limiting over a real network path, logging, graceful shutdown, branch isolation, ERP workflow tests, cloud concurrency, retry safety, performance, backup, restore, scheduled backup, external backup storage strategy. (Cloud deployment, PostgreSQL connectivity, HTTPS, and health are now VERIFIED — see Sections 8-10, 13.)
 
 Exact blockers:
-This session's network egress policy denies all outbound access to render.com (confirmed: 403 policy denial on api.render.com, render.com, dashboard.render.com via the proxy). No credentials or API access to any of the four evaluated platforms exist in this session either way. Real deployment requires a human with dashboard access, or a session with an open network policy, to execute docs/CLOUD-STAGING-RUNBOOK.md.
+This session's network egress policy denies all outbound access to render.com and to the deployed satamoni-staging.onrender.com service itself (confirmed by direct test against both). All further validation steps must continue to be executed by a human with real network access, guided through docs/CLOUD-STAGING-RUNBOOK.md, the same way Sections 8-10 and 13 were just completed.
 
 Recommendation:
-Platform decision is made (Render) and is low-risk to revisit later given confirmed low vendor lock-in (Section 6). Next concrete action: a human executes docs/CLOUD-STAGING-RUNBOOK.md against a real Render account and reports results back, at which point Sections 8-24 of this report get filled in with real outcomes and Overall gets reclassified honestly. Do not proceed to Printing, KDS, multi-branch rollout, or Phase 7B/7C until that happens.
+Platform decision is made (Render) and now has a real, working deployment behind it. Next concrete action: continue docs/CLOUD-STAGING-RUNBOOK.md Steps 5-15 (synthetic data, ERP workflow tests, branch isolation, CORS/auth/rate-limiting checks, concurrency, backup/restore) with the same guided approach, and this report will be updated further as real results come in. Do not proceed to Printing, KDS, multi-branch rollout, or Phase 7B/7C until that happens.
 ```
