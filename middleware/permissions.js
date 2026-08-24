@@ -19,6 +19,10 @@ const ROLE_PERMISSIONS = {
     "audit.view.branch",
     // المرحلة 4B: رؤية مالية تشغيلية لفرعه بس - مفيش تعديل على قيد مرحّل ولا قفل شهر خالص (زي ما اتحدد صراحة)
     "accounting.view",
+    // المرحلة 7E: مدير الفرع بيقدر كمان يفتح/يقفل شيفت لنفسه (لو بيغطي الكاشير بنفسه في فروع صغيرة)،
+    // وهو صاحب صلاحية مراجعة فروق الكاش (اعتماد/رفض) وقفل يوم الفرع - الاتنين دول مش متاحين للكاشير خالص
+    "shifts.open_own", "shifts.view_own", "shifts.close_own",
+    "shifts.view_branch", "shifts.review", "branch_day.view", "branch_day.close",
   ],
   accountant: [
     "inventory.view", "recipes.view",
@@ -31,10 +35,15 @@ const ROLE_PERMISSIONS = {
     // المرحلة 4B: إنشاء/تعديل/اعتماد/ترحيل + تقارير - بدون عكس قيود (accounting.reverse) ولا قفل شهر
     // (accounting.close_period) - الاتنين دول أدمن بس عمدًا (زي ما اتحدد صراحة في المواصفات)
     "accounting.view", "accounting.create", "accounting.edit", "accounting.approve", "accounting.post", "accounting.export",
+    // المرحلة 7E: المحاسب بيراجع/يحقق في فروق الكاش عبر الفروع (رؤية + مراجعة)، بس مش هو اللي بيقفل
+    // يوم الفرع فعليًا (ده قرار تشغيلي لمدير الفرع، مش مالي بحت)
+    "shifts.view_branch", "shifts.review", "branch_day.view",
   ],
   cashier: [
     "orders.create", "orders.discount.request", "orders.void.request",
     "approvals.create",
+    // المرحلة 7E: الكاشير بيفتح/يشوف/يقفل شيفته هو بس - مفيش صلاحية يشوف شيفتات زمايله ولا يراجع فروق كاش
+    "shifts.open_own", "shifts.view_own", "shifts.close_own",
   ],
   callcenter: [
     "orders.create", "orders.discount.request", "orders.void.request",

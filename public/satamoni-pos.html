@@ -203,6 +203,28 @@
   #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
   #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
   #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  /* ===== المرحلة 7E: شيفت الكاشير ===== */
+  #shiftStatusBtn { border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-weight: 800; border: 1px solid var(--line); background: transparent; }
+  #shiftStatusBtn.no-shift { border-color: var(--red); color: #F08A83; }
+  #shiftStatusBtn.active-shift { border-color: var(--green); color: var(--green); }
+  #shiftModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 60; }
+  #shiftModalOverlay.show { display: flex; }
+  #shiftModalBox { background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 20px; width: 360px; max-height: 86vh; overflow-y: auto; }
+  #shiftModalBox h3 { color: var(--gold-bright); margin: 0 0 12px; font-size: 16px; }
+  #shiftModalBox label { font-size: 12px; color: var(--faint); margin-top: 8px; display: block; }
+  #shiftModalBody input {
+    background: var(--bg); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%; margin: 4px 0 8px;
+  }
+  #shiftModalBody .row { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; color: var(--faint); }
+  #shiftModalBody .row b { color: var(--ink); font-family: 'Courier New', monospace; }
+  #shiftModalBody .row.total { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 8px; font-weight: 800; color: var(--ink); }
+  #varianceDisplay.variance-ok { color: var(--green); }
+  #varianceDisplay.variance-bad { color: #F08A83; }
+  #shiftModalErr { color: #F08A83; font-size: 12px; margin-bottom: 8px; min-height: 16px; }
+  #shiftModalSubmit { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; margin-top: 12px; }
+  #shiftModalCancel { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 13px; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -211,6 +233,7 @@
   <div class="brand">🍕 ساتاموني — كاشير</div>
   <select id="branchSelect"></select>
   <div class="status"><span class="dot" id="connDot"></span><span id="connText">جاري الاتصال بالسيرفر...</span></div>
+  <button id="shiftStatusBtn" class="no-shift">🔓 افتح شيفت</button>
   <button id="ordersOpenBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🛵 الطلبات الجارية</button>
   <div id="userInfo">
     <span id="userName"></span>
@@ -323,6 +346,16 @@
   </div>
 </div>
 
+<div id="shiftModalOverlay">
+  <div id="shiftModalBox">
+    <h3 id="shiftModalTitle"></h3>
+    <div id="shiftModalBody"></div>
+    <div id="shiftModalErr"></div>
+    <button id="shiftModalSubmit"></button>
+    <button id="shiftModalCancel">إلغاء</button>
+  </div>
+</div>
+
 <script>
 // ============================================================
 // إعدادات الاتصال بالـ Backend — عدّل العنوان ده لعنوان السيرفر الفعلي
@@ -347,6 +380,8 @@ const state = {
   selectedPaymentId: "",
   maxUnapprovedDiscountPercent: 0.1,
   discountApproval: null, // { approverId, approverName } - لما الخصم فوق الحد المسموح
+  shift: null, // المرحلة 7E: الشيفت النشط الحالي للكاشير (أو null لو مفيش)
+  requireShiftForPosSales: false,
 };
 
 function priceFor(variant) {
@@ -438,8 +473,11 @@ async function loadConfig() {
       if (settingsRes.ok) {
         const settings = await settingsRes.json();
         state.maxUnapprovedDiscountPercent = Number(settings.max_unapproved_discount_percent);
+        state.requireShiftForPosSales = !!settings.require_shift_for_pos_sales;
       }
     } catch (e) { /* لو فشل، هيفضل الحد الافتراضي 10% */ }
+
+    await loadShiftStatus();
 
     document.getElementById("connDot").className = "dot ok";
     document.getElementById("connText").textContent = "متصل بالسيرفر";
@@ -773,6 +811,141 @@ document.getElementById("pinModalSubmit").onclick = async () => {
   }
 };
 
+// ============================================================
+// المرحلة 7E: شيفت الكاشير - بانر الحالة + مودالات الفتح/القفل
+// ============================================================
+async function loadShiftStatus() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/shifts/current`, { headers: { Authorization: `Bearer ${auth.token}` } });
+    if (res.ok) state.shift = await res.json();
+  } catch (e) { /* هيفضل null - connDot بيوضح مشكلة الاتصال أصلًا */ }
+  renderShiftPill();
+}
+
+function renderShiftPill() {
+  const btn = document.getElementById("shiftStatusBtn");
+  if (state.shift) {
+    btn.className = "active-shift";
+    const openedTime = new Date(state.shift.opened_at).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" });
+    btn.textContent = `🟢 شيفت شغال من ${openedTime} — قفل`;
+  } else {
+    btn.className = "no-shift";
+    btn.textContent = "🔓 افتح شيفت";
+  }
+}
+
+function closeShiftModal() {
+  document.getElementById("shiftModalOverlay").classList.remove("show");
+}
+document.getElementById("shiftModalCancel").onclick = closeShiftModal;
+
+document.getElementById("shiftStatusBtn").onclick = () => {
+  if (state.shift) openCloseShiftModal(); else openOpenShiftModal();
+};
+
+function openOpenShiftModal() {
+  document.getElementById("shiftModalTitle").textContent = "فتح شيفت جديد";
+  document.getElementById("shiftModalBody").innerHTML = `
+    <label>كاش الافتتاح (ج.م)</label>
+    <input id="shiftOpeningCash" type="number" min="0" step="0.01" value="0" />
+    <label>ملاحظات (اختياري)</label>
+    <input id="shiftOpeningNotes" placeholder="ملاحظات" />
+  `;
+  document.getElementById("shiftModalErr").textContent = "";
+  const submitBtn = document.getElementById("shiftModalSubmit");
+  submitBtn.textContent = "فتح الشيفت";
+  submitBtn.disabled = false;
+  submitBtn.onclick = async () => {
+    const openingCash = Number(document.getElementById("shiftOpeningCash").value);
+    const openingNotes = document.getElementById("shiftOpeningNotes").value.trim();
+    submitBtn.disabled = true;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/shifts/open`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+        body: JSON.stringify({ openingCash, openingNotes: openingNotes || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "تعذر فتح الشيفت");
+      state.shift = data;
+      renderShiftPill();
+      closeShiftModal();
+    } catch (e) {
+      document.getElementById("shiftModalErr").textContent = e.message;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  };
+  document.getElementById("shiftModalOverlay").classList.add("show");
+}
+
+async function openCloseShiftModal() {
+  document.getElementById("shiftModalTitle").textContent = "قفل الشيفت";
+  document.getElementById("shiftModalBody").innerHTML = `<div style="text-align:center;color:var(--faint);font-size:13px">جاري حساب الكاش المتوقع...</div>`;
+  document.getElementById("shiftModalErr").textContent = "";
+  const submitBtn = document.getElementById("shiftModalSubmit");
+  submitBtn.textContent = "قفل الشيفت";
+  submitBtn.disabled = true;
+  submitBtn.onclick = null;
+  document.getElementById("shiftModalOverlay").classList.add("show");
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/shifts/${state.shift.id}/preview`, { headers: { Authorization: `Bearer ${auth.token}` } });
+    const preview = await res.json();
+    if (!res.ok) throw new Error(preview.error || "تعذر حساب الكاش المتوقع");
+
+    document.getElementById("shiftModalBody").innerHTML = `
+      <div class="row"><span>كاش الافتتاح</span><b>${money(preview.openingCash)}</b></div>
+      <div class="row"><span>مبيعات كاش</span><b>${money(preview.cashSales)}</b></div>
+      <div class="row"><span>مبيعات كارت</span><b>${money(preview.cardSales)}</b></div>
+      <div class="row"><span>مرتجعات كاش</span><b>-${money(preview.cashRefunds)}</b></div>
+      <div class="row"><span>مصروفات كاش</span><b>-${money(preview.cashExpensesTotal)}</b></div>
+      <div class="row total"><span>الكاش المتوقع في الدرج</span><b>${money(preview.expectedCash)}</b></div>
+      <label>الكاش الفعلي بالدرج (بعد العدّ)</label>
+      <input id="shiftActualCash" type="number" min="0" step="0.01" value="${preview.expectedCash}" />
+      <div id="varianceDisplay"></div>
+      <label>ملاحظات القفل (اختياري)</label>
+      <input id="shiftClosingNotes" placeholder="ملاحظات" />
+    `;
+    const updateVariance = () => {
+      const actual = Number(document.getElementById("shiftActualCash").value || 0);
+      const variance = actual - preview.expectedCash;
+      const el = document.getElementById("varianceDisplay");
+      if (Math.abs(variance) < 0.005) { el.className = "variance-ok"; el.textContent = "✅ الحساب مظبوط"; }
+      else if (variance > 0) { el.className = "variance-bad"; el.textContent = `⚠️ زيادة ${money(variance)}`; }
+      else { el.className = "variance-bad"; el.textContent = `⚠️ عجز ${money(Math.abs(variance))}`; }
+    };
+    document.getElementById("shiftActualCash").addEventListener("input", updateVariance);
+    updateVariance();
+
+    submitBtn.disabled = false;
+    submitBtn.onclick = async () => {
+      const actualCash = Number(document.getElementById("shiftActualCash").value);
+      const closingNotes = document.getElementById("shiftClosingNotes").value.trim();
+      submitBtn.disabled = true;
+      try {
+        const closeRes = await fetch(`${API_BASE_URL}/api/shifts/${state.shift.id}/close`, {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+          body: JSON.stringify({ actualCash, closingNotes: closingNotes || null }),
+        });
+        const closeData = await closeRes.json();
+        if (!closeRes.ok) throw new Error(closeData.error || "تعذر قفل الشيفت");
+        state.shift = null;
+        renderShiftPill();
+        closeShiftModal();
+        alert(closeData.variance_status === "PENDING_REVIEW"
+          ? `تم قفل الشيفت — فيه فرق كاش (${money(Number(closeData.cash_variance))}) محتاج مراجعة مدير الفرع.`
+          : "تم قفل الشيفت بنجاح.");
+      } catch (e) {
+        document.getElementById("shiftModalErr").textContent = e.message;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    };
+  } catch (e) {
+    document.getElementById("shiftModalErr").textContent = e.message;
+  }
+}
+
 function updateSubmitState() {
   const rows = Object.entries(state.cart);
   const okBranch = !!state.selectedBranchId;
@@ -852,8 +1025,8 @@ document.getElementById("submitBtn").onclick = async () => {
       showLogin();
       throw new Error("انتهت الجلسة، سجل دخول تاني");
     }
-    if (!res.ok) throw new Error("submit failed");
-    const result = await res.json();
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(result.error || "submit failed");
     document.getElementById("confirmOrderId").textContent = `#${result.orderId}`;
     document.getElementById("confirmOverlay").classList.add("show");
   } catch (e) {

@@ -66,6 +66,8 @@ app.use("/api/config", require("./routes/config"));
 app.use("/api/pos-settings", require("./routes/pos-settings"));
 app.use("/api/audit-logs", require("./routes/audit"));
 app.use("/api/approvals", require("./routes/approvals"));
+app.use("/api/shifts", require("./routes/shifts"));
+app.use("/api/branch-days", require("./routes/branch-days"));
 app.use("/api/recipes", require("./routes/recipes"));
 app.use("/api/production", require("./routes/production"));
 app.use("/api/purchase-requests", require("./routes/purchase-requests"));

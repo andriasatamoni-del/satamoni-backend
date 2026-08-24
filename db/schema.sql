@@ -50,7 +50,16 @@ CREATE TABLE pos_settings (
   loyalty_points_per_egp         NUMERIC NOT NULL DEFAULT 0.1, -- نقاط ولاء لكل جنيه يتصرف (افتراضيًا نقطة واحدة لكل 10 ج.م)
   loyalty_redeem_value_egp       NUMERIC NOT NULL DEFAULT 0.1, -- قيمة النقطة بالجنيه لما العميل يستخدمها كخصم على طلب
   batch_consumption_method       TEXT NOT NULL DEFAULT 'FEFO' CHECK (batch_consumption_method IN ('FEFO', 'FIFO')), -- طريقة الصرف من الدفعات: الأقرب انتهاءً أو الأقدم دخولًا
-  production_variance_alert_percent NUMERIC NOT NULL DEFAULT 10 -- فرق الإنتاج (مخطط مقابل فعلي) فوق النسبة دي لازم له سبب مكتوب
+  production_variance_alert_percent NUMERIC NOT NULL DEFAULT 10, -- فرق الإنتاج (مخطط مقابل فعلي) فوق النسبة دي لازم له سبب مكتوب
+  -- المرحلة 7E: عتبات فرق الكاش عند قفل الشيفت (بالجنيه، مطلق مش نسبة). تحت العتبة الأولى الفرق بيتسجل
+  -- بس من غير أي إجراء مطلوب (شيفت تقفل تلقائي CLOSED)؛ فوقها لازم مراجعة مدير (الشيفت تقف PENDING_REVIEW
+  -- لحد ما يتصرف) - العتبة التانية مجرد إشارة بصرية للمدير إن الفرق كبير ومحتاج تحقيق فعلي، مش قيد صارم
+  -- بيمنع فعل معيّن؛ المدير برضو يقدر "يعتمد" فرق فوق العتبة التانية لو اقتنع بالسبب المكتوب
+  shift_variance_ack_threshold_egp    NUMERIC NOT NULL DEFAULT 20,
+  shift_variance_review_threshold_egp NUMERIC NOT NULL DEFAULT 100,
+  -- هل فتح شيفت شرط لتسجيل بيع POS؟ افتراضيًا false عمدًا (توافق مع كل البيانات/الاختبارات الحالية اللي
+  -- بتسجل بيع POS من غير مفهوم شيفت خالص) - فرع/منشأة تحب تفعّل الإلزام تقدر تغيّرها من الإعدادات
+  require_shift_for_pos_sales        BOOLEAN NOT NULL DEFAULT FALSE
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -191,7 +200,12 @@ CREATE TABLE orders (
   -- مفتاح idempotency اختياري من الكاشير/الموقع - لو نفس المفتاح اتبعت مرتين (retry شبكة أو ضغط زرار
   -- مرتين) الطلب التاني مبيتسجلش تاني، بيترجع نفس نتيجة الأول. الحماية على مستوى الـUNIQUE INDEX
   -- نفسه (partial، بيسمح بـNULL متكرر) عشان تفضل atomic حتى مع طلبين متزامنين بالظبط
-  idempotency_key   TEXT
+  idempotency_key   TEXT,
+  -- المرحلة 7E: شيفت الكاشير اللي الطلب ده اتسجّل فيه (لو الكاشير كان فاتح شيفت وقت الإنشاء) - NULL
+  -- لطلبات الموقع، أو أي طلب اتسجّل من غير شيفت شغّال (الشيفت مش شرط إلزامي افتراضيًا - pos_settings.
+  -- require_shift_for_pos_sales). بيتحدد لحظة الإنشاء بس ومبيتغيّرش بعد كده حتى لو الشيفت اتقفل بعدين.
+  -- pos_shifts معرّف بعد كدة في الملف - الـFK بيتضاف بـALTER TABLE هناك (زي expenses.supplier_id بالظبط)
+  shift_id          INTEGER
 );
 CREATE UNIQUE INDEX idx_orders_idempotency_key ON orders(idempotency_key) WHERE idempotency_key IS NOT NULL;
 -- المرحلة 5 (تدقيق الجاهزية للإنتاج): orders مالهاش أي index على created_at خالص قبل كده - قائمة
@@ -268,6 +282,77 @@ CREATE TABLE daily_cash_sessions (
   sync_uuid             UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   synced_at             TIMESTAMPTZ,
   UNIQUE(branch_id, business_date)
+);
+
+-- ============================================================
+-- المرحلة 7E: شيفتات الكاشير + تقفيل يوم الفرع
+-- ============================================================
+-- شيفت كاشير واحد: فتح برصيد افتتاحي، طلبات الفرع اللي الكاشير ده بيسجّلها بتتربط بيه لحظة الإنشاء
+-- (orders.shift_id)، وقفل بعدّ نقدي فعلي (actual_cash) يتقارن بمبلغ متوقع (expected_cash) السيرفر
+-- نفسه بيحسبه من المبيعات/الاسترجاعات/المصروفات النقدية الفعلية المسجّلة وقت الشيفت - مفيش رقم
+-- بيتكتب يدوي في الجانبين، الكاشير بيدخّل بس العدّ الفعلي. expected_cash/cash_variance بيتجمّدوا
+-- وقت القفل (مش بيتحسبوا لحظيًا كل مرة بعد كده) عشان تقرير الشيفت يفضل ثابت تاريخيًا
+CREATE TABLE pos_shifts (
+  id                    SERIAL PRIMARY KEY,
+  branch_id             INTEGER NOT NULL REFERENCES branches(id),
+  user_id               INTEGER NOT NULL REFERENCES users(id), -- الكاشير صاحب الشيفت
+  status                TEXT NOT NULL DEFAULT 'ACTIVE'
+                          CHECK (status IN ('ACTIVE', 'PENDING_REVIEW', 'CLOSED', 'FORCE_CLOSED')),
+  opened_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  opening_cash          NUMERIC NOT NULL DEFAULT 0 CHECK (opening_cash >= 0),
+  opening_notes         TEXT,
+  closed_at             TIMESTAMPTZ,
+  closed_by             INTEGER REFERENCES users(id), -- عادة نفس user_id، إلا لو أدمن قفلها بالنيابة (force-close)
+  expected_cash         NUMERIC,
+  actual_cash           NUMERIC CHECK (actual_cash IS NULL OR actual_cash >= 0),
+  cash_variance         NUMERIC, -- actual_cash - expected_cash
+  closing_notes         TEXT,
+  -- تفاصيل محسوبة ومجمّدة وقت القفل (شفافية كاملة للحساب، مش رقم نهائي بس)
+  cash_sales            NUMERIC NOT NULL DEFAULT 0,
+  card_sales            NUMERIC NOT NULL DEFAULT 0,
+  other_sales           NUMERIC NOT NULL DEFAULT 0,    -- آجل/محفظة أو أي طريقة دفع مش نقدي/كارت
+  cash_refunds          NUMERIC NOT NULL DEFAULT 0,    -- استرجاعات نقدية اتعملت أثناء الشيفت ده (لطلبات اتباعت فيه أو قبله)
+  discounts_total       NUMERIC NOT NULL DEFAULT 0,    -- معلوماتي بس - مش جزء من معادلة الكاش (total الطلب أصلًا بعد الخصم)
+  cash_expenses_total   NUMERIC NOT NULL DEFAULT 0,    -- مصروفات نقدية اتقفلت (POSTED) أثناء الشيفت
+  order_count           INTEGER NOT NULL DEFAULT 0,
+  void_count            INTEGER NOT NULL DEFAULT 0,
+  -- مراجعة فرق الكاش - منفصلة عن قفل الشيفت نفسه: الكاشير يقفل شيفته ويمشي، والمدير يراجع الفرق بعدين
+  -- من غير ما يحتاج يعيد فتح حاجة. NONE = مفيش فرق يستاهل مراجعة (تحت shift_variance_ack_threshold_egp)
+  variance_status         TEXT NOT NULL DEFAULT 'NONE'
+                            CHECK (variance_status IN ('NONE', 'PENDING_REVIEW', 'ACKNOWLEDGED', 'APPROVED')),
+  variance_reviewed_by    INTEGER REFERENCES users(id),
+  variance_reviewed_at    TIMESTAMPTZ,
+  variance_review_notes   TEXT,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- ضمانة حقيقية على مستوى القاعدة (مش بس فحص قبل الإدخال) إن شيفت ACTIVE واحد بس لكل كاشير في أي لحظة -
+-- partial unique index بيرفض ثاني INSERT لنفس user_id طالما status='ACTIVE' حتى مع طلبين متزامنين بالظبط
+CREATE UNIQUE INDEX idx_pos_shifts_one_active_per_user ON pos_shifts(user_id) WHERE status = 'ACTIVE';
+CREATE INDEX idx_pos_shifts_branch_date ON pos_shifts(branch_id, opened_at);
+CREATE INDEX idx_pos_shifts_variance_status ON pos_shifts(branch_id, variance_status) WHERE variance_status = 'PENDING_REVIEW';
+
+ALTER TABLE orders ADD CONSTRAINT fk_orders_shift FOREIGN KEY (shift_id) REFERENCES pos_shifts(id);
+CREATE INDEX idx_orders_shift_id ON orders(shift_id) WHERE shift_id IS NOT NULL;
+
+-- تقفيل يوم الفرع - مرة واحدة لكل فرع لكل يوم عمل. بيجمّع حالة الشيفتات وأي عمليات معلّقة وقت محاولة
+-- القفل (مش بيحسب حاجة جديدة، بيقرا بس من الجداول الموجودة أصلًا)، وبيسجّل اعتماد المدير الرسمي لليوم
+CREATE TABLE branch_days (
+  id                    SERIAL PRIMARY KEY,
+  branch_id             INTEGER NOT NULL REFERENCES branches(id),
+  business_date         DATE NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED')),
+  opened_by             INTEGER REFERENCES users(id),
+  opened_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  closed_by             INTEGER REFERENCES users(id),
+  closed_at             TIMESTAMPTZ,
+  total_sales           NUMERIC,
+  order_count           INTEGER,
+  cash_variance_total   NUMERIC,
+  manager_notes         TEXT,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (branch_id, business_date)
 );
 
 -- ---------------- المصروفات ----------------

@@ -246,18 +246,43 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       loyaltyPointsEarned = Math.floor(total * rate);
     }
 
+    // المرحلة 7E: طلبات الكاشير (source=pos) بس هي اللي بتترتبط بشيفت - هي الوحيدة المرتبطة فعليًا
+    // بدرج كاش فرع معين لحظة البيع (زي المثال الرقمي الكامل في مواصفة المرحلة). طلبات الدليفري/الكول
+    // سنتر تحصيلها بيحصل لاحقًا (الطيار يرجع، الكاشير يأكد) فمش مرتبطة بشيفت كاشير معيّن وقت الإنشاء -
+    // ده نفس الحد اللي المرحلة نفسها منعت فيه "دليفري متقدم" عشان منخترعش ربط وهمي مالوش أساس حقيقي.
+    // require_shift_for_pos_sales معطّل افتراضيًا (توافقًا مع كل الفروع/الاختبارات الحالية اللي بتبيع
+    // من غير مفهوم شيفت خالص) - لو اتفعّل، بيع POS من غير شيفت نشط بيترفض بدل ما يتسجل من غير عزو
+    let shiftId = null;
+    if (source === "pos") {
+      const activeShift = await client.query(
+        "SELECT id FROM pos_shifts WHERE user_id = $1 AND status = 'ACTIVE'",
+        [createdBy]
+      );
+      if (activeShift.rows.length > 0) {
+        shiftId = activeShift.rows[0].id;
+      } else {
+        const shiftSettings = await client.query(
+          "SELECT require_shift_for_pos_sales FROM pos_settings WHERE id = 1"
+        );
+        if (shiftSettings.rows[0]?.require_shift_for_pos_sales) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: "لازم تفتح شيفت الأول قبل ما تسجل بيع" });
+        }
+      }
+    }
+
     const orderResult = await client.query(
       `INSERT INTO orders
         (branch_id, source, order_type, table_number, delivery_area_id,
          address_details, customer_name, customer_phone, payment_method_id,
          created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status,
-         loyalty_points_earned, loyalty_points_redeemed, loyalty_redeem_value, idempotency_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+         loyalty_points_earned, loyalty_points_redeemed, loyalty_redeem_value, idempotency_key, shift_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, customerName, customerPhone, paymentMethodId,
        createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus,
-       loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, idempotencyKey || null]
+       loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, idempotencyKey || null, shiftId]
     );
     const orderId = orderResult.rows[0].id;
 

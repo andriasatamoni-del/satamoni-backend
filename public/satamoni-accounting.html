@@ -95,6 +95,8 @@
     <div class="tabbtn active" data-tab="expenses">المصروفات</div>
     <div class="tabbtn" data-tab="purchases">المشتريات</div>
     <div class="tabbtn" data-tab="cash">تقفيل الكاش</div>
+    <div class="tabbtn" data-tab="shifts">مراجعة الشيفتات</div>
+    <div class="tabbtn" data-tab="dayclose">تقفيل يوم الفرع</div>
     <div class="tabbtn" data-tab="ledger">كشف حساب المخزن</div>
     <div class="tabbtn" data-tab="costanalysis">تحليل التكلفة</div>
     <div class="tabbtn" data-tab="income">قائمة الدخل</div>
@@ -172,6 +174,51 @@
       <div class="ok" id="cashOk"></div>
     </div>
     <table><thead><tr><th>التاريخ</th><th>متوقع</th><th>فعلي</th><th>الفرق</th></tr></thead><tbody id="cashBody"></tbody></table>
+  </div>
+
+  <!-- المرحلة 7E: مراجعة شيفتات الكاشير -->
+  <div class="panel" id="panel-shifts">
+    <h1>مراجعة شيفتات الكاشير</h1>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">فرق الكاش فوق حد الاعتماد بيوقّف الشيفت في حالة "محتاجة مراجعة" لحد ما يتصرف فيها مدير الفرع أو المحاسب (اعتماد أو إقرار) - الشيفت بيتقفل نهائيًا بعد المراجعة في الحالتين.</div>
+    <div class="formbox">
+      <div class="row">
+        <select id="shiftsBranchSelect"></select>
+        <select id="shiftsStatusFilter">
+          <option value="">كل الحالات</option>
+          <option value="ACTIVE">شغالة</option>
+          <option value="PENDING_REVIEW">محتاجة مراجعة</option>
+          <option value="CLOSED">مقفولة</option>
+          <option value="FORCE_CLOSED">قفل قسري</option>
+        </select>
+        <button id="shiftsRefresh">تحديث</button>
+      </div>
+      <div class="err" id="shiftsErr"></div>
+    </div>
+    <table>
+      <thead><tr><th>#</th><th>الكاشير</th><th>فتح</th><th>قفل</th><th>افتتاحي</th><th>متوقع</th><th>فعلي</th><th>الفرق</th><th>الحالة</th><th></th></tr></thead>
+      <tbody id="shiftsBody"></tbody>
+    </table>
+  </div>
+
+  <!-- المرحلة 7E: تقفيل يوم الفرع -->
+  <div class="panel" id="panel-dayclose">
+    <h1>تقفيل يوم الفرع</h1>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">قايمة فحص لازم تكون خالية من البنود الحرجة (أحمر) قبل القفل - شيفت شغال، شيفت محتاج مراجعة، أو طلب لسه مفتوح كلها بتمنع القفل.</div>
+    <div class="formbox">
+      <div class="row">
+        <select id="dayCloseBranchSelect"></select>
+        <input id="dayCloseDate" type="date" />
+        <button id="dayCloseRefresh">تحديث الحالة</button>
+      </div>
+      <div class="err" id="dayCloseErr"></div>
+    </div>
+    <div id="dayCloseStatusBox"></div>
+    <div class="formbox" id="dayCloseActionBox" style="display:none">
+      <div class="row"><input id="dayCloseNotes" placeholder="ملاحظات (اختياري)" /><button id="dayCloseSubmit">قفل اليوم</button></div>
+      <div class="ok" id="dayCloseOk"></div>
+    </div>
+    <h1 style="font-size:15px">سجل التقفيلات</h1>
+    <table><thead><tr><th>التاريخ</th><th>الحالة</th><th>إجمالي المبيعات</th><th>عدد الطلبات</th><th>صافي فروق الكاش</th><th>اتقفل بمعرفة</th></tr></thead><tbody id="dayCloseHistoryBody"></tbody></table>
   </div>
 
   <!-- كشف حساب المخزن -->
@@ -591,7 +638,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 
 // المرحلة 4B: التبويبات الجديدة بتتحمّل أول مرة تتفتح بس (مش وقت boot() زي التبويبات القديمة) - عشان
 // نتجنب نداءات مش لازمة لمدير فرع/محاسب لسه مفتحش التبويب ده أصلًا
-const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false, balance: false };
+const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false, balance: false, shifts: false, dayclose: false };
 function onTabOpen(tab) {
   if (tab === "coa" && !accountingTabLoaded.coa) { accountingTabLoaded.coa = true; loadAccountsForForms().then(loadTrialBalance); }
   if (tab === "journal" && !accountingTabLoaded.journal) { accountingTabLoaded.journal = true; loadAccountsForForms().then(loadJournalEntries); }
@@ -604,6 +651,13 @@ function onTabOpen(tab) {
     if (auth.user.role === "admin") loadFiscalYearClosings();
   }
   if (tab === "balance" && !accountingTabLoaded.balance) { accountingTabLoaded.balance = true; loadBalanceSheet(); }
+  if (tab === "shifts" && !accountingTabLoaded.shifts) { accountingTabLoaded.shifts = true; loadShifts(); }
+  if (tab === "dayclose" && !accountingTabLoaded.dayclose) {
+    accountingTabLoaded.dayclose = true;
+    document.getElementById("dayCloseDate").value = todayStr();
+    loadDayCloseStatus();
+    loadDayCloseHistory();
+  }
 }
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -672,6 +726,16 @@ async function loadBranches() {
 
   const jeNewBranchSel = document.getElementById("jeNewBranch");
   jeNewBranchSel.innerHTML = `<option value="">بدون فرع (على مستوى الشركة)</option>` + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+
+  // المرحلة 7E: شيفتات وتقفيل اليوم - كلاهما مقفول على فرع واحد محدد دايمًا (الباك اند مش بيدعم "كل
+  // الفروع مجمّعة" هنا) - مدير الفرع مقفول على فرعه زي كل سلكتورات الفرع التانية في الصفحة دي
+  const shiftsBranchSel = document.getElementById("shiftsBranchSelect");
+  shiftsBranchSel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  if (auth.user.role === "branch_manager") { shiftsBranchSel.value = auth.user.branchId; shiftsBranchSel.disabled = true; }
+
+  const dayCloseBranchSel = document.getElementById("dayCloseBranchSelect");
+  dayCloseBranchSel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  if (auth.user.role === "branch_manager") { dayCloseBranchSel.value = auth.user.branchId; dayCloseBranchSel.disabled = true; }
 }
 
 // ---------------- المصروفات ----------------
@@ -798,6 +862,149 @@ document.getElementById("cashSubmit").onclick = async () => {
     loadCash();
   } catch (e) { errBox.textContent = e.message; }
 };
+
+// ---------------- المرحلة 7E: مراجعة شيفتات الكاشير ----------------
+function shiftStatusLabel(status, varianceStatus) {
+  const map = { ACTIVE: "شغالة", PENDING_REVIEW: "محتاجة مراجعة", CLOSED: "مقفولة", FORCE_CLOSED: "قفل قسري" };
+  let label = map[status] || status;
+  if (status === "CLOSED" && varianceStatus === "APPROVED") label += " (فرق مُعتمد)";
+  if (status === "CLOSED" && varianceStatus === "ACKNOWLEDGED") label += " (فرق مُقر بيه)";
+  return label;
+}
+
+async function loadShifts() {
+  const branchId = document.getElementById("shiftsBranchSelect").value;
+  const status = document.getElementById("shiftsStatusFilter").value;
+  const errBox = document.getElementById("shiftsErr");
+  errBox.textContent = "";
+  if (!branchId) return;
+  try {
+    const qs = new URLSearchParams({ branchId, ...(status ? { status } : {}) });
+    const shifts = await api(`/api/shifts?${qs.toString()}`);
+    document.getElementById("shiftsBody").innerHTML = shifts.map(s => `
+      <tr>
+        <td>#${s.id}</td>
+        <td>${s.cashier_name}</td>
+        <td>${new Date(s.opened_at).toLocaleString("ar-EG")}</td>
+        <td>${s.closed_at ? new Date(s.closed_at).toLocaleString("ar-EG") : "—"}</td>
+        <td>${money(s.opening_cash)}</td>
+        <td>${s.expected_cash != null ? money(s.expected_cash) : "—"}</td>
+        <td>${s.actual_cash != null ? money(s.actual_cash) : "—"}</td>
+        <td class="${s.cash_variance != null && Number(s.cash_variance) < 0 ? "diffneg" : "diffpos"}">${s.cash_variance != null ? money(s.cash_variance) : "—"}</td>
+        <td>${shiftStatusLabel(s.status, s.variance_status)}</td>
+        <td>${s.status === "PENDING_REVIEW" ? `<button class="linkbtn" data-review="${s.id}">مراجعة</button>` : ""}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="10" style="text-align:center;color:var(--faint)">مفيش شيفتات مطابقة</td></tr>`;
+
+    document.querySelectorAll("[data-review]").forEach(btn => {
+      btn.onclick = guardedClick(btn, () => reviewShift(btn.dataset.review));
+    });
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+}
+document.getElementById("shiftsBranchSelect").onchange = loadShifts;
+document.getElementById("shiftsStatusFilter").onchange = loadShifts;
+document.getElementById("shiftsRefresh").onclick = loadShifts;
+
+async function reviewShift(shiftId) {
+  const decision = prompt(
+    'اكتب "approve" لو اتخذت إجراء فعلي (تحقيق/تصحيح)، أو "acknowledge" لو تحققت من السبب واقتنعت بيه من غير إجراء إضافي:',
+    "acknowledge"
+  );
+  if (!decision) return;
+  const trimmed = decision.trim();
+  if (!["approve", "acknowledge"].includes(trimmed)) {
+    alert('القيمة لازم تكون approve أو acknowledge بالظبط');
+    return;
+  }
+  const notes = prompt("ملاحظات المراجعة (اختياري):") || "";
+  try {
+    await api(`/api/shifts/${shiftId}/review`, { method: "POST", body: JSON.stringify({ decision: trimmed, notes }) });
+    await loadShifts();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// ---------------- المرحلة 7E: تقفيل يوم الفرع ----------------
+function renderDayCloseStatus(status) {
+  const colorMap = { RED: "#F08A83", YELLOW: "#E8C468", GREEN: "#3FA34D" };
+  const colorLabel = { RED: "🔴 أحمر — فيه بنود حرجة لازم تتحل الأول", YELLOW: "🟡 أصفر — للعلم بس، مش قيد للقفل", GREEN: "🟢 أخضر — جاهز للقفل" };
+  let html = `<div class="formbox" style="border-color:${colorMap[status.color]}">
+    <div style="font-weight:800;color:${colorMap[status.color]};margin-bottom:8px">${colorLabel[status.color]}</div>`;
+  if (status.alreadyClosed) {
+    html += `<div style="color:var(--faint)">اليوم ده مقفول بالفعل${status.dayRecord?.closed_at ? " — " + new Date(status.dayRecord.closed_at).toLocaleString("ar-EG") : ""}</div>`;
+  }
+  if (status.redItems.length) {
+    html += `<div style="color:#F08A83;font-weight:700;margin-top:6px">بنود لازم تتحل الأول:</div><ul style="margin:4px 0;padding-inline-start:20px;font-size:13px">${status.redItems.map(i => `<li>${i.message}</li>`).join("")}</ul>`;
+  }
+  if (status.yellowItems.length) {
+    html += `<div style="color:#E8C468;font-weight:700;margin-top:6px">للعلم:</div><ul style="margin:4px 0;padding-inline-start:20px;font-size:13px">${status.yellowItems.map(i => `<li>${i.message}</li>`).join("")}</ul>`;
+  }
+  html += `<div style="margin-top:8px;font-size:13px;color:var(--faint)">إجمالي مبيعات اليوم حتى الآن: <b style="color:var(--ink)">${money(status.todaySummary.totalSales)}</b> (${status.todaySummary.orderCount} طلب)</div>`;
+  html += `</div>`;
+  document.getElementById("dayCloseStatusBox").innerHTML = html;
+  document.getElementById("dayCloseActionBox").style.display = (status.canClose && !status.alreadyClosed) ? "block" : "none";
+}
+
+async function loadDayCloseStatus() {
+  const branchId = document.getElementById("dayCloseBranchSelect").value;
+  const businessDate = document.getElementById("dayCloseDate").value;
+  const errBox = document.getElementById("dayCloseErr");
+  errBox.textContent = "";
+  if (!branchId || !businessDate) return;
+  try {
+    const status = await api(`/api/branch-days/${branchId}/status?businessDate=${businessDate}`);
+    renderDayCloseStatus(status);
+  } catch (e) {
+    errBox.textContent = e.message;
+    document.getElementById("dayCloseStatusBox").innerHTML = "";
+    document.getElementById("dayCloseActionBox").style.display = "none";
+  }
+}
+document.getElementById("dayCloseBranchSelect").onchange = () => { loadDayCloseStatus(); loadDayCloseHistory(); };
+document.getElementById("dayCloseDate").onchange = loadDayCloseStatus;
+document.getElementById("dayCloseRefresh").onclick = loadDayCloseStatus;
+
+async function submitDayClose() {
+  const branchId = document.getElementById("dayCloseBranchSelect").value;
+  const businessDate = document.getElementById("dayCloseDate").value;
+  const managerNotes = document.getElementById("dayCloseNotes").value.trim();
+  const okBox = document.getElementById("dayCloseOk");
+  const errBox = document.getElementById("dayCloseErr");
+  okBox.textContent = ""; errBox.textContent = "";
+  try {
+    await api(`/api/branch-days/${branchId}/close`, {
+      method: "POST", body: JSON.stringify({ businessDate, managerNotes: managerNotes || null }),
+    });
+    okBox.textContent = "تم قفل يوم الفرع بنجاح.";
+    document.getElementById("dayCloseNotes").value = "";
+    await loadDayCloseStatus();
+    await loadDayCloseHistory();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+}
+document.getElementById("dayCloseSubmit").onclick = guardedClick(document.getElementById("dayCloseSubmit"), submitDayClose);
+
+async function loadDayCloseHistory() {
+  const branchId = document.getElementById("dayCloseBranchSelect").value;
+  if (!branchId) return;
+  try {
+    const history = await api(`/api/branch-days/${branchId}/history`);
+    document.getElementById("dayCloseHistoryBody").innerHTML = history.map(d => `
+      <tr>
+        <td>${d.business_date.slice(0, 10)}</td>
+        <td>${d.status}</td>
+        <td>${money(d.total_sales)}</td>
+        <td>${d.order_count}</td>
+        <td class="${Number(d.cash_variance_total) < 0 ? "diffneg" : "diffpos"}">${money(d.cash_variance_total)}</td>
+        <td>${d.closed_by_name || "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--faint)">مفيش تقفيلات مسجلة</td></tr>`;
+  } catch (e) { /* تجاهل - مش critical لباقي الشاشة */ }
+}
 
 // ---------------- كشف حساب المخزن ----------------
 async function loadLedger() {
