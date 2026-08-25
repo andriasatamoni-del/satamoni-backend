@@ -156,6 +156,26 @@ async function getOrCreateBranchCashAccount(client, branchId) {
   return inserted.rows[0];
 }
 
+// المرحلة 7F: حساب عهدة كاش خاص بسائق معيّن - نفس نمط getOrCreateBranchCashAccount بالظبط (بيتنشئ
+// تلقائيًا أول مرة، لأن السائقين ديناميكيين زي الفروع). بيمثّل "كاش لسه في إيد السائق" كأصل منفصل عن
+// كاش الفرع نفسه - بيتحمّل وقت التسليم (استلم كاش من العميل) وبيتصفّى وقت التسوية (سلّم الكاش للفرع)
+async function getOrCreateDriverCustodyAccount(client, driverId) {
+  const code = `1150-${driverId}`;
+  const existing = await client.query("SELECT * FROM accounts WHERE code = $1", [code]);
+  if (existing.rows.length > 0) return existing.rows[0];
+
+  const parent = await client.query("SELECT id FROM accounts WHERE code = '1100'");
+  const driver = await client.query("SELECT name FROM drivers WHERE id = $1", [driverId]);
+  const inserted = await client.query(
+    `INSERT INTO accounts (code, name, account_type, parent_account_id, is_system_account)
+     VALUES ($1,$2,'ASSET',$3,TRUE)
+     ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
+     RETURNING *`,
+    [code, `عهدة كاش - ${driver.rows[0]?.name || "سائق " + driverId}`, parent.rows[0]?.id || null]
+  );
+  return inserted.rows[0];
+}
+
 async function getAccountByCode(client, code) {
   const result = await client.query("SELECT * FROM accounts WHERE code = $1", [code]);
   if (result.rows.length === 0) throw new Error(`الحساب بالكود ${code} مش موجود - شجرة الحسابات الافتراضية ناقصة`);
@@ -164,5 +184,5 @@ async function getAccountByCode(client, code) {
 
 module.exports = {
   postJournalEntry, reverseJournalEntry, ensurePeriodOpen,
-  getOrCreateBranchCashAccount, getAccountByCode,
+  getOrCreateBranchCashAccount, getOrCreateDriverCustodyAccount, getAccountByCode,
 };

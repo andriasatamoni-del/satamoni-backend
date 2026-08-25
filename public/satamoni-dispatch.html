@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — لوحة التوزيع</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 10px; flex-wrap: wrap; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #topbar select { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  #tabs { display: flex; gap: 6px; margin: 0 0 16px; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select { flex: 1; min-width: 130px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .formbox button.secondary { background: transparent; border: 1px solid var(--line); color: var(--faint); }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .tablewrap { overflow-x: auto; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .pill.unassigned { background: rgba(194,42,36,.15); color: #F08A83; }
+  .pill.assigned { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .pill.out { background: rgba(203,161,53,.25); color: var(--gold-bright); }
+  .pill.delivered { background: rgba(63,163,77,.15); color: var(--green); }
+  .pill.failed { background: rgba(194,42,36,.2); color: #F08A83; }
+  .pill.returned { background: rgba(154,154,154,.2); color: var(--faint); }
+  .smallbtn { padding: 5px 10px; border: none; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 11px; margin-inline-end: 4px; white-space: nowrap; }
+  .smallbtn.primary { background: var(--red); color: #fff; }
+  .smallbtn.approve { background: var(--green); color: #fff; }
+  .smallSelect { background: var(--bg-alt); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font-size: 11px; min-width: 100px; }
+  .diffneg { color: #F08A83; font-weight: 700; }
+  .diffpos { color: var(--green); font-weight: 700; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🛵 ساتاموني — لوحة التوزيع</div>
+  <select id="branchSelect" style="display:none"></select>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🛵 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="board">لوحة التوزيع</div>
+    <div class="tabbtn" data-tab="settlement">تسوية السائقين</div>
+  </div>
+
+  <!-- لوحة التوزيع -->
+  <div class="panel active" id="panel-board">
+    <div class="formbox">
+      <div class="row">
+        <select id="boardStatusFilter">
+          <option value="">كل الحالات</option>
+          <option value="UNASSIGNED">مش متعيّن</option>
+          <option value="ASSIGNED">متعيّن</option>
+          <option value="OUT_FOR_DELIVERY">في الطريق</option>
+          <option value="DELIVERED">اتسلّم</option>
+          <option value="FAILED">فشل التسليم</option>
+          <option value="RETURNED">راجع الفرع</option>
+        </select>
+        <select id="boardDriverFilter"><option value="">كل السائقين</option></select>
+        <input id="boardDateFilter" type="date" />
+        <select id="boardPaymentFilter">
+          <option value="">كل طرق الدفع</option>
+          <option value="cash">كاش</option>
+          <option value="card_or_wallet">كارت/محفظة</option>
+          <option value="credit">آجل</option>
+        </select>
+        <button id="boardRefreshBtn">تحديث</button>
+      </div>
+      <div class="err" id="boardErr"></div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th>#</th><th>العميل</th><th>المنطقة</th><th>رسوم التوصيل</th><th>الدفع</th><th>الإجمالي</th>
+        <th>السائق</th><th>الانتظار</th><th>الحالة</th><th></th>
+      </tr></thead>
+      <tbody id="boardBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- تسوية السائقين -->
+  <div class="panel" id="panel-settlement">
+    <h1>معاينة/تسوية دفعة سائق</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="settleDriverSelect"></select>
+        <button id="settlePreviewBtn" class="secondary">معاينة الدفعة المعلّقة</button>
+      </div>
+      <div id="settlePreviewBox" style="font-size:13px;color:var(--faint);margin-bottom:8px"></div>
+      <div class="row" id="settleActionRow" style="display:none">
+        <input id="settleActualHandover" type="number" min="0" step="0.01" placeholder="الكاش المُسلَّم فعليًا للفرع" />
+        <input id="settleNotes" placeholder="ملاحظات (اختياري)" />
+        <button id="settleSubmitBtn">تسوية</button>
+      </div>
+      <div class="err" id="settleErr"></div>
+      <div class="ok" id="settleOk"></div>
+    </div>
+
+    <h1>سجل التسويات</h1>
+    <div class="formbox">
+      <div class="row"><button id="settleHistoryRefreshBtn" class="secondary">تحديث السجل</button></div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th>التاريخ</th><th>السائق</th><th>عدد الطلبات</th><th>كاش متوقع</th><th>كاش محصّل</th>
+        <th>مُسلَّم فعليًا</th><th>الفرق</th><th>الحالة</th><th></th>
+      </tr></thead>
+      <tbody id="settleHistoryBody"></tbody>
+    </table></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الشاشة دي.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "accountant"];
+const assignRoles = ["admin", "branch_manager"];
+const settleRoles = ["admin", "branch_manager"];
+const reviewRoles = ["admin", "branch_manager", "accountant"];
+
+const DISPATCH_LABELS = {
+  UNASSIGNED: "مش متعيّن", ASSIGNED: "متعيّن", OUT_FOR_DELIVERY: "في الطريق",
+  DELIVERED: "اتسلّم", FAILED: "فشل التسليم", RETURNED: "راجع الفرع",
+};
+const DISPATCH_CLASS = {
+  UNASSIGNED: "unassigned", ASSIGNED: "assigned", OUT_FOR_DELIVERY: "out",
+  DELIVERED: "delivered", FAILED: "failed", RETURNED: "returned",
+};
+const FAILURE_LABELS = {
+  CUSTOMER_UNREACHABLE: "العميل مش رادّ", CUSTOMER_REFUSED: "العميل رفض الاستلام",
+  WRONG_ADDRESS: "العنوان غلط", CLOSED_LOCATION: "المكان مقفول", OTHER: "سبب تاني",
+};
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+if (auth.user && auth.user.role === "cashier") location.replace("satamoni-pos.html");
+if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
+if (auth.user && auth.user.role === "driver") location.replace("satamoni-driver-app.html");
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
+function guardedClick(btn, handler) {
+  return async (...args) => {
+    if (btn.disabled) return;
+    const originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = "جاري التنفيذ...";
+    try { await handler(...args); } finally { btn.disabled = false; btn.textContent = originalText; }
+  };
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    if (btn.dataset.tab === "board") loadBoard();
+    if (btn.dataset.tab === "settlement") loadSettlementHistory();
+  };
+});
+
+function currentBranchId() {
+  return auth.user.role === "admin" ? document.getElementById("branchSelect").value : auth.user.branchId;
+}
+
+let driversCache = [];
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  if (auth.user.role === "admin") {
+    const branches = await api("/api/branches");
+    const sel = document.getElementById("branchSelect");
+    sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    sel.style.display = "block";
+    sel.onchange = () => { loadDrivers().then(loadBoard); };
+  }
+  await loadDrivers();
+  await loadBoard();
+}
+
+async function loadDrivers() {
+  const branchId = currentBranchId();
+  if (!branchId) return;
+  try {
+    driversCache = await api(`/api/drivers?branchId=${branchId}`);
+    const filterSel = document.getElementById("boardDriverFilter");
+    filterSel.innerHTML = `<option value="">كل السائقين</option>` + driversCache.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
+    const settleSel = document.getElementById("settleDriverSelect");
+    settleSel.innerHTML = driversCache.map(d => `<option value="${d.id}">${d.name} (${d.driver_code || "—"})</option>`).join("");
+  } catch (e) { /* تجاهل - جدول السائقين ممكن يفضل فاضي */ }
+}
+
+function waitingLabel(createdAt) {
+  const mins = Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000);
+  if (mins < 1) return "لسه";
+  if (mins < 60) return `${mins} د`;
+  return `${Math.floor(mins / 60)} س ${mins % 60} د`;
+}
+
+async function loadBoard() {
+  const branchId = currentBranchId();
+  if (!branchId) return;
+  const body = document.getElementById("boardBody");
+  const errBox = document.getElementById("boardErr");
+  errBox.textContent = "";
+  body.innerHTML = `<tr><td colspan="10">...جاري التحميل</td></tr>`;
+  const params = new URLSearchParams({ branchId });
+  const status = document.getElementById("boardStatusFilter").value;
+  const driverId = document.getElementById("boardDriverFilter").value;
+  const date = document.getElementById("boardDateFilter").value;
+  const paymentMethod = document.getElementById("boardPaymentFilter").value;
+  if (status) params.set("status", status);
+  if (driverId) params.set("driverId", driverId);
+  if (date) params.set("date", date);
+  if (paymentMethod) params.set("paymentMethod", paymentMethod);
+
+  try {
+    const orders = await api(`/api/deliveries?${params.toString()}`);
+    const canAssign = assignRoles.includes(auth.user.role);
+    body.innerHTML = orders.map(o => {
+      let actionHtml = "";
+      if (canAssign) {
+        if (o.dispatch_status === "UNASSIGNED") {
+          actionHtml = `
+            <select class="smallSelect" data-assign-driver="${o.id}">
+              <option value="">اختر سائق</option>
+              ${driversCache.map(d => `<option value="${d.id}">${d.name}</option>`).join("")}
+            </select>
+            <button class="smallbtn primary" data-assign-btn="${o.id}">تعيين</button>`;
+        } else if (o.dispatch_status === "ASSIGNED") {
+          actionHtml = `<button class="smallbtn" data-unassign="${o.id}">إلغاء التعيين</button>`;
+        } else if (o.dispatch_status === "FAILED") {
+          actionHtml = `<button class="smallbtn primary" data-reschedule="${o.id}">إعادة جدولة</button>`;
+        }
+      }
+      return `
+      <tr>
+        <td>#${o.id}</td>
+        <td>${o.customer_name || "—"}<div style="color:var(--faint);font-size:11px">${o.customer_phone || ""}</div></td>
+        <td>${o.delivery_area_name || "—"}</td>
+        <td>${money(o.delivery_fee)}</td>
+        <td>${o.payment_method_name || "—"} <span style="color:var(--faint)">(${o.payment_status === "collected" ? "محصّل" : "تحت التحصيل"})</span></td>
+        <td>${money(o.total)}</td>
+        <td>${o.driver_name || "—"}</td>
+        <td>${waitingLabel(o.created_at)}</td>
+        <td><span class="pill ${DISPATCH_CLASS[o.dispatch_status] || ""}">${DISPATCH_LABELS[o.dispatch_status] || o.dispatch_status || "—"}</span>
+          ${o.dispatch_status === "FAILED" && o.delivery_failure_reason ? `<div style="color:var(--faint);font-size:11px">${FAILURE_LABELS[o.delivery_failure_reason] || o.delivery_failure_reason}</div>` : ""}
+        </td>
+        <td>${actionHtml}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="10" style="text-align:center;color:var(--faint)">مفيش طلبات دليفري مطابقة</td></tr>`;
+
+    body.querySelectorAll("[data-assign-btn]").forEach(btn => {
+      btn.onclick = guardedClick(btn, async () => {
+        const orderId = btn.dataset.assignBtn;
+        const sel = body.querySelector(`[data-assign-driver="${orderId}"]`);
+        if (!sel.value) { alert("اختار سائق الأول"); return; }
+        try {
+          await api(`/api/deliveries/${orderId}/assign`, { method: "POST", body: JSON.stringify({ driverId: sel.value }) });
+          loadBoard();
+        } catch (e) { alert(e.message); }
+      });
+    });
+    body.querySelectorAll("[data-unassign]").forEach(btn => {
+      btn.onclick = guardedClick(btn, async () => {
+        try {
+          await api(`/api/deliveries/${btn.dataset.unassign}/unassign`, { method: "POST" });
+          loadBoard();
+        } catch (e) { alert(e.message); }
+      });
+    });
+    body.querySelectorAll("[data-reschedule]").forEach(btn => {
+      btn.onclick = guardedClick(btn, async () => {
+        try {
+          await api(`/api/deliveries/${btn.dataset.reschedule}/reschedule`, { method: "POST" });
+          loadBoard();
+        } catch (e) { alert(e.message); }
+      });
+    });
+  } catch (e) {
+    errBox.textContent = e.message;
+    body.innerHTML = "";
+  }
+}
+document.getElementById("boardRefreshBtn").onclick = loadBoard;
+["boardStatusFilter", "boardDriverFilter", "boardPaymentFilter"].forEach(id => document.getElementById(id).addEventListener("change", loadBoard));
+document.getElementById("boardDateFilter").addEventListener("change", loadBoard);
+
+// ---------------- تسوية السائقين ----------------
+document.getElementById("settlePreviewBtn").onclick = guardedClick(document.getElementById("settlePreviewBtn"), async () => {
+  const errBox = document.getElementById("settleErr");
+  errBox.textContent = "";
+  const driverId = document.getElementById("settleDriverSelect").value;
+  if (!driverId) return;
+  try {
+    const summary = await api(`/api/driver-settlements/preview?driverId=${driverId}`);
+    document.getElementById("settlePreviewBox").innerHTML = `
+      عدد الطلبات المعلّقة: <b style="color:var(--ink)">${summary.orderCount}</b> —
+      كاش متوقع: <b style="color:var(--ink)">${money(summary.codExpected)}</b> —
+      كاش محصّل فعليًا: <b style="color:var(--ink)">${money(summary.codCollected)}</b> —
+      فرق التحصيل: <b class="${summary.codVariance < 0 ? "diffneg" : "diffpos"}">${money(summary.codVariance)}</b> —
+      رسوم توصيل ضمن المحصّل: ${money(summary.deliveryFeesTotal)} —
+      المتوقع تسليمه للفرع: <b style="color:var(--ink)">${money(summary.expectedHandover)}</b>
+    `;
+    document.getElementById("settleActionRow").style.display = summary.orderCount > 0 && settleRoles.includes(auth.user.role) ? "flex" : "none";
+    document.getElementById("settleActualHandover").value = summary.expectedHandover;
+  } catch (e) { errBox.textContent = e.message; }
+});
+
+document.getElementById("settleSubmitBtn").onclick = guardedClick(document.getElementById("settleSubmitBtn"), async () => {
+  const errBox = document.getElementById("settleErr");
+  const okBox = document.getElementById("settleOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const driverId = document.getElementById("settleDriverSelect").value;
+  const actualHandover = document.getElementById("settleActualHandover").value;
+  const notes = document.getElementById("settleNotes").value.trim();
+  try {
+    const result = await api("/api/driver-settlements", {
+      method: "POST", body: JSON.stringify({ driverId, actualHandover: Number(actualHandover), notes: notes || undefined }),
+    });
+    okBox.textContent = result.variance_status === "PENDING_REVIEW"
+      ? `تمت التسوية — فيه فرق (${money(result.handover_variance)}) محتاج مراجعة مدير/محاسب.`
+      : "تمت التسوية بنجاح.";
+    document.getElementById("settleActionRow").style.display = "none";
+    document.getElementById("settlePreviewBox").innerHTML = "";
+    document.getElementById("settleNotes").value = "";
+    loadSettlementHistory();
+  } catch (e) { errBox.textContent = e.message; }
+});
+
+async function loadSettlementHistory() {
+  const branchId = currentBranchId();
+  if (!branchId) return;
+  const body = document.getElementById("settleHistoryBody");
+  body.innerHTML = `<tr><td colspan="9">...جاري التحميل</td></tr>`;
+  try {
+    const list = await api(`/api/driver-settlements?branchId=${branchId}`);
+    body.innerHTML = list.map(s => `
+      <tr>
+        <td>${new Date(s.settled_at).toLocaleString("ar-EG")}</td>
+        <td>${s.driver_name}</td>
+        <td>${s.order_count}</td>
+        <td>${money(s.expected_handover)}</td>
+        <td>${money(s.cod_collected)}</td>
+        <td>${s.actual_handover != null ? money(s.actual_handover) : "—"}</td>
+        <td class="${Number(s.handover_variance) < 0 ? "diffneg" : "diffpos"}">${s.handover_variance != null ? money(s.handover_variance) : "—"}</td>
+        <td>${s.variance_status}</td>
+        <td>${s.variance_status === "PENDING_REVIEW" && reviewRoles.includes(auth.user.role) ? `<button class="smallbtn approve" data-review="${s.id}">مراجعة</button>` : ""}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--faint)">مفيش تسويات مسجّلة</td></tr>`;
+    body.querySelectorAll("[data-review]").forEach(btn => {
+      btn.onclick = guardedClick(btn, async () => {
+        const decision = prompt('اكتب "approve" لو اتخذت إجراء فعلي، أو "acknowledge" لو تحققت من السبب واقتنعت بيه:', "acknowledge");
+        if (!decision) return;
+        const trimmed = decision.trim();
+        if (!["approve", "acknowledge"].includes(trimmed)) { alert("القيمة لازم تكون approve أو acknowledge"); return; }
+        const notes = prompt("ملاحظات المراجعة (اختياري):") || "";
+        try {
+          await api(`/api/driver-settlements/${btn.dataset.review}/review`, { method: "POST", body: JSON.stringify({ decision: trimmed, notes }) });
+          loadSettlementHistory();
+        } catch (e) { alert(e.message); }
+      });
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="9">${e.message}</td></tr>`;
+  }
+}
+document.getElementById("settleHistoryRefreshBtn").onclick = loadSettlementHistory;
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

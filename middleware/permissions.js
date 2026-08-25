@@ -23,6 +23,10 @@ const ROLE_PERMISSIONS = {
     // وهو صاحب صلاحية مراجعة فروق الكاش (اعتماد/رفض) وقفل يوم الفرع - الاتنين دول مش متاحين للكاشير خالص
     "shifts.open_own", "shifts.view_own", "shifts.close_own",
     "shifts.view_branch", "shifts.review", "branch_day.view", "branch_day.close",
+    // المرحلة 7F: مدير الفرع هو صاحب لوحة التوزيع (تعيين/إعادة تعيين سائق)، بيدير بيانات سائقي فرعه
+    // (نفس نمط إدارة الموظفين HR في المرحلة 4D)، وهو صاحب صلاحية تسوية كاش السائقين ومراجعة فروقها
+    "deliveries.view_branch", "deliveries.assign", "drivers.manage",
+    "driver_settlements.create", "driver_settlements.review",
   ],
   accountant: [
     "inventory.view", "recipes.view",
@@ -38,6 +42,9 @@ const ROLE_PERMISSIONS = {
     // المرحلة 7E: المحاسب بيراجع/يحقق في فروق الكاش عبر الفروع (رؤية + مراجعة)، بس مش هو اللي بيقفل
     // يوم الفرع فعليًا (ده قرار تشغيلي لمدير الفرع، مش مالي بحت)
     "shifts.view_branch", "shifts.review", "branch_day.view",
+    // المرحلة 7F: نفس منطق مراجعة فروق الشيفت بالظبط - المحاسب يراجع فروق تسليم كاش السائقين، بس
+    // مش هو اللي بيبدأ التسوية نفسها (ده قرار تشغيلي لمدير الفرع لحظة استلام الكاش فعليًا)
+    "deliveries.view_branch", "driver_settlements.review",
   ],
   cashier: [
     "orders.create", "orders.discount.request", "orders.void.request",
@@ -48,6 +55,13 @@ const ROLE_PERMISSIONS = {
   callcenter: [
     "orders.create", "orders.discount.request", "orders.void.request",
     "approvals.create",
+  ],
+  // المرحلة 7F: السائق أضيق دور في النظام عمدًا - طلباته المُسندة له بس (deliveries.view_own/update_own،
+  // مقفولة كمان على مستوى الكود بمطابقة drivers.user_id مع req.user.id، مش الصلاحية دي بس)، وسجل
+  // تسوياته الخاصة. مفيش أي وصول لمحاسبة/مخزون/رواتب/فروع تانية/عملاء خالص - غير اللي محتاجه بالظبط
+  // عشان يوصّل الطلب (اسم/تليفون/عنوان العميل، ظاهرين أصلًا جوه تفاصيل الطلب المُسند له نفسه)
+  driver: [
+    "deliveries.view_own", "deliveries.update_own", "driver_settlements.view_own",
   ],
 };
 

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — إدارة السائقين</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 10px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #topbar select { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1000px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select { flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  label.checkrow { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--faint); flex: 0; white-space: nowrap; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .tablewrap { overflow-x: auto; }
+  select.statusSelect { background: var(--bg-alt); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .pill.yes { background: rgba(63,163,77,.15); color: var(--green); }
+  .pill.no { background: rgba(194,42,36,.15); color: #F08A83; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🛵 ساتاموني — إدارة السائقين</div>
+  <select id="branchSelect" style="display:none"></select>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🛵 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <h1>سائق جديد</h1>
+  <div class="formbox">
+    <div class="row">
+      <input id="newName" placeholder="اسم السائق" />
+      <input id="newPhone" placeholder="رقم الموبايل (اختياري)" />
+    </div>
+    <div class="row">
+      <label class="checkrow"><input type="checkbox" id="newCreateLogin" /> إنشاء تسجيل دخول فعلي للسائق (لاستخدام شاشة السائق)</label>
+    </div>
+    <div class="row" id="loginFieldsRow" style="display:none">
+      <input id="newLoginEmail" type="email" placeholder="بريد إلكتروني لتسجيل الدخول" />
+      <input id="newLoginPassword" type="password" placeholder="كلمة مرور" />
+    </div>
+    <button id="createDriverBtn">إضافة السائق</button>
+    <div class="err" id="createErr"></div>
+    <div class="ok" id="createOk"></div>
+  </div>
+
+  <h1>السائقين</h1>
+  <div class="tablewrap"><table>
+    <thead><tr><th>الكود</th><th>الاسم</th><th>الموبايل</th><th>الحالة</th><th>نشط</th><th>تسجيل دخول</th></tr></thead>
+    <tbody id="driversBody"></tbody>
+  </table></div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الشاشة دي.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager"];
+const STATUS_LABELS = { AVAILABLE: "متاح", BUSY: "مشغول", OFF_DUTY: "برّا الشغل", SUSPENDED: "موقوف", INACTIVE: "غير نشط" };
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+if (auth.user && auth.user.role === "cashier") location.replace("satamoni-pos.html");
+if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
+if (auth.user && auth.user.role === "driver") location.replace("satamoni-driver-app.html");
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.getElementById("newCreateLogin").addEventListener("change", (e) => {
+  document.getElementById("loginFieldsRow").style.display = e.target.checked ? "flex" : "none";
+});
+
+function currentBranchId() {
+  return auth.user.role === "admin" ? document.getElementById("branchSelect").value : auth.user.branchId;
+}
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  if (auth.user.role === "admin") {
+    const branches = await api("/api/branches");
+    const sel = document.getElementById("branchSelect");
+    sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    sel.style.display = "block";
+    sel.onchange = loadDrivers;
+  }
+  await loadDrivers();
+}
+
+async function loadDrivers() {
+  const branchId = currentBranchId();
+  if (!branchId) return;
+  const body = document.getElementById("driversBody");
+  body.innerHTML = `<tr><td colspan="6">...جاري التحميل</td></tr>`;
+  try {
+    const drivers = await api(`/api/drivers?branchId=${branchId}`);
+    body.innerHTML = drivers.map(d => `
+      <tr>
+        <td>${d.driver_code || "—"}</td>
+        <td>${d.name}</td>
+        <td>${d.phone || "—"}</td>
+        <td>
+          <select class="statusSelect" data-id="${d.id}">
+            ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}" ${d.status === v ? "selected" : ""}>${l}</option>`).join("")}
+          </select>
+        </td>
+        <td><span class="pill ${d.is_active ? "yes" : "no"}">${d.is_active ? "نشط" : "متوقف"}</span></td>
+        <td>${d.login_email ? `<span class="pill yes">${d.login_email}</span>` : `<span class="pill no">مفيش</span>`}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6">لسه مفيش سائقين مسجّلين لهذا الفرع</td></tr>`;
+    body.querySelectorAll(".statusSelect").forEach(sel => {
+      sel.onchange = async () => {
+        try {
+          await api(`/api/drivers/${sel.dataset.id}`, { method: "PATCH", body: JSON.stringify({ status: sel.value }) });
+        } catch (e) { alert(e.message); loadDrivers(); }
+      };
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6">${e.message}</td></tr>`;
+  }
+}
+
+document.getElementById("createDriverBtn").onclick = async () => {
+  const errBox = document.getElementById("createErr");
+  const okBox = document.getElementById("createOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const name = document.getElementById("newName").value.trim();
+  const phone = document.getElementById("newPhone").value.trim();
+  if (!name) return (errBox.textContent = "لازم اسم السائق");
+  const payload = { name, phone: phone || undefined, branchId: currentBranchId() };
+  if (document.getElementById("newCreateLogin").checked) {
+    const email = document.getElementById("newLoginEmail").value.trim();
+    const password = document.getElementById("newLoginPassword").value;
+    if (!email || !password) return (errBox.textContent = "لازم بريد إلكتروني وكلمة مرور لتسجيل الدخول");
+    payload.createLogin = { email, password };
+  }
+  try {
+    await api("/api/drivers", { method: "POST", body: JSON.stringify(payload) });
+    okBox.textContent = "تم إضافة السائق";
+    document.getElementById("newName").value = "";
+    document.getElementById("newPhone").value = "";
+    document.getElementById("newLoginEmail").value = "";
+    document.getElementById("newLoginPassword").value = "";
+    document.getElementById("newCreateLogin").checked = false;
+    document.getElementById("loginFieldsRow").style.display = "none";
+    loadDrivers();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

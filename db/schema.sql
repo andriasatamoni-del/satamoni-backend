@@ -35,7 +35,9 @@ CREATE TABLE users (
   name          TEXT NOT NULL,
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role          TEXT NOT NULL CHECK (role IN ('admin', 'branch_manager', 'accountant', 'cashier', 'callcenter')),
+  -- المرحلة 7F: 'driver' بيدوّل السائق يسجّل دخول فعلي (بدل ما يكون اسم نص حر في orders.driver_name) -
+  -- صلاحياته مقفولة جدًا (middleware/permissions.js): طلباته المُسندة له بس، من غير أي وصول لمحاسبة/مخزون/فروع تانية
+  role          TEXT NOT NULL CHECK (role IN ('admin', 'branch_manager', 'accountant', 'cashier', 'callcenter', 'driver')),
   is_active     BOOLEAN DEFAULT TRUE,
   pin_hash      TEXT, -- PIN قصير (4-6 أرقام) لمدير الفرع/الأدمن بس - لموافقة الخصومات الكبيرة واسترجاع الطلبات
                        -- من غير ما يسجلوا خروج ودخول تاني على جهاز الكاشير
@@ -59,7 +61,12 @@ CREATE TABLE pos_settings (
   shift_variance_review_threshold_egp NUMERIC NOT NULL DEFAULT 100,
   -- هل فتح شيفت شرط لتسجيل بيع POS؟ افتراضيًا false عمدًا (توافق مع كل البيانات/الاختبارات الحالية اللي
   -- بتسجل بيع POS من غير مفهوم شيفت خالص) - فرع/منشأة تحب تفعّل الإلزام تقدر تغيّرها من الإعدادات
-  require_shift_for_pos_sales        BOOLEAN NOT NULL DEFAULT FALSE
+  require_shift_for_pos_sales        BOOLEAN NOT NULL DEFAULT FALSE,
+  -- المرحلة 7F: عتبات فرق تسليم كاش السائق - نفس فلسفة عتبات فرق الشيفت فوق بالظبط، بس مستقلة عنها
+  -- لأن حجم المبالغ اللي سائق ممكن يحصّلها في دفعة (يوم كامل من طلبات كاش عند التسليم) غالبًا أكبر من
+  -- درج كاشير واحد، فالحد المقبول للفرق منطقي يكون مختلف
+  driver_settlement_variance_ack_threshold_egp    NUMERIC NOT NULL DEFAULT 30,
+  driver_settlement_variance_review_threshold_egp NUMERIC NOT NULL DEFAULT 150
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -205,7 +212,26 @@ CREATE TABLE orders (
   -- لطلبات الموقع، أو أي طلب اتسجّل من غير شيفت شغّال (الشيفت مش شرط إلزامي افتراضيًا - pos_settings.
   -- require_shift_for_pos_sales). بيتحدد لحظة الإنشاء بس ومبيتغيّرش بعد كده حتى لو الشيفت اتقفل بعدين.
   -- pos_shifts معرّف بعد كدة في الملف - الـFK بيتضاف بـALTER TABLE هناك (زي expenses.supplier_id بالظبط)
-  shift_id          INTEGER
+  shift_id          INTEGER,
+  -- المرحلة 7F: تحكم السائق/التوصيل - drivers و driver_settlements معرّفين بعد كدة في الملف، الـFKs
+  -- بتتضاف بـALTER TABLE هناك (نفس نمط shift_id فوق بالظبط). dispatch_status منفصل عمدًا عن status
+  -- (نفس فلسفة payment_status المنفصلة عن status) - NULL لأي طلب مش دليفري، وبيتفعّل بس لما orderType='delivery'
+  driver_id             INTEGER,
+  assigned_by           INTEGER REFERENCES users(id),
+  assigned_at           TIMESTAMPTZ,
+  dispatch_status       TEXT CHECK (dispatch_status IS NULL OR dispatch_status IN
+                           ('UNASSIGNED', 'ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED', 'RETURNED')),
+  delivered_at          TIMESTAMPTZ,
+  delivery_failed_at    TIMESTAMPTZ,
+  delivery_failure_reason TEXT CHECK (delivery_failure_reason IS NULL OR delivery_failure_reason IN
+                             ('CUSTOMER_UNREACHABLE', 'CUSTOMER_REFUSED', 'WRONG_ADDRESS', 'CLOSED_LOCATION', 'OTHER')),
+  -- الكاش اللي السائق قال إنه حصّله فعليًا وقت التسليم (COD بس) - expected هو order.total نفسه، الفرق
+  -- بيتسجل هنا (collected_amount - total) وقت التسليم مباشرة، مش محسوب لاحقًا
+  collected_amount      NUMERIC,
+  collection_variance    NUMERIC,
+  -- دفعة التسوية اللي الطلب ده اتضم لها (لو اتسلّم كاش) - بمجرد ما يتحدد، الطلب مبيظهرش تاني في
+  -- "المعلّق للتسوية" لنفس السائق (نفس فلسفة shift_id: بيتحدد مرة واحدة ومبيتغيّرش بعد كده)
+  driver_settlement_id  INTEGER
 );
 CREATE UNIQUE INDEX idx_orders_idempotency_key ON orders(idempotency_key) WHERE idempotency_key IS NOT NULL;
 -- المرحلة 5 (تدقيق الجاهزية للإنتاج): orders مالهاش أي index على created_at خالص قبل كده - قائمة
@@ -354,6 +380,71 @@ CREATE TABLE branch_days (
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (branch_id, business_date)
 );
+
+-- ============================================================
+-- المرحلة 7F: السائقين وتحكم التوصيل
+-- ============================================================
+-- سجل السائق - user_id اختياري عمدًا (سائق ممكن يشتغل من غير تسجيل دخول فعلي لو الفرع مش محتاج
+-- الشاشة المخصصة له؛ راجع docs/DRIVER-OPERATIONS.md للقرار الكامل) - لو موجود، ده حساب الدخول
+-- بتاعه (role='driver'). employee_id اختياري كمان - ربط لسجل الموارد البشرية للمرتب بس، من غير
+-- تكرار أي بيانات (employees هو مصدر الحقيقة لبيانات الموظف، الجدول ده بس معلومات التوصيل التشغيلية)
+CREATE TABLE drivers (
+  id            SERIAL PRIMARY KEY,
+  user_id       INTEGER REFERENCES users(id) UNIQUE,
+  -- employees معرّف بعد كدة في الملف بكتير (قسم الموارد البشرية) - الـFK بيتضاف بـALTER TABLE هناك
+  -- (زي expenses.supplier_id بالظبط)
+  employee_id   INTEGER,
+  branch_id     INTEGER NOT NULL REFERENCES branches(id),
+  driver_code   TEXT UNIQUE,
+  name          TEXT NOT NULL,
+  phone         TEXT,
+  status        TEXT NOT NULL DEFAULT 'AVAILABLE'
+                  CHECK (status IN ('AVAILABLE', 'BUSY', 'OFF_DUTY', 'SUSPENDED', 'INACTIVE')),
+  is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE SEQUENCE driver_code_seq START 1;
+CREATE INDEX idx_drivers_branch ON drivers(branch_id);
+CREATE INDEX idx_drivers_status ON drivers(branch_id, status);
+
+ALTER TABLE orders ADD CONSTRAINT fk_orders_driver FOREIGN KEY (driver_id) REFERENCES drivers(id);
+CREATE INDEX idx_orders_driver_id ON orders(driver_id) WHERE driver_id IS NOT NULL;
+CREATE INDEX idx_orders_dispatch_status ON orders(branch_id, dispatch_status) WHERE dispatch_status IS NOT NULL;
+
+-- تسوية/تسليم كاش السائق - دفعة واحدة من كل الطلبات المُسلَّمة (DELIVERED) اللي لسه معلّقة تسوية لسائق
+-- معيّن. مفيش "شيفت سائق" منفصل عمدًا (قرار موثّق في docs/DRIVER-OPERATIONS.md) - فترة المحاسبة هي
+-- ببساطة "من آخر تسوية لحد دلوقتي"، محسوبة حيّة من orders WHERE driver_id=X AND dispatch_status='DELIVERED'
+-- AND driver_settlement_id IS NULL، وبتتجمّد هنا لحظة التسوية (زي pos_shifts.expected_cash بالظبط)
+CREATE TABLE driver_settlements (
+  id                     SERIAL PRIMARY KEY,
+  driver_id              INTEGER NOT NULL REFERENCES drivers(id),
+  branch_id              INTEGER NOT NULL REFERENCES branches(id),
+  settled_by             INTEGER REFERENCES users(id),
+  settled_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  order_count            INTEGER NOT NULL DEFAULT 0,
+  cod_expected           NUMERIC NOT NULL DEFAULT 0,  -- مجموع total الطلبات المُسلَّمة كاش في الدفعة
+  cod_collected          NUMERIC NOT NULL DEFAULT 0,  -- مجموع اللي السائق سجّله إنه حصّله فعليًا لكل طلب وقت التسليم
+  cod_variance           NUMERIC NOT NULL DEFAULT 0,  -- cod_collected - cod_expected (معلوماتي - مسجّل أصلًا لكل طلب على حدة)
+  delivery_fees_total    NUMERIC NOT NULL DEFAULT 0,  -- معلوماتي: جزء رسوم التوصيل من cod_collected
+  expected_handover      NUMERIC NOT NULL DEFAULT 0,  -- = cod_collected (اللي المفروض السائق يسلّمه للفرع)
+  actual_handover        NUMERIC,
+  handover_variance      NUMERIC,                      -- actual_handover - expected_handover (ده اللي بيتحكم في المراجعة تحت)
+  variance_status        TEXT NOT NULL DEFAULT 'NONE'
+                            CHECK (variance_status IN ('NONE', 'PENDING_REVIEW', 'ACKNOWLEDGED', 'APPROVED')),
+  variance_reviewed_by   INTEGER REFERENCES users(id),
+  variance_reviewed_at   TIMESTAMPTZ,
+  variance_review_notes  TEXT,
+  notes                  TEXT,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_driver_settlements_driver ON driver_settlements(driver_id, settled_at);
+CREATE INDEX idx_driver_settlements_branch ON driver_settlements(branch_id, settled_at);
+CREATE INDEX idx_driver_settlements_variance_status ON driver_settlements(branch_id, variance_status) WHERE variance_status = 'PENDING_REVIEW';
+
+ALTER TABLE orders ADD CONSTRAINT fk_orders_driver_settlement FOREIGN KEY (driver_settlement_id) REFERENCES driver_settlements(id);
+CREATE INDEX idx_orders_driver_settlement_id ON orders(driver_settlement_id) WHERE driver_settlement_id IS NOT NULL;
 
 -- ---------------- المصروفات ----------------
 -- بنود مصروفات ثابتة (تكويد) - الأدمن بس بيضيف/يعطّل بند، وأي حد بيسجل مصروف لازم يختار من الليستة
@@ -1117,6 +1208,9 @@ CREATE INDEX idx_employees_department ON employees(department);
 
 -- مصدر أكواد الموظفين (EMP-000001...) - نفس أسلوب journal_entry_number_seq بالظبط
 CREATE SEQUENCE employee_code_seq START 1;
+
+-- المرحلة 7F: drivers.employee_id معرّف قبل كدة في الملف بكتير - الـFK هنا (زي expenses.supplier_id بالظبط)
+ALTER TABLE drivers ADD CONSTRAINT fk_drivers_employee FOREIGN KEY (employee_id) REFERENCES employees(id);
 
 -- Backfill لموظفين قبل المرحلة 4D: كود لكل موظف مالوش كود لسه، وحالة status متسقة مع is_active الحالي
 -- (is_active=FALSE قبل كده معناها الغالب "خلص شغله" - أقرب تفسير محافظ لـ'terminated'؛ لو غلط لموظف معيّن

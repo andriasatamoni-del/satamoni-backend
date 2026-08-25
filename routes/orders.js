@@ -271,18 +271,25 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       }
     }
 
+    // المرحلة 7F: dispatch_status بيتفعّل بس لطلبات الدليفري - UNASSIGNED من لحظة الإنشاء (لسه مفيش
+    // سائق متعيّن)، NULL لأي نوع طلب تاني (نفس فلسفة payment_status المنفصلة عن status، مش قيمة إضافية
+    // على status نفسه)
+    const initialDispatchStatus = orderType === "delivery" ? "UNASSIGNED" : null;
+
     const orderResult = await client.query(
       `INSERT INTO orders
         (branch_id, source, order_type, table_number, delivery_area_id,
          address_details, customer_name, customer_phone, payment_method_id,
          created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status,
-         loyalty_points_earned, loyalty_points_redeemed, loyalty_redeem_value, idempotency_key, shift_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+         loyalty_points_earned, loyalty_points_redeemed, loyalty_redeem_value, idempotency_key, shift_id,
+         dispatch_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, customerName, customerPhone, paymentMethodId,
        createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus,
-       loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, idempotencyKey || null, shiftId]
+       loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, idempotencyKey || null, shiftId,
+       initialDispatchStatus]
     );
     const orderId = orderResult.rows[0].id;
 
@@ -775,9 +782,17 @@ router.post(
         await client.query("ROLLBACK");
         return res.status(403).json({ error: "معندكش صلاحية تسترجع طلب فرع تاني" });
       }
-      if (order.status !== "completed" || order.voided) {
+      // المرحلة 7F: نفس الاسترجاع (عكس مخزون + نقاط ولاء + قيد محاسبي) بيتقبل كمان لطلب دليفري فشل
+      // تسليمه فعليًا وبيرجع للفرع (dispatch_status='FAILED') - قبل ما يوصل حالة 'completed' أصلًا.
+      // الأثر المطلوب عكسه (خصم مخزون، قيد بيع) اتسجل وقت إنشاء الطلب مش وقت التسليم، فمينفعش نستنى
+      // لحد ما يوصل completed اللي مش هيوصلها أبدًا في الحالة دي - نفس منطق العكس بالظبط، مش منطق جديد
+      const isVoidableCompleted = order.status === "completed";
+      const isVoidableFailedDelivery = order.status === "out_for_delivery" && order.dispatch_status === "FAILED";
+      if ((!isVoidableCompleted && !isVoidableFailedDelivery) || order.voided) {
         await client.query("ROLLBACK");
-        return res.status(400).json({ error: "الاسترجاع (Void) بس للطلبات المكتملة اللي لسه ما اتسترجعتش" });
+        return res.status(400).json({
+          error: "الاسترجاع (Void) بس للطلبات المكتملة، أو طلبات دليفري فشل تسليمها وترجعت للفرع، اللي لسه ما اتسترجعتش",
+        });
       }
 
       let finalApproverId;
@@ -799,7 +814,8 @@ router.post(
       // بحالته الجديدة (ملغي/مسترجع) عشان الإيرادات المجمّعة مركزيًا متفضلش شايلة بيع اتلغى فعليًا
       await client.query(
         `UPDATE orders SET status = 'cancelled', voided = TRUE, voided_by = $1, voided_at = now(),
-         void_reason = $2, synced_at = NULL
+         void_reason = $2, synced_at = NULL,
+         dispatch_status = CASE WHEN dispatch_status = 'FAILED' THEN 'RETURNED' ELSE dispatch_status END
          WHERE id = $3`,
         [finalApproverId, reason, order.id]
       );

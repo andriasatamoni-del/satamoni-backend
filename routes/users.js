@@ -34,7 +34,7 @@ router.get("/", requireRole("admin", "branch_manager"), async (req, res) => {
 // POST /api/users - إنشاء موظف جديد (أدمن بس)
 router.post("/", requireRole("admin"), async (req, res) => {
   const { name, email, password, role, branchId } = req.body;
-  const validRoles = ["admin", "branch_manager", "accountant", "cashier", "callcenter"];
+  const validRoles = ["admin", "branch_manager", "accountant", "cashier", "callcenter", "driver"];
   const branchFreeRoles = ["admin", "accountant", "callcenter"];
   if (!name || !email || !password || !validRoles.includes(role)) {
     return res.status(400).json({ error: "بيانات ناقصة أو الدور غير معروف" });

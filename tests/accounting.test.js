@@ -577,7 +577,11 @@ describe("12) تقارير المحاسبة المبنية على الدفتر",
     const res = await request(app).get("/api/reports/trial-balance").set(authed(adminToken));
     expect(res.status).toBe(200);
     expect(res.body.balanced).toBe(true);
-    expect(res.body.totalDebit).toBe(res.body.totalCredit);
+    // المرحلة 7F: toBeCloseTo بدل toBe - المجموعين بيترحّلوا من جمع أرقام NUMERIC كتير عبر كل قيود
+    // النظام (كل ملفات الاختبار مع بعض)، وده عرضة لانحراف تقريب float عادي (فرق فلسات جزء من مليون
+    // جنيه) حتى لو كل قيد فردي متزن تمامًا فعليًا (postJournalEntry بيتأكد من كده وقت الإدخال نفسه) -
+    // res.body.balanced فوق هو نفسه بيستخدم tolerance مماثل من السيرفر، فمينفعش نطلب هنا دقة أعلى منه
+    expect(res.body.totalDebit).toBeCloseTo(res.body.totalCredit, 6);
   });
 
   test("تقرير أرصدة الموردين وأعمار الديون بيرجعوا 200", async () => {

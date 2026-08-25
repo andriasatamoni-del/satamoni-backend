@@ -391,6 +391,16 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// المرحلة 7F: سائقين مسجّلين فعليًا بدل الاسم الحر - بيتحمّلوا مرة واحدة لكل فرع ويتخزّنوا هنا
+const driversCache = {};
+async function driversForBranch(branchId) {
+  if (!driversCache[branchId]) {
+    try { driversCache[branchId] = await api(`/api/drivers?branchId=${branchId}`); }
+    catch (e) { driversCache[branchId] = []; }
+  }
+  return driversCache[branchId];
+}
+
 document.getElementById("loginBtn").onclick = async () => {
   const email = document.getElementById("loginEmail").value.trim();
   const password = document.getElementById("loginPassword").value;
@@ -1042,6 +1052,9 @@ function renderOrderActions(card, order) {
     btns.push(`<button class="danger" data-oact="cancel">❌ إلغاء</button>`);
   } else if (order.status === "out_for_delivery") {
     btns.push(`<button class="primary" data-oact="complete">✅ رجع الطيار / اتسلم</button>`);
+    if (order.order_type === "delivery" && order.dispatch_status === "OUT_FOR_DELIVERY") {
+      btns.push(`<button data-oact="failed">⚠️ فشل التسليم</button>`);
+    }
     btns.push(`<button class="danger" data-oact="cancel">❌ إلغاء</button>`);
   }
   if (order.payment_status === "pending_collection" && order.status !== "cancelled") {
@@ -1061,11 +1074,44 @@ async function handleOrderAction(order, act) {
     if (act === "ticket") { printOrderKitchenTicket(order); return; }
     if (act === "edit") { openEditModal(order); return; }
     if (act === "dispatch") {
-      const driverName = prompt("اسم الطيار:");
-      if (!driverName) return;
-      await api(`/api/orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: "out_for_delivery", driverName }) });
+      // المرحلة 7F: سائق مسجّل فعليًا بدل اسم حر - تعيين + خروج للتوصيل في خطوة واحدة (نفس تجربة
+      // الاستخدام القديمة، بس دلوقتي مرتبط بسجل سائق حقيقي قابل للمساءلة عن الكاش وقت التسليم)
+      const drivers = await driversForBranch(order.branch_id);
+      if (drivers.length === 0) {
+        alert("مفيش سائقين مسجّلين لفرع الطلب ده - سجّلهم الأول من شاشة إدارة السائقين");
+        return;
+      }
+      const listText = drivers.map((d, i) => `${i + 1}) ${d.name}${d.phone ? " - " + d.phone : ""}`).join("\n");
+      const choice = prompt(`اختار رقم السائق:\n${listText}`);
+      if (!choice) return;
+      const idx = Number(choice) - 1;
+      if (!Number.isInteger(idx) || !drivers[idx]) { alert("اختيار غير صحيح"); return; }
+      await api(`/api/deliveries/${order.id}/assign`, { method: "POST", body: JSON.stringify({ driverId: drivers[idx].id }) });
+      await api(`/api/deliveries/${order.id}/out-for-delivery`, { method: "POST" });
     } else if (act === "complete") {
-      await api(`/api/orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) });
+      if (order.order_type === "delivery" && order.dispatch_status === "OUT_FOR_DELIVERY") {
+        let body = {};
+        if (order.payment_status === "pending_collection") {
+          const input = prompt(`المبلغ اللي الطيار حصّله فعليًا من العميل (الإجمالي ${order.total} ج.م):`, order.total);
+          if (input === null) return;
+          body = { collectedAmount: Number(input) };
+        }
+        await api(`/api/deliveries/${order.id}/delivered`, { method: "POST", body: JSON.stringify(body) });
+      } else {
+        await api(`/api/orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) });
+      }
+    } else if (act === "failed") {
+      const reasons = [
+        ["CUSTOMER_UNREACHABLE", "العميل مش رادّ"], ["CUSTOMER_REFUSED", "العميل رفض الاستلام"],
+        ["WRONG_ADDRESS", "العنوان غلط"], ["CLOSED_LOCATION", "المكان مقفول"], ["OTHER", "سبب تاني"],
+      ];
+      const listText = reasons.map((r, i) => `${i + 1}) ${r[1]}`).join("\n");
+      const choice = prompt(`سبب فشل تسليم الطلب #${order.id}:\n${listText}`);
+      if (!choice) return;
+      const idx = Number(choice) - 1;
+      if (!Number.isInteger(idx) || !reasons[idx]) { alert("اختيار غير صحيح"); return; }
+      await api(`/api/deliveries/${order.id}/failed`, { method: "POST", body: JSON.stringify({ reason: reasons[idx][0] }) });
+      alert("اتسجّل فشل التسليم. لما الطيار يرجع الفرع، استخدم زرار الاسترجاع (Void) لو الطلب هيتلغي، أو أعد الجدولة من شاشة لوحة التوزيع لو هيتسلّم تاني.");
     } else if (act === "cancel") {
       if (!confirm(`متأكد من إلغاء الطلب #${order.id}؟`)) return;
       await api(`/api/orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) });
