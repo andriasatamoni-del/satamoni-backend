@@ -359,7 +359,10 @@ CREATE TABLE pos_shifts (
   other_sales           NUMERIC NOT NULL DEFAULT 0,    -- آجل/محفظة أو أي طريقة دفع مش نقدي/كارت
   cash_refunds          NUMERIC NOT NULL DEFAULT 0,    -- استرجاعات نقدية اتعملت أثناء الشيفت ده (لطلبات اتباعت فيه أو قبله)
   discounts_total       NUMERIC NOT NULL DEFAULT 0,    -- معلوماتي بس - مش جزء من معادلة الكاش (total الطلب أصلًا بعد الخصم)
-  cash_expenses_total   NUMERIC NOT NULL DEFAULT 0,    -- مصروفات نقدية اتقفلت (POSTED) أثناء الشيفت
+  cash_expenses_total   NUMERIC NOT NULL DEFAULT 0,    -- مصروفات نقدية اتسجلت (SUBMITTED فأعلى) أثناء الشيفت
+  -- المرحلة 7K: مشتريات نقدية اتسجلت من الكاشير أثناء الشيفت (أي حالة عدا REJECTED - الفلوس خرجت من
+  -- الدرج فعليًا وقت التسجيل، بغض النظر عن مراجعة المدير/المحاسب اللاحقة)
+  cash_purchases_total  NUMERIC NOT NULL DEFAULT 0,
   order_count           INTEGER NOT NULL DEFAULT 0,
   void_count            INTEGER NOT NULL DEFAULT 0,
   -- مراجعة فرق الكاش - منفصلة عن قفل الشيفت نفسه: الكاشير يقفل شيفته ويمشي، والمدير يراجع الفرق بعدين
@@ -499,6 +502,9 @@ CREATE TABLE expenses (
   status            TEXT NOT NULL DEFAULT 'POSTED'
                     CHECK (status IN ('DRAFT', 'SUBMITTED', 'APPROVED', 'POSTED', 'CANCELLED')),
   created_by        INTEGER REFERENCES users(id),
+  -- المرحلة 7K: وقت التسجيل الفعلي - كان ناقص قبل كده (الجدول كان فيه posted_at بس، NULL لحد ما يترحّل).
+  -- ضروري عشان مصروفات الكاشير (status='SUBMITTED' لسه مش مرحّلة) تتحسب صح في نافذة كاش الشيفت
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   approved_by       INTEGER REFERENCES users(id),
   posted_by         INTEGER REFERENCES users(id),
   posted_at         TIMESTAMPTZ,
@@ -523,9 +529,19 @@ CREATE TABLE purchases (
   amount        NUMERIC NOT NULL,
   from_kitchen  BOOLEAN DEFAULT FALSE, -- مشتريات من سنتر كيتشن بالتكلفة
   notes         TEXT,
+  -- المرحلة 7K: مشتريات الكاشير النقدية بتدخل هنا بحالة PENDING - محتاجة مراجعة مدير/محاسب (CONFIRMED)
+  -- قبل ما تتحسب رسميًا في التقارير المالية. مشتريات المدير/المحاسب المباشرة (زي قبل كده بالظبط) بتدخل
+  -- CONFIRMED على طول - نفس السلوك القديم من غير أي تغيير
+  status            TEXT NOT NULL DEFAULT 'CONFIRMED' CHECK (status IN ('PENDING', 'CONFIRMED', 'REJECTED')),
+  created_by        INTEGER REFERENCES users(id),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reviewed_by       INTEGER REFERENCES users(id),
+  reviewed_at       TIMESTAMPTZ,
+  rejection_reason  TEXT,
   sync_uuid     UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   synced_at     TIMESTAMPTZ
 );
+CREATE INDEX idx_purchases_status ON purchases(status);
 
 -- ---------------- مديونية الفروع للمخزن الرئيسي (كمورد) ----------------
 CREATE TABLE supplier_ledger_entries (

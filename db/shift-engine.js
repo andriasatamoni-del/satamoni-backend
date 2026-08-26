@@ -42,12 +42,28 @@ async function computeShiftFinancials(client, { shiftId, branchId, openedAt, toT
     [shiftId, branchId, openedAt, toTs]
   );
 
+  // المرحلة 7K: الحالات هنا اتوسّعت من POSTED بس لـSUBMITTED/APPROVED/POSTED - مصروف الكاشير النقدي
+  // بيتسجل SUBMITTED (لسه محتاج مراجعة مدير/محاسب عبر /:id/review)، لكن الفلوس بتكون خرجت من الدرج
+  // فعليًا وقت التسجيل نفسه، مش وقت المراجعة - فمينفعش ننتظر الترحيل المحاسبي عشان نحسبها هنا. توقيت
+  // النافذة بقى COALESCE(posted_at, created_at) عشان لسه المصروف مش مرحّل (posted_at لسه NULL) وقتها
+  // بيتحسب بتوقيت التسجيل الفعلي created_at بدل ما يتستبعد بالغلط
   const expensesRes = await client.query(
     `SELECT COALESCE(SUM(e.amount), 0) AS cash_expenses_total
      FROM expenses e
      JOIN payment_methods pm ON pm.id = e.payment_method_id
-     WHERE e.branch_id = $1 AND e.status = 'POSTED' AND pm.kind = 'cash'
-       AND e.posted_at >= $2 AND e.posted_at <= $3`,
+     WHERE e.branch_id = $1 AND e.status IN ('SUBMITTED', 'APPROVED', 'POSTED') AND pm.kind = 'cash'
+       AND COALESCE(e.posted_at, e.created_at) >= $2 AND COALESCE(e.posted_at, e.created_at) <= $3`,
+    [branchId, openedAt, toTs]
+  );
+
+  // المرحلة 7K: مشتريات نقدية اتسجلت من الكاشير أثناء الشيفت - جدول purchases مالوش مفهوم "طريقة دفع"
+  // خالص (كل سطر فيه أصلًا كاش نقدي بالتعريف)، وأي حالة عدا REJECTED بتتحسب هنا (حتى PENDING لسه
+  // منتظرة مراجعة) لأن الفلوس خرجت من الدرج فعليًا وقت التسجيل بغض النظر عن مراجعة المدير/المحاسب اللاحقة
+  const purchasesRes = await client.query(
+    `SELECT COALESCE(SUM(p.amount), 0) AS cash_purchases_total
+     FROM purchases p
+     WHERE p.branch_id = $1 AND p.status <> 'REJECTED'
+       AND p.created_at >= $2 AND p.created_at <= $3`,
     [branchId, openedAt, toTs]
   );
 
@@ -60,6 +76,7 @@ async function computeShiftFinancials(client, { shiftId, branchId, openedAt, toT
     cashRefunds: Number(refundsRes.rows[0].cash_refunds),
     voidCount: Number(refundsRes.rows[0].void_count),
     cashExpensesTotal: Number(expensesRes.rows[0].cash_expenses_total),
+    cashPurchasesTotal: Number(purchasesRes.rows[0].cash_purchases_total),
   };
 }
 
@@ -67,8 +84,8 @@ async function computeShiftFinancials(client, { shiftId, branchId, openedAt, toT
 // ملحوظة: "سحوبات كاش" و"حركات كاش معتمدة تانية" مذكورة في مواصفة المرحلة دي بس معندهاش أي تمثيل
 // في نموذج بيانات ساتاموني الحالي (مفيش جدول/مفهوم "سحب كاش" مستقل) - اتسجّلت كقيد معروف في التقرير
 // النهائي بدل ما تتخترع كيانات جديدة من غير أساس حقيقي في النظام
-function calcExpectedCash({ openingCash, cashSales, cashRefunds, cashExpensesTotal }) {
-  return Number(openingCash) + cashSales - cashRefunds - cashExpensesTotal;
+function calcExpectedCash({ openingCash, cashSales, cashRefunds, cashExpensesTotal, cashPurchasesTotal = 0 }) {
+  return Number(openingCash) + cashSales - cashRefunds - cashExpensesTotal - cashPurchasesTotal;
 }
 
 function classifyVariance(variance, { ackThreshold, reviewThreshold }) {
@@ -119,6 +136,7 @@ async function previewExpectedCash(client, shift) {
   const expectedCash = calcExpectedCash({
     openingCash: shift.opening_cash, cashSales: financials.cashSales,
     cashRefunds: financials.cashRefunds, cashExpensesTotal: financials.cashExpensesTotal,
+    cashPurchasesTotal: financials.cashPurchasesTotal,
   });
   return { ...financials, openingCash: Number(shift.opening_cash), expectedCash };
 }
@@ -133,6 +151,7 @@ async function closeShift(client, { shift, actualCash, closingNotes, closedBy, t
   const expectedCash = calcExpectedCash({
     openingCash: shift.opening_cash, cashSales: financials.cashSales,
     cashRefunds: financials.cashRefunds, cashExpensesTotal: financials.cashExpensesTotal,
+    cashPurchasesTotal: financials.cashPurchasesTotal,
   });
   const cashVariance = Number(actualCash) - expectedCash;
   const varianceStatus = classifyVariance(cashVariance, thresholds);
@@ -144,14 +163,14 @@ async function closeShift(client, { shift, actualCash, closingNotes, closedBy, t
        cash_variance = $6, closing_notes = $7,
        cash_sales = $8, card_sales = $9, other_sales = $10, cash_refunds = $11,
        discounts_total = $12, cash_expenses_total = $13, order_count = $14, void_count = $15,
-       variance_status = $16, updated_at = now()
-     WHERE id = $17
+       variance_status = $16, cash_purchases_total = $17, updated_at = now()
+     WHERE id = $18
      RETURNING *`,
     [
       shiftStatus, closedAt, closedBy, actualCash, expectedCash, cashVariance, closingNotes || null,
       financials.cashSales, financials.cardSales, financials.otherSales, financials.cashRefunds,
       financials.discountsTotal, financials.cashExpensesTotal, financials.orderCount, financials.voidCount,
-      varianceStatus, shift.id,
+      varianceStatus, financials.cashPurchasesTotal, shift.id,
     ]
   );
   await logAudit(client, {
@@ -211,6 +230,7 @@ async function forceCloseShift(client, { shift, actualCash, closingNotes, closed
   const expectedCash = calcExpectedCash({
     openingCash: shift.opening_cash, cashSales: financials.cashSales,
     cashRefunds: financials.cashRefunds, cashExpensesTotal: financials.cashExpensesTotal,
+    cashPurchasesTotal: financials.cashPurchasesTotal,
   });
   const actualCashVal = actualCash === null || actualCash === undefined ? null : Number(actualCash);
   const cashVariance = actualCashVal === null ? null : actualCashVal - expectedCash;
@@ -222,14 +242,14 @@ async function forceCloseShift(client, { shift, actualCash, closingNotes, closed
        cash_variance = $5, closing_notes = $6,
        cash_sales = $7, card_sales = $8, other_sales = $9, cash_refunds = $10,
        discounts_total = $11, cash_expenses_total = $12, order_count = $13, void_count = $14,
-       variance_status = $15, updated_at = now()
-     WHERE id = $16
+       variance_status = $15, cash_purchases_total = $16, updated_at = now()
+     WHERE id = $17
      RETURNING *`,
     [
       closedAt, closedBy, actualCashVal, expectedCash, cashVariance, closingNotes || null,
       financials.cashSales, financials.cardSales, financials.otherSales, financials.cashRefunds,
       financials.discountsTotal, financials.cashExpensesTotal, financials.orderCount, financials.voidCount,
-      varianceStatus, shift.id,
+      varianceStatus, financials.cashPurchasesTotal, shift.id,
     ]
   );
   await logAudit(client, {

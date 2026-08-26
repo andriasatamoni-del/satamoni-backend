@@ -48,15 +48,21 @@ async function postExpenseJournalEntry(client, expense, userId) {
 
 // ---------------- بنود المصروفات (تكويد) ----------------
 
-// GET /api/expenses/categories - كل البنود (نشطة وغير نشطة) - أي حد يقدر يسجل مصروف محتاج يشوفها في الفورم
-router.get("/categories", requireAuth, canManage, async (req, res) => {
-  try {
-    const result = await pool.query("SELECT * FROM expense_categories ORDER BY name");
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+// GET /api/expenses/categories - كل البنود (نشطة وغير نشطة) - أي حد يقدر يسجل مصروف محتاج يشوفها في
+// الفورم، شامل الكاشير من المرحلة 7K (محتاجها عشان يختار بند وهو بيسجل مصروف نقدي)
+router.get(
+  "/categories",
+  requireAuth,
+  requirePermission("expenses.view", "expenses.create", "expenses.create_own_daily"),
+  async (req, res) => {
+    try {
+      const result = await pool.query("SELECT * FROM expense_categories ORDER BY name");
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   }
-});
+);
 
 // POST /api/expenses/categories - إضافة بند جديد (أدمن بس - عشان محدش يضيف بنود عشوائية)
 router.post("/categories", requireAuth, requireRole("admin"), async (req, res) => {
@@ -103,10 +109,14 @@ router.patch("/categories/:id", requireAuth, requireRole("admin"), async (req, r
   }
 });
 
-// GET /api/expenses?branchId=&date=&status=
-router.get("/", requireAuth, canManage, async (req, res) => {
+// GET /api/expenses?branchId=&date=&status= - الكاشير (المرحلة 7K) يشوف مصروفات فرعه بس، زي مدير الفرع بالظبط
+router.get(
+  "/",
+  requireAuth,
+  requirePermission("expenses.view", "expenses.view_own_daily"),
+  async (req, res) => {
   let { branchId, date, status } = req.query;
-  if (req.user.role === "branch_manager") {
+  if (req.user.role === "branch_manager" || req.user.role === "cashier") {
     if (branchId && !assertOwnBranch(req.user, branchId)) {
       return res.status(403).json({ error: "معندكش صلاحية تشوف مصروفات فرع تاني" });
     }
@@ -127,41 +137,66 @@ router.get("/", requireAuth, canManage, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+  }
+);
 
 // GET /api/expenses/:id - تفاصيل مصروف واحد
-router.get("/:id", requireAuth, canManage, async (req, res) => {
+router.get(
+  "/:id",
+  requireAuth,
+  requirePermission("expenses.view", "expenses.view_own_daily"),
+  async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT e.*, ec.name AS category FROM expenses e JOIN expense_categories ec ON ec.id = e.category_id WHERE e.id = $1`,
       [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "المصروف مش موجود" });
-    if (req.user.role === "branch_manager" && !assertOwnBranch(req.user, result.rows[0].branch_id)) {
+    if ((req.user.role === "branch_manager" || req.user.role === "cashier") && !assertOwnBranch(req.user, result.rows[0].branch_id)) {
       return res.status(403).json({ error: "معندكش صلاحية تشوف مصروف فرع تاني" });
     }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+  }
+);
 
 // POST /api/expenses - تسجيل مصروف يومي - لازم يختار بند من الليستة الثابتة (categoryId)، مش نص حر
 // status (اختياري): 'DRAFT' أو 'SUBMITTED' لو عايز تستخدم مسار الاعتماد قبل الترحيل - لو متبعتش status
 // خالص (السلوك الافتراضي والقديم) المصروف بيترحّل فورًا زي ما كان دايمًا (POSTED + قيد محاسبي تلقائي)
 // {branchId, businessDate, categoryId, amount, notes, paymentMethodId?, supplierId?, status?, idempotencyKey?}
-router.post("/", requireAuth, canManage, async (req, res) => {
-  const { branchId, businessDate, categoryId, amount, notes, paymentMethodId, supplierId, status, idempotencyKey } = req.body;
-  if (!branchId || !businessDate || !categoryId || !amount || Number(amount) <= 0) {
-    return res.status(400).json({ error: "بيانات ناقصة أو المبلغ لازم يكون أكبر من صفر" });
-  }
-  if (req.user.role === "branch_manager" && !assertOwnBranch(req.user, branchId)) {
-    return res.status(403).json({ error: "معندكش صلاحية تسجل مصروف على فرع تاني" });
-  }
-  const requestedStatus = status && ["DRAFT", "SUBMITTED"].includes(status) ? status : "POSTED";
+//
+// المرحلة 7K: الكاشير (expenses.create_own_daily بس، مش expenses.create الكاملة) بيقدر يسجل مصروف
+// نقدي - لكن مقفول بالكامل على فرعه/النهاردة بس (مش بس صلاحية، القيم دي بتتفرض من السيرفر وبتتجاهل
+// أي قيمة مبعوتة من العميل)، وحالته دايمًا SUBMITTED (مش POSTED - محتاج مراجعة مدير/محاسب عبر
+// /:id/review قبل ما يترحّل محاسبيًا)، وطريقة الدفع بتتحط تلقائي على "كاش" (أول طريقة دفع كاش مفعّلة)
+// عشان يتحسب صح في حساب كاش الشيفت (db/shift-engine.js) - الكاشير مش بيختارها بنفسه أصلًا
+router.post("/", requireAuth, requirePermission("expenses.create", "expenses.create_own_daily"), async (req, res) => {
+  const isCashierDaily = req.user.role === "cashier";
+  let { branchId, businessDate, categoryId, amount, notes, paymentMethodId, supplierId, status, idempotencyKey } = req.body;
 
   const client = await pool.connect();
   try {
+    if (isCashierDaily) {
+      branchId = req.user.branchId;
+      businessDate = new Date().toISOString().slice(0, 10);
+      supplierId = null;
+      status = "SUBMITTED";
+      const cashPm = await client.query(
+        "SELECT id FROM payment_methods WHERE kind = 'cash' AND enabled = TRUE ORDER BY id LIMIT 1"
+      );
+      paymentMethodId = cashPm.rows[0]?.id || null;
+    }
+    if (!branchId || !businessDate || !categoryId || !amount || Number(amount) <= 0) {
+      return res.status(400).json({ error: "بيانات ناقصة أو المبلغ لازم يكون أكبر من صفر" });
+    }
+    if (req.user.role === "branch_manager" && !assertOwnBranch(req.user, branchId)) {
+      return res.status(403).json({ error: "معندكش صلاحية تسجل مصروف على فرع تاني" });
+    }
+    const requestedStatus = isCashierDaily
+      ? "SUBMITTED"
+      : (status && ["DRAFT", "SUBMITTED"].includes(status) ? status : "POSTED");
     if (idempotencyKey) {
       const existing = await client.query("SELECT * FROM expenses WHERE idempotency_key = $1", [idempotencyKey]);
       if (existing.rows.length > 0) return res.status(200).json({ ...existing.rows[0], duplicate: true });
@@ -270,6 +305,45 @@ router.post("/:id/post", requireAuth, requirePermission("accounting.post"), asyn
     );
     await logAudit(client, {
       branchId: expense.branch_id, userId: req.user.id, action: "EXPENSE_POSTED", entityType: "expense", entityId: expense.id,
+      newValues: { journalEntryId }, req,
+    });
+    await client.query("COMMIT");
+    res.json(result.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// المرحلة 7K: POST /api/expenses/:id/review - SUBMITTED → POSTED مباشرة (اعتماد + ترحيل في خطوة
+// واحدة) - مسار مخصّص لمراجعة مصروفات الكاشير النقدية تحديدًا، منفصل عمدًا عن /approve و/post
+// (اللي لسه محتاجين accounting.approve/accounting.post - محاسب بس، للمسار المحاسبي الأكمل الأصلي).
+// expenses.review متاحة لمدير الفرع والمحاسب زي ما اتحدد صراحة، مقفولة على فرع مدير الفرع بس
+router.post("/:id/review", requireAuth, requirePermission("expenses.review"), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM expenses WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "المصروف مش موجود" }); }
+    const expense = existing.rows[0];
+    if (expense.status !== "SUBMITTED") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "المصروف ده مش في حالة انتظار مراجعة" });
+    }
+    if (req.user.role === "branch_manager" && !assertOwnBranch(req.user, expense.branch_id)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+    }
+
+    const journalEntryId = await postExpenseJournalEntry(client, expense, req.user.id);
+    const result = await client.query(
+      "UPDATE expenses SET status = 'POSTED', approved_by = $1, posted_by = $1, posted_at = now(), journal_entry_id = $2 WHERE id = $3 RETURNING *",
+      [req.user.id, journalEntryId, req.params.id]
+    );
+    await logAudit(client, {
+      branchId: expense.branch_id, userId: req.user.id, action: "EXPENSE_REVIEWED", entityType: "expense", entityId: expense.id,
       newValues: { journalEntryId }, req,
     });
     await client.query("COMMIT");

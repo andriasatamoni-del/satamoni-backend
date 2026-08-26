@@ -10,6 +10,9 @@ const ROLE_PERMISSIONS = {
     "production.view", "production.create", "production.complete", "production.cancel",
     "food_cost.view",
     "expenses.view", "purchases.view",
+    // المرحلة 7K: مدير الفرع/المحاسب هما اللي بيراجعوا مصروفات/مشتريات الكاشير النقدية قبل ما تتحسب
+    // رسميًا - "إصدار" (مراجعة) منفصل عن "تسجيل" (الكاشير) عمدًا، زي ما اتحدد صراحة
+    "expenses.create", "expenses.review", "purchases.create", "purchases.review",
     // المرحلة 4A: مدير فرع/سنتر كيتشن يقدر ينشئ/يعدّل/يقدّم طلبات شراء وأوامر شراء لفرعه ويلغيها - بس
     // مش يعتمدها (purchasing.approve أدمن بس عمدًا، زي recipes.approve/production.approve بالظبط -
     // "الشخص اللي بينشئ PO ميقدرش يعتمدها لوحده من غير صلاحية منفصلة")
@@ -36,6 +39,8 @@ const ROLE_PERMISSIONS = {
     "production.view",
     "food_cost.view", "food_cost.export",
     "expenses.view", "purchases.view",
+    // المرحلة 7K: نفس صلاحية مراجعة مصروفات/مشتريات الكاشير النقدية اللي عند مدير الفرع
+    "expenses.create", "expenses.review", "purchases.create", "purchases.review",
     "purchasing.view", "purchasing.export",
     "approvals.create",
     "audit.view.branch",
@@ -54,6 +59,11 @@ const ROLE_PERMISSIONS = {
     "approvals.create",
     // المرحلة 7E: الكاشير بيفتح/يشوف/يقفل شيفته هو بس - مفيش صلاحية يشوف شيفتات زمايله ولا يراجع فروق كاش
     "shifts.open_own", "shifts.view_own", "shifts.close_own",
+    // المرحلة 7K: الكاشير يقدر يسجّل مصروف/مشترى نقدي لفرعه بس واليوم بس (مقفول من جوه الراوت نفسه،
+    // مش بس بالصلاحية) - لكن معندوش صلاحية "الإصدار" (expenses.review/purchases.review) خالص، ده
+    // للمدير/المحاسب بس عمدًا عشان يراجعوا قبل ما تتحسب رسميًا
+    "expenses.create_own_daily", "expenses.view_own_daily",
+    "purchases.create_own_daily", "purchases.view_own_daily",
     // المرحلة 7G: الكاشير بيشوف شاشة المطبخ (KDS) بتاعة فرعه ويقدّم حالة الطلبات - هو أكتر حد
     // بيستخدمها فعليًا (واقف عند نقطة البيع/المطبخ في الفروع الصغيرة)
     "kitchen.view", "kitchen.advance",

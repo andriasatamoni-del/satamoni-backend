@@ -122,7 +122,7 @@
       <div class="row"><input id="expNotes" placeholder="ملاحظات (اختياري)" /><button id="expSubmit">تسجيل</button></div>
       <div class="err" id="expErr"></div>
     </div>
-    <table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>ملاحظات</th></tr></thead><tbody id="expBody"></tbody></table>
+    <table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>ملاحظات</th><th>الحالة</th><th></th></tr></thead><tbody id="expBody"></tbody></table>
 
     <div id="expCategoriesAdmin" style="display:none">
       <h1>بنود المصروفات (تكويد)</h1>
@@ -151,7 +151,7 @@
       </div>
       <div class="err" id="purErr"></div>
     </div>
-    <table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>سنتر كيتشن</th></tr></thead><tbody id="purBody"></tbody></table>
+    <table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>سنتر كيتشن</th><th>الحالة</th><th></th></tr></thead><tbody id="purBody"></tbody></table>
   </div>
 
   <!-- تقفيل الكاش -->
@@ -832,11 +832,29 @@ document.getElementById("expCatSubmit").onclick = async () => {
   } catch (e) { errBox.textContent = e.message; }
 };
 
+// المرحلة 7K: بادچ حالة المصروف/المشترى - "SUBMITTED"/"PENDING" (مسجّل من الكاشير، محتاج مراجعة) دايمًا
+// بادچ تنبيه أحمر، وباقي الحالات (POSTED/CONFIRMED/APPROVED) بادچ أخضر عادي
+const EXPENSE_STATUS_LABELS = { DRAFT: "مسودة", SUBMITTED: "محتاج مراجعة", APPROVED: "معتمد", POSTED: "مرحّل", CANCELLED: "ملغي" };
+const PURCHASE_STATUS_LABELS = { PENDING: "محتاج مراجعة", CONFIRMED: "مؤكّد", REJECTED: "مرفوض" };
+function canReviewCashierEntries() {
+  return ["admin", "accountant", "branch_manager"].includes(auth.user.role);
+}
+
 async function loadExpenses() {
   const rows = await api(`/api/expenses?branchId=${currentBranchId()}`);
   document.getElementById("expBody").innerHTML = rows.map(r => `
-    <tr><td>${r.business_date.slice(0, 10)}</td><td>${r.category}</td><td>${money(r.amount)}</td><td>${r.notes || "—"}</td></tr>
-  `).join("") || `<tr><td colspan="4">مفيش مصروفات مسجلة</td></tr>`;
+    <tr>
+      <td>${r.business_date.slice(0, 10)}</td><td>${r.category}</td><td>${money(r.amount)}</td><td>${r.notes || "—"}</td>
+      <td><span class="badge ${r.status === "SUBMITTED" ? "inactive" : "active"}">${EXPENSE_STATUS_LABELS[r.status] || r.status}</span></td>
+      <td>${r.status === "SUBMITTED" && canReviewCashierEntries() ? `<button onclick="reviewExpense(${r.id})">✅ مراجعة واعتماد</button>` : ""}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">مفيش مصروفات مسجلة</td></tr>`;
+}
+async function reviewExpense(id) {
+  try {
+    await api(`/api/expenses/${id}/review`, { method: "POST" });
+    loadExpenses();
+  } catch (e) { alert(e.message); }
 }
 document.getElementById("expSubmit").onclick = async () => {
   const errBox = document.getElementById("expErr");
@@ -864,8 +882,27 @@ document.getElementById("expSubmit").onclick = async () => {
 async function loadPurchases() {
   const rows = await api(`/api/purchases?branchId=${currentBranchId()}`);
   document.getElementById("purBody").innerHTML = rows.map(r => `
-    <tr><td>${r.business_date.slice(0, 10)}</td><td>${r.category || "—"}</td><td>${money(r.amount)}</td><td>${r.from_kitchen ? "نعم" : "لا"}</td></tr>
-  `).join("") || `<tr><td colspan="4">مفيش مشتريات مسجلة</td></tr>`;
+    <tr>
+      <td>${r.business_date.slice(0, 10)}</td><td>${r.category || "—"}</td><td>${money(r.amount)}</td><td>${r.from_kitchen ? "نعم" : "لا"}</td>
+      <td><span class="badge ${r.status === "PENDING" ? "inactive" : (r.status === "REJECTED" ? "inactive" : "active")}">${PURCHASE_STATUS_LABELS[r.status] || r.status}</span></td>
+      <td>${r.status === "PENDING" && canReviewCashierEntries()
+        ? `<button onclick="confirmPurchase(${r.id})">✅ تأكيد</button> <button class="secondary" onclick="rejectPurchase(${r.id})">❌ رفض</button>`
+        : ""}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">مفيش مشتريات مسجلة</td></tr>`;
+}
+async function confirmPurchase(id) {
+  try {
+    await api(`/api/purchases/${id}/confirm`, { method: "POST" });
+    loadPurchases();
+  } catch (e) { alert(e.message); }
+}
+async function rejectPurchase(id) {
+  const reason = prompt("سبب الرفض (اختياري):") || null;
+  try {
+    await api(`/api/purchases/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+    loadPurchases();
+  } catch (e) { alert(e.message); }
 }
 document.getElementById("purSubmit").onclick = async () => {
   const errBox = document.getElementById("purErr");
