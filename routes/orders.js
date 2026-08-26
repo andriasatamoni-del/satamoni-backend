@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
+const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
@@ -750,6 +751,75 @@ router.patch(
       res.json(result.rows[0]);
     } catch (err) {
       res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// المرحلة 7G: تتابع صارم بس - مفيش تخطي أو رجوع لحالة سابقة. NEW->ACCEPTED->PREPARING->READY.
+const KITCHEN_STATUSES = ["NEW", "ACCEPTED", "PREPARING", "READY"];
+const KITCHEN_STATUS_LOG_NOTES = {
+  ACCEPTED: "المطبخ قبل الطلب", PREPARING: "بدأ التحضير", READY: "الطلب جاهز",
+};
+
+// PATCH /api/orders/:id/kitchen-status - تقدّم حالة المطبخ (KDS) - {status} - مستقلة تمامًا عن status
+// العادي (نفس فلسفة payment_status/dispatch_status)، بتتفعّل لأي نوع طلب (صالة/تيك أواي/دليفري) لأن كل
+// طلب بيتحضّر في المطبخ بغض النظر عن حالة الدفع/التسليم بتاعته
+router.patch(
+  "/:id/kitchen-status",
+  requireAuth,
+  requirePermission("kitchen.advance"),
+  async (req, res) => {
+    const { status } = req.body;
+    if (!KITCHEN_STATUSES.includes(status) || status === "NEW") {
+      return res.status(400).json({ error: "حالة مطبخ غير معروفة" });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query(
+        "SELECT branch_id, status, kitchen_status FROM orders WHERE id = $1 FOR UPDATE",
+        [req.params.id]
+      );
+      if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلب مش موجود" }); }
+      const current = existing.rows[0];
+
+      if (req.user.role !== "admin" && !assertOwnBranch(req.user, current.branch_id)) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "معندكش صلاحية تعدّل طلب فرع تاني" });
+      }
+      if (current.status === "cancelled") {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "الطلب ده ملغي - مينفعش تتحكم في حالة تحضيره" });
+      }
+      const currentIdx = KITCHEN_STATUSES.indexOf(current.kitchen_status);
+      const nextIdx = KITCHEN_STATUSES.indexOf(status);
+      if (nextIdx !== currentIdx + 1) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          error: `الطلب دلوقتي في حالة "${current.kitchen_status}" - مينفعش تنتقل لـ"${status}" مباشرة`,
+        });
+      }
+
+      const result = await client.query(
+        `UPDATE orders SET kitchen_status = $1,
+           kitchen_accepted_at = CASE WHEN $1 = 'ACCEPTED' THEN now() ELSE kitchen_accepted_at END,
+           kitchen_ready_at = CASE WHEN $1 = 'READY' THEN now() ELSE kitchen_ready_at END,
+           synced_at = NULL
+         WHERE id = $2 RETURNING *`,
+        [status, req.params.id]
+      );
+      await client.query(
+        `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, $4)`,
+        [req.params.id, `kitchen_${status.toLowerCase()}`, req.user.id, KITCHEN_STATUS_LOG_NOTES[status]]
+      );
+
+      await client.query("COMMIT");
+      res.json(result.rows[0]);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   }
 );

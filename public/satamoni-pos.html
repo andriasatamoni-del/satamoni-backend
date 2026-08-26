@@ -356,6 +356,7 @@
   </div>
 </div>
 
+<script src="/js/print-tickets.js"></script>
 <script>
 // ============================================================
 // إعدادات الاتصال بالـ Backend — عدّل العنوان ده لعنوان السيرفر الفعلي
@@ -1166,6 +1167,9 @@ function renderOrderActions(card, order) {
   if (order.status === "completed" && !order.voided) {
     btns.push(`<button class="danger" data-oact="void">🗑️ استرجاع (Void)</button>`);
   }
+  if (order.status !== "cancelled") {
+    btns.push(`<button data-oact="receipt">🧾 إيصال</button>`);
+  }
   wrap.innerHTML = btns.join("");
   wrap.querySelectorAll("button").forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); handleOrderAction(order, btn.dataset.oact); };
@@ -1174,7 +1178,18 @@ function renderOrderActions(card, order) {
 
 async function handleOrderAction(order, act) {
   try {
-    if (act === "ticket") { printOrderKitchenTicket(order); return; }
+    if (act === "ticket") {
+      SatamoniPrint.printKitchenTicket(order, ordersApi, { orderTypeLabel: orderTypeLabels2[order.order_type] });
+      return;
+    }
+    if (act === "receipt") {
+      const pm = state.paymentMethods.find(p => p.id === order.payment_method_id);
+      SatamoniPrint.printCashierReceipt(order, ordersApi, {
+        orderTypeLabel: orderTypeLabels2[order.order_type],
+        paymentMethodLabel: pm?.name,
+      });
+      return;
+    }
     if (act === "dispatch") {
       const driverName = prompt("اسم الطيار:");
       if (!driverName) return;
@@ -1215,33 +1230,6 @@ async function toggleOrderDetail(card, order) {
   } catch (e) { box.innerHTML = e.message; }
 }
 
-function printOrderKitchenTicket(order) {
-  const win = window.open("", "_blank", "width=380,height=600");
-  win.document.write(`
-    <html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>تذكرة تحضير #${order.id}</title>
-    <style>
-      body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; padding: 16px; }
-      h2 { margin: 0 0 4px; }
-      .meta { font-size: 13px; color: #444; margin-bottom: 10px; }
-      table { width: 100%; border-collapse: collapse; }
-      td { padding: 6px 0; border-bottom: 1px dashed #999; font-size: 15px; }
-    </style></head><body>
-    <h2>طلب #${order.id} — ${orderTypeLabels2[order.order_type] || order.order_type}</h2>
-    <div class="meta">${new Date(order.created_at).toLocaleString("ar-EG")}</div>
-    <div class="meta">العميل: ${order.customer_name || "—"} — ${order.customer_phone || "—"}</div>
-    ${order.address_details ? `<div class="meta">العنوان: ${order.address_details}</div>` : ""}
-    <table>جاري التحميل...</table>
-    <script>window.onload = () => window.print();<\/script>
-    </body></html>
-  `);
-  win.document.close();
-  ordersApi(`/api/orders/${order.id}`).then(full => {
-    const rows = full.items.map(it =>
-      `<tr><td>${it.item_name || it.combo_name || "صنف"} ${it.variant_label ? "(" + it.variant_label + ")" : ""}</td><td>× ${it.quantity}</td></tr>`
-    ).join("");
-    win.document.querySelector("table").innerHTML = rows;
-  });
-}
 </script>
 </body>
 </html>

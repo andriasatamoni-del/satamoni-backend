@@ -78,6 +78,7 @@ app.use("/api/purchase-orders", require("./routes/purchase-orders"));
 app.use("/api/goods-receipts", require("./routes/goods-receipts"));
 app.use("/api/accounting", require("./routes/accounting"));
 app.use("/api/supplier-payments", require("./routes/supplier-payments"));
+app.use("/api/kds", require("./routes/kds"));
 
 // المرحلة 6 (6F): /health كان بيرجّع "ok" ثابتة دايمًا حتى لو قاعدة البيانات مش شغالة خالص - ده بيخلي
 // أي مراقبة/health-check بتعتمد عليه (لوحة تحكم استضافة، uptime monitor) تعتقد السيرفر تمام رغم إن

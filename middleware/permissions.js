@@ -27,6 +27,9 @@ const ROLE_PERMISSIONS = {
     // (نفس نمط إدارة الموظفين HR في المرحلة 4D)، وهو صاحب صلاحية تسوية كاش السائقين ومراجعة فروقها
     "deliveries.view_branch", "deliveries.assign", "drivers.manage",
     "driver_settlements.create", "driver_settlements.review",
+    // المرحلة 7G: مدير الفرع يشوف شاشة المطبخ (KDS) بتاعة فرعه ويقدر يقدّم حالة أي طلب فيها -
+    // مش مقصور على الكاشير بس، لأن مدير الفرع كتير بيغطي المطبخ برضو في فروع صغيرة
+    "kitchen.view", "kitchen.advance",
   ],
   accountant: [
     "inventory.view", "recipes.view",
@@ -51,6 +54,9 @@ const ROLE_PERMISSIONS = {
     "approvals.create",
     // المرحلة 7E: الكاشير بيفتح/يشوف/يقفل شيفته هو بس - مفيش صلاحية يشوف شيفتات زمايله ولا يراجع فروق كاش
     "shifts.open_own", "shifts.view_own", "shifts.close_own",
+    // المرحلة 7G: الكاشير بيشوف شاشة المطبخ (KDS) بتاعة فرعه ويقدّم حالة الطلبات - هو أكتر حد
+    // بيستخدمها فعليًا (واقف عند نقطة البيع/المطبخ في الفروع الصغيرة)
+    "kitchen.view", "kitchen.advance",
   ],
   callcenter: [
     "orders.create", "orders.discount.request", "orders.void.request",

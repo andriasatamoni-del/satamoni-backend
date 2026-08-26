@@ -231,9 +231,20 @@ CREATE TABLE orders (
   collection_variance    NUMERIC,
   -- دفعة التسوية اللي الطلب ده اتضم لها (لو اتسلّم كاش) - بمجرد ما يتحدد، الطلب مبيظهرش تاني في
   -- "المعلّق للتسوية" لنفس السائق (نفس فلسفة shift_id: بيتحدد مرة واحدة ومبيتغيّرش بعد كده)
-  driver_settlement_id  INTEGER
+  driver_settlement_id  INTEGER,
+  -- المرحلة 7G: حالة المطبخ - مستقلة تمامًا عن status (نفس فلسفة dispatch_status/payment_status
+  -- المنفصلة عن status بالظبط)، وبتتفعّل لكل الطلبات (مش دليفري بس زي dispatch_status) لأن كل طلب
+  -- (صالة/تيك أواي/دليفري) بيتحضّر في المطبخ بغض النظر عن حالة الدفع/التسليم بتاعته. طلب تيك أواي
+  -- ممكن يبقى status='completed' (اتحاسب) وkitchen_status='PREPARING' (لسه بيتحضّر) في نفس اللحظة -
+  -- ده طبيعي تمامًا، مش تعارض. القيمة الافتراضية 'NEW' لكل طلب من لحظة الإنشاء.
+  kitchen_status        TEXT NOT NULL DEFAULT 'NEW'
+                          CHECK (kitchen_status IN ('NEW', 'ACCEPTED', 'PREPARING', 'READY')),
+  kitchen_accepted_at   TIMESTAMPTZ,
+  kitchen_ready_at      TIMESTAMPTZ
 );
 CREATE UNIQUE INDEX idx_orders_idempotency_key ON orders(idempotency_key) WHERE idempotency_key IS NOT NULL;
+-- المرحلة 7G: لوحة المطبخ بتفلتر بالفرع + استبعاد READY القديم (الاستعلام في routes/kds.js) على كل تحديث
+CREATE INDEX idx_orders_kitchen_status ON orders(branch_id, kitchen_status) WHERE kitchen_status <> 'READY';
 -- المرحلة 5 (تدقيق الجاهزية للإنتاج): orders مالهاش أي index على created_at خالص قبل كده - قائمة
 -- الطلبات (GET /api/orders، بدون فلتر تاريخ) بترتب بـcreated_at DESC على الجدول كله، وتقارير الفترات
 -- بتفلتر بـcreated_at::date. جرّبنا index تعبيري (created_at::date) لكنه رفض يتعمل - CAST من

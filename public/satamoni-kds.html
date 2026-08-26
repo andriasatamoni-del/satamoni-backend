@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — شاشة المطبخ</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --orange: #D98A2B;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 10px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #topbar select { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  #refreshInfo { font-size: 11px; color: var(--faint); }
+
+  #board { display: flex; gap: 12px; padding: 14px; overflow-x: auto; align-items: flex-start; }
+  .col { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 10px; min-width: 270px; max-width: 300px; flex: 1; }
+  .col .colhead { padding: 10px 12px; border-bottom: 1px solid var(--line); font-weight: 800; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--bg-alt); border-radius: 10px 10px 0 0; }
+  .col .colcount { background: var(--card); border-radius: 10px; padding: 1px 8px; font-size: 12px; color: var(--faint); }
+  .col .colbody { padding: 8px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 130px); overflow-y: auto; }
+  .col.NEW .colhead { color: #F08A83; }
+  .col.ACCEPTED .colhead { color: var(--orange); }
+  .col.PREPARING .colhead { color: var(--gold-bright); }
+  .col.READY .colhead { color: var(--green); }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .card .chead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .card .oid { font-weight: 800; font-size: 15px; }
+  .card .wait { font-size: 11px; padding: 1px 7px; border-radius: 8px; font-weight: 700; }
+  .wait.ok { background: rgba(63,163,77,.15); color: var(--green); }
+  .wait.warn { background: rgba(217,138,43,.15); color: var(--orange); }
+  .wait.late { background: rgba(194,42,36,.15); color: #F08A83; }
+  .card .meta { font-size: 11px; color: var(--faint); margin-bottom: 6px; }
+  .card .items { font-size: 13px; margin-bottom: 8px; }
+  .card .items .line { padding: 3px 0; border-bottom: 1px dashed var(--line); }
+  .card .items .line:last-child { border-bottom: none; }
+  .card .items .mods { font-size: 11px; color: var(--faint); padding-inline-start: 10px; }
+  .card .actions { display: flex; gap: 6px; }
+  .card button { flex: 1; padding: 8px; border: none; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; }
+  .card .advance { background: var(--red); color: #fff; }
+  .card .printbtn { background: var(--bg-alt); color: var(--ink); border: 1px solid var(--line) !important; }
+  .empty { color: var(--faint); font-size: 12px; text-align: center; padding: 20px 0; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">👨‍🍳 ساتاموني — شاشة المطبخ</div>
+  <select id="branchSelect" style="display:none"></select>
+  <span id="refreshInfo"></span>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>👨‍🍳 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="board" style="display:none"></div>
+<div id="accessDenied" style="display:none">مفيش صلاحية على الشاشة دي.</div>
+
+<script src="/js/print-tickets.js"></script>
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "cashier"];
+const COLUMNS = [
+  { key: "NEW", label: "جديد", nextLabel: "قبول الطلب", next: "ACCEPTED" },
+  { key: "ACCEPTED", label: "مقبول", nextLabel: "بدء التحضير", next: "PREPARING" },
+  { key: "PREPARING", label: "بيتحضّر", nextLabel: "جاهز", next: "READY" },
+  { key: "READY", label: "جاهز", nextLabel: null, next: null },
+];
+const orderTypeLabels = { delivery: "دليفري", takeaway: "تيك أواي", dinein: "صالة", talabat: "طلبات" };
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
+if (auth.user && auth.user.role === "driver") location.replace("satamoni-driver-app.html");
+if (auth.user && auth.user.role === "accountant") location.replace("satamoni-accounting.html");
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { stopAutoRefresh(); clearSession(); location.reload(); };
+
+function branchName(id) {
+  const b = (window.__branches || []).find(x => String(x.id) === String(id));
+  return b ? b.name : "";
+}
+
+function currentBranchId() {
+  return auth.user.role === "admin" ? document.getElementById("branchSelect").value : auth.user.branchId;
+}
+
+async function boot() {
+  document.getElementById("board").style.display = "flex";
+  document.getElementById("accessDenied").style.display = "none";
+
+  if (auth.user.role === "admin") {
+    const branches = await api("/api/branches");
+    window.__branches = branches;
+    const sel = document.getElementById("branchSelect");
+    sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    sel.style.display = "block";
+    sel.onchange = loadBoard;
+  }
+  await loadBoard();
+  startAutoRefresh();
+}
+
+// المرحلة 7G: أول مكان بيستخدم setInterval polling في الفرونت إند كله (اتأكد بالبحث في باقي الصفحات
+// إن مفيش نمط تحديث تلقائي موجود قبل كده) - قرار متعمّد هنا لأن شاشة المطبخ لازم تتحدث لوحدها من غير
+// أي تدخل من الموظف (إيده مشغولة بالتحضير)، عكس كل الشاشات التانية اللي بتتحدث بضغطة زرار "تحديث" بس
+let refreshTimer = null;
+function startAutoRefresh() {
+  stopAutoRefresh();
+  refreshTimer = setInterval(loadBoard, 8000);
+}
+function stopAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = null;
+}
+
+function waitClass(createdAt) {
+  const mins = (Date.now() - new Date(createdAt).getTime()) / 60000;
+  if (mins < 10) return "ok";
+  if (mins < 20) return "warn";
+  return "late";
+}
+function waitLabel(createdAt) {
+  const mins = Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000);
+  return mins <= 0 ? "دلوقتي" : `${mins} د`;
+}
+
+function renderCard(o) {
+  const col = COLUMNS.find(c => c.key === o.kitchen_status);
+  const items = (o.items || []).map(it => {
+    const mods = (it.modifiers || []).filter(Boolean);
+    return `
+      <div class="line">
+        ${it.name}${it.variant ? ` (${it.variant})` : ""} × ${it.quantity}
+        ${mods.length ? `<div class="mods">${mods.map(m => "+ " + m).join("، ")}</div>` : ""}
+      </div>`;
+  }).join("") || `<div class="line">—</div>`;
+
+  const orderLabel = o.order_type === "dinein" && o.table_number
+    ? `ترابيزة ${o.table_number}`
+    : (o.customer_name || orderTypeLabels[o.order_type] || o.order_type);
+
+  return `
+    <div class="card" data-id="${o.id}">
+      <div class="chead">
+        <span class="oid">#${o.id} — ${orderTypeLabels[o.order_type] || o.order_type}</span>
+        <span class="wait ${waitClass(o.created_at)}">${waitLabel(o.created_at)}</span>
+      </div>
+      <div class="meta">${orderLabel}</div>
+      <div class="items">${items}</div>
+      <div class="actions">
+        ${col && col.next ? `<button class="advance" data-next="${col.next}">${col.nextLabel}</button>` : ""}
+        <button class="printbtn" data-print="1">🖨️</button>
+      </div>
+    </div>
+  `;
+}
+
+let lastOrders = [];
+
+async function loadBoard() {
+  const branchId = currentBranchId();
+  const board = document.getElementById("board");
+  if (!branchId) { board.innerHTML = `<div class="empty" style="width:100%">اختار فرع</div>`; return; }
+  try {
+    const orders = await api(`/api/kds/orders?branchId=${branchId}`);
+    lastOrders = orders;
+    board.innerHTML = COLUMNS.map(col => {
+      const inCol = orders.filter(o => o.kitchen_status === col.key);
+      return `
+        <div class="col ${col.key}">
+          <div class="colhead"><span>${col.label}</span><span class="colcount">${inCol.length}</span></div>
+          <div class="colbody">
+            ${inCol.length ? inCol.map(renderCard).join("") : `<div class="empty">مفيش طلبات</div>`}
+          </div>
+        </div>
+      `;
+    }).join("");
+    document.getElementById("refreshInfo").textContent = `آخر تحديث: ${new Date().toLocaleTimeString("ar-EG")}`;
+
+    board.querySelectorAll(".card").forEach(card => {
+      const id = card.dataset.id;
+      const order = lastOrders.find(o => String(o.id) === id);
+      const advanceBtn = card.querySelector("[data-next]");
+      if (advanceBtn) {
+        advanceBtn.onclick = async () => {
+          advanceBtn.disabled = true;
+          try {
+            await api(`/api/orders/${id}/kitchen-status`, { method: "PATCH", body: JSON.stringify({ status: advanceBtn.dataset.next }) });
+            await loadBoard();
+          } catch (e) { alert(e.message); advanceBtn.disabled = false; }
+        };
+      }
+      card.querySelector("[data-print]").onclick = () => {
+        SatamoniPrint.printKitchenTicket(order, api, {
+          orderTypeLabel: orderTypeLabels[order.order_type],
+          branchLabel: branchName(order.branch_id) || branchName(branchId),
+        });
+      };
+    });
+  } catch (e) {
+    board.innerHTML = `<div class="empty" style="width:100%">${e.message}</div>`;
+  }
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>
