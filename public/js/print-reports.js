@@ -92,6 +92,62 @@
       .map((table) => ({ heading: findPrecedingHeading(table, panelEl), table: cleanTableForPrint(table) }));
   }
 
+  // ---------------- المرحلة 7J: تصدير Excel (CSV بسيط) ----------------
+  // بنستخدم CSV بدل xlsx حقيقي - بيتفتح في Excel/Google Sheets مباشرة من غير أي مكتبة جديدة تتضاف
+  // للمشروع، وأسرع وأضمن. BOM في الأول (﻿) ضروري عشان Excel يعرض العربي صح من غير ما يتلخبط encoding
+  function csvEscape(s) {
+    const str = String(s == null ? "" : s);
+    return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+  }
+
+  function tableToCsvRows(table) {
+    return Array.from(table.querySelectorAll("tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("th,td")).map((c) => csvEscape(c.textContent.trim())).join(",")
+    );
+  }
+
+  // اسم ملف آمن - بيشيل أي حرف ممكن يكسر اسم الملف على أي نظام تشغيل، وبيحافظ على العربي والأرقام
+  function safeFileName(title) {
+    return String(title || "تقرير").trim().replace(/[\\/:*?"<>|]+/g, "_").slice(0, 80) || "تقرير";
+  }
+
+  function downloadCsv(filename, content) {
+    const blob = new Blob(["﻿" + content], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeFileName(filename)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // exportPanelCSV(panelElement, {title}) - نفس آلية استخراج الأقسام المستخدمة في الطباعة بالظبط
+  // (collectSections) - كل جدول في اللوحة بعنوانه، بس نتيجته ملف CSV واحد ينزل على جهاز المستخدم
+  // بدل ما يتفتح في نافذة طباعة
+  function exportPanelCSV(panelEl, { title } = {}) {
+    if (!panelEl) return;
+    const sections = collectSections(panelEl);
+    if (!sections.length) {
+      alert("مفيش بيانات لعرضها في التبويب ده حاليًا");
+      return;
+    }
+    const lines = [];
+    sections.forEach((s, i) => {
+      if (i > 0) lines.push("");
+      if (s.heading) lines.push(csvEscape(s.heading));
+      lines.push(...tableToCsvRows(s.table));
+    });
+    downloadCsv(title || "تقرير", lines.join("\r\n"));
+  }
+
+  function exportCurrentTabCSV() {
+    const activeTab = document.querySelector(".tabbtn.active");
+    const activePanel = document.querySelector(".panel.active");
+    exportPanelCSV(activePanel, { title: activeTab ? activeTab.textContent.trim() : undefined });
+  }
+
   function openPrintWindow(title) {
     const win = window.open("", "_blank");
     if (!win) {
@@ -169,5 +225,8 @@
     return win;
   }
 
-  window.SatamoniPrint = Object.assign(window.SatamoniPrint || {}, { printPanel, printCurrentTab, openCustomPrint, esc });
+  window.SatamoniPrint = Object.assign(window.SatamoniPrint || {}, {
+    printPanel, printCurrentTab, openCustomPrint, esc,
+    exportPanelCSV, exportCurrentTabCSV, downloadCsv, csvEscape, tableToCsvRows,
+  });
 })();

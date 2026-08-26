@@ -67,6 +67,7 @@
   <div class="brand">🛡️ ساتاموني — سجل التدقيق والموافقات</div>
   <div id="userInfo">
     <button id="printReportBtn" title="طباعة التبويب الحالي">🖨️ طباعة</button>
+    <button id="exportCsvBtn" title="تحميل التبويب الحالي كملف Excel (CSV)">📊 تصدير Excel</button>
     <span id="userName"></span>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -93,8 +94,8 @@
     <div class="formbox">
       <div class="row">
         <select id="auditActionFilter"><option value="">كل الأحداث</option></select>
-        <input id="auditFromFilter" type="date" />
-        <input id="auditToFilter" type="date" />
+        <label>من</label><input id="auditFromFilter" type="date" />
+        <label>إلى</label><input id="auditToFilter" type="date" />
         <button id="auditFilterBtn">فلترة</button>
         <button id="auditClearBtn" class="secondary">مسح الفلاتر</button>
       </div>
@@ -208,6 +209,7 @@ document.getElementById("loginBtn").onclick = async () => {
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
 document.getElementById("printReportBtn").onclick = () => SatamoniPrint.printCurrentTab();
+document.getElementById("exportCsvBtn").onclick = () => SatamoniPrint.exportCurrentTabCSV();
 
 document.querySelectorAll(".tabbtn").forEach(btn => {
   btn.onclick = () => {

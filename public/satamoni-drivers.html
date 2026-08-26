@@ -57,6 +57,7 @@
   <select id="branchSelect" style="display:none"></select>
   <div id="userInfo">
     <button id="printReportBtn" title="طباعة قايمة السائقين">🖨️ طباعة</button>
+    <button id="exportCsvBtn" title="تحميل قايمة السائقين كملف Excel (CSV)">📊 تصدير Excel</button>
     <span id="userName"></span>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -157,6 +158,7 @@ document.getElementById("loginBtn").onclick = async () => {
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
 document.getElementById("printReportBtn").onclick = () => SatamoniPrint.printPanel(document.getElementById("main"), { title: "السائقين" });
+document.getElementById("exportCsvBtn").onclick = () => SatamoniPrint.exportPanelCSV(document.getElementById("main"), { title: "السائقين" });
 
 document.getElementById("newCreateLogin").addEventListener("change", (e) => {
   document.getElementById("loginFieldsRow").style.display = e.target.checked ? "flex" : "none";

@@ -35,17 +35,32 @@ function resolveDateRange(query) {
   return null;
 }
 
-// GET /api/reports/daily?year=2026&month=7 - بديل شيت "لوحة التحكم"
+// تكلفة الرواتب (services/payroll-engine.js) بطبيعتها شهرية بالكامل - الموظف اللي مالوش نظام حضور
+// بيتحسب له مرتب الشهر كامل بدون تناسب على الأيام، فمفيش معنى "تكلفة رواتب" صحيحة لمدى تاريخ جزئي أو
+// عابر لأكتر من شهر. بنستخدم الدالة دي عشان نعرف هل المدى المختار شهر كامل بالظبط (فنقدر نجيب تكلفة
+// الرواتب بأمان) - لو لأ، بنرجّع null ونوضح للمستخدم إن الرقم مش متاح للمدى الجزئي ده بدل ما نعرض رقم غلط
+function monthIfFullMonthRange(from, to) {
+  const f = new Date(`${from}T00:00:00`);
+  const t = new Date(`${to}T00:00:00`);
+  const year = f.getFullYear();
+  const month = f.getMonth() + 1;
+  const lastDay = new Date(year, month, 0).getDate();
+  const isFullMonth =
+    f.getDate() === 1 && t.getFullYear() === year && t.getMonth() + 1 === month && t.getDate() === lastDay;
+  return isFullMonth ? { year, month } : null;
+}
+
+// GET /api/reports/daily?from=2026-07-01&to=2026-07-31 (أو year=2026&month=7 كاختصار) - بديل شيت "لوحة التحكم"
 router.get("/daily", requireAuth, canSeeReports, async (req, res) => {
-  const { year, month } = req.query;
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "from/to أو year/month مطلوبين" });
   try {
     const result = await pool.query(
       `SELECT * FROM v_daily_branch_summary
-       WHERE EXTRACT(YEAR FROM business_date) = $1
-         AND EXTRACT(MONTH FROM business_date) = $2
+       WHERE business_date BETWEEN $1 AND $2
          AND ($3::int IS NULL OR branch_id = $3)
        ORDER BY business_date, branch_id`,
-      [year, month, req.user.role === "branch_manager" ? req.user.branchId : null]
+      [range.from, range.to, req.user.role === "branch_manager" ? req.user.branchId : null]
     );
     res.json(result.rows);
   } catch (err) {
@@ -123,9 +138,9 @@ router.get("/menu-cost-analysis", requireAuth, canSeeReports, async (req, res) =
   }
 });
 
-// حساب الإيرادات وتكلفة البضاعة المباعة لكل فرع في شهر معين، من بيانات الطلبات الفعلية
+// حساب الإيرادات وتكلفة البضاعة المباعة لكل فرع في مدى تاريخ معين (from/to)، من بيانات الطلبات الفعلية
 // (مش من قيود يدوية) - العروض/الكومبو بتتفكّ لأصنافها الأصلية لحساب تكلفتها الحقيقية
-async function computeRevenueAndCogsByBranch(year, month) {
+async function computeRevenueAndCogsByBranch(from, to) {
   // تكلفة البضاعة المباعة بتتاخد من cost_at_sale المسجّلة على كل سطر طلب وقت البيع نفسه (مش لحظيًا وقت التقرير)
   // عشان لو الريسبي أو تركيبة عرض اتغيرت بعد كدة، الطلبات القديمة تفضل بتكلفتها الحقيقية وقتها
   // المرحلة 7H: الإيراد هنا صافي من ضريبة القيمة المضافة (total - vat_amount) - الضريبة تحصيل بالنيابة
@@ -138,8 +153,7 @@ async function computeRevenueAndCogsByBranch(year, month) {
        SELECT o.id, o.branch_id, (o.total - COALESCE(o.vat_amount, 0)) AS net_total
        FROM orders o
        WHERE o.status <> 'cancelled'
-         AND EXTRACT(YEAR FROM o.created_at) = $1
-         AND EXTRACT(MONTH FROM o.created_at) = $2
+         AND o.created_at::date BETWEEN $1 AND $2
      ),
      order_cost_totals AS (
        SELECT oi.order_id,
@@ -160,7 +174,7 @@ async function computeRevenueAndCogsByBranch(year, month) {
      LEFT JOIN order_cost_totals oct ON oct.order_id = qo.id
      GROUP BY qo.branch_id, b.name
      ORDER BY b.name`,
-    [year, month]
+    [from, to]
   );
   return result.rows.map((r) => ({
     branchId: r.branch_id,
@@ -172,17 +186,17 @@ async function computeRevenueAndCogsByBranch(year, month) {
   }));
 }
 
-// GET /api/reports/income-statement?year=&month=&branchId= - قائمة الدخل (إيرادات - تكلفة البضاعة - مصروفات)
-// لفرع واحد لو اتحدد branchId، أو مجمّع لكل الفروع لو مفيش
+// GET /api/reports/income-statement?from=&to=&branchId= (أو year=&month= كاختصار) - قائمة الدخل
+// (إيرادات - تكلفة البضاعة - مصروفات) لفرع واحد لو اتحدد branchId، أو مجمّع لكل الفروع لو مفيش
 router.get("/income-statement", requireAuth, canSeeReports, async (req, res) => {
-  const year = Number(req.query.year);
-  const month = Number(req.query.month);
+  const range = resolveDateRange(req.query);
   let branchId = req.query.branchId ? Number(req.query.branchId) : null;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
-  if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+  if (!range) return res.status(400).json({ error: "لازم تحدد الفترة (from/to أو year/month)" });
+  const { from, to } = range;
 
   try {
-    const byBranch = await computeRevenueAndCogsByBranch(year, month);
+    const byBranch = await computeRevenueAndCogsByBranch(from, to);
     const scoped = branchId ? byBranch.filter((r) => r.branchId === branchId) : byBranch;
 
     const revenue = scoped.reduce((s, r) => s + r.revenue, 0);
@@ -194,12 +208,11 @@ router.get("/income-statement", requireAuth, canSeeReports, async (req, res) => 
       `SELECT ec.name AS category, SUM(e.amount) AS total
        FROM expenses e
        JOIN expense_categories ec ON ec.id = e.category_id
-       WHERE EXTRACT(YEAR FROM e.business_date) = $1
-         AND EXTRACT(MONTH FROM e.business_date) = $2
+       WHERE e.business_date BETWEEN $1 AND $2
          AND ($3::int IS NULL OR e.branch_id = $3)
        GROUP BY ec.name
        ORDER BY total DESC`,
-      [year, month, branchId]
+      [from, to, branchId]
     );
     const expenseLines = expensesResult.rows.map((r) => ({
       category: r.category,
@@ -208,14 +221,20 @@ router.get("/income-statement", requireAuth, canSeeReports, async (req, res) => 
     const totalOpex = expenseLines.reduce((s, r) => s + r.amount, 0);
     const netProfitBeforePayroll = grossProfit - totalOpex;
 
-    // تكلفة الرواتب هنا إجمالي بس (صافي مستحق الصرف) - مش تفصيل رواتب الموظفين، فمأمون إن مدير الفرع يشوفه لفرعه
-    const payroll = await computePayrollCostByBranch(year, month);
-    const payrollCost = branchId ? (payroll.byBranch[branchId] || 0) : payroll.total;
-    const netProfitAfterPayroll = netProfitBeforePayroll - payrollCost;
+    // تكلفة الرواتب شهرية بطبيعتها (راجع تعليق monthIfFullMonthRange فوق) - متاحة بس لما الفترة
+    // المختارة شهر كامل بالظبط، وإلا بترجع null بدل رقم مضلّل
+    const fullMonth = monthIfFullMonthRange(from, to);
+    let payrollCost = null;
+    if (fullMonth) {
+      // تكلفة الرواتب هنا إجمالي بس (صافي مستحق الصرف) - مش تفصيل رواتب الموظفين، فمأمون إن مدير الفرع يشوفه لفرعه
+      const payroll = await computePayrollCostByBranch(fullMonth.year, fullMonth.month);
+      payrollCost = branchId ? (payroll.byBranch[branchId] || 0) : payroll.total;
+    }
+    const netProfitAfterPayroll = payrollCost != null ? netProfitBeforePayroll - payrollCost : null;
 
     res.json({
-      year,
-      month,
+      from,
+      to,
       branchId,
       revenue,
       cogs,
@@ -227,43 +246,52 @@ router.get("/income-statement", requireAuth, canSeeReports, async (req, res) => 
       netProfitBeforePayroll,
       payrollCost,
       netProfitAfterPayroll,
-      note: branchId
-        ? "تكلفة الرواتب هنا لفريق الفرع ده بس (موظفي البصمة اللي فرعهم الأساسي ده) - تكاليف الإدارة والمطبخ المركزي مش متحمّلة على فرع بعينه"
-        : "تكلفة الرواتب هنا شاملة كل الموظفين (فروع + مطبخ مركزي + إدارة)",
+      note:
+        (payrollCost == null
+          ? "تكلفة الرواتب مش متاحة لمدى تاريخ جزئي أو عابر لأكتر من شهر - الرواتب شهرية بطبيعتها. اختر شهر كامل عشان تظهر. "
+          : "") +
+        (branchId
+          ? "تكلفة الرواتب هنا لفريق الفرع ده بس (موظفي البصمة اللي فرعهم الأساسي ده) - تكاليف الإدارة والمطبخ المركزي مش متحمّلة على فرع بعينه"
+          : "تكلفة الرواتب هنا شاملة كل الموظفين (فروع + مطبخ مركزي + إدارة)"),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/reports/income-statement/by-branch?year=&month= - مقارنة أداء الفروع (أدمن/محاسب بس)
+// GET /api/reports/income-statement/by-branch?from=&to= (أو year=&month= كاختصار) - مقارنة أداء
+// الفروع (أدمن/محاسب بس)
 router.get(
   "/income-statement/by-branch",
   requireAuth,
   requireRole("admin", "accountant"),
   async (req, res) => {
-    const year = Number(req.query.year);
-    const month = Number(req.query.month);
-    if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+    const range = resolveDateRange(req.query);
+    if (!range) return res.status(400).json({ error: "لازم تحدد الفترة (from/to أو year/month)" });
+    const { from, to } = range;
 
     try {
-      const byBranch = await computeRevenueAndCogsByBranch(year, month);
+      const byBranch = await computeRevenueAndCogsByBranch(from, to);
       const expensesResult = await pool.query(
         `SELECT branch_id, SUM(amount) AS total
          FROM expenses
-         WHERE EXTRACT(YEAR FROM business_date) = $1 AND EXTRACT(MONTH FROM business_date) = $2
+         WHERE business_date BETWEEN $1 AND $2
          GROUP BY branch_id`,
-        [year, month]
+        [from, to]
       );
       const opexByBranch = {};
       expensesResult.rows.forEach((r) => { opexByBranch[r.branch_id] = Number(r.total); });
 
-      const payroll = await computePayrollCostByBranch(year, month);
+      // تكلفة الرواتب شهرية بطبيعتها (راجع تعليق monthIfFullMonthRange فوق) - متاحة بس لما الفترة شهر كامل
+      const fullMonth = monthIfFullMonthRange(from, to);
+      const payroll = fullMonth
+        ? await computePayrollCostByBranch(fullMonth.year, fullMonth.month)
+        : { byBranch: {}, overhead: null, total: null };
 
       const rows = byBranch.map((r) => {
         const opex = opexByBranch[r.branchId] || 0;
         const grossProfit = r.revenue - r.cogs;
-        const payrollCost = r.branchId ? (payroll.byBranch[r.branchId] || 0) : 0;
+        const payrollCost = fullMonth ? (r.branchId ? (payroll.byBranch[r.branchId] || 0) : 0) : null;
         const netProfitBeforePayroll = grossProfit - opex;
         return {
           ...r,
@@ -272,7 +300,7 @@ router.get(
           opex,
           netProfitBeforePayroll,
           payrollCost,
-          netProfitAfterPayroll: netProfitBeforePayroll - payrollCost,
+          netProfitAfterPayroll: payrollCost != null ? netProfitBeforePayroll - payrollCost : null,
         };
       });
 
@@ -289,17 +317,20 @@ router.get(
       const consolidatedNetBeforePayroll = consolidatedGrossProfit - consolidated.opex;
 
       res.json({
-        year,
-        month,
+        from,
+        to,
         branches: rows,
         payrollOverhead: payroll.overhead, // تكلفة رواتب الإدارة والمطبخ المركزي - مش متحمّلة على فرع بعينه
+        note: fullMonth
+          ? null
+          : "تكلفة الرواتب مش متاحة لمدى تاريخ جزئي أو عابر لأكتر من شهر - الرواتب شهرية بطبيعتها. اختر شهر كامل عشان تظهر.",
         consolidated: {
           ...consolidated,
           grossProfit: consolidatedGrossProfit,
           grossMarginPercent: consolidated.revenue > 0 ? consolidatedGrossProfit / consolidated.revenue : null,
           netProfitBeforePayroll: consolidatedNetBeforePayroll,
           payrollCost: payroll.total,
-          netProfitAfterPayroll: consolidatedNetBeforePayroll - payroll.total,
+          netProfitAfterPayroll: payroll.total != null ? consolidatedNetBeforePayroll - payroll.total : null,
         },
       });
     } catch (err) {
@@ -308,29 +339,30 @@ router.get(
   }
 );
 
-// GET /api/reports/dashboard?year=&month=&branchId= - داش بورد المالك: كل تفاصيل الشغل في نداء واحد
-// (المبيعات اليومية، الأصناف/الفروع/المناطق الأكثر مبيعًا، التكلفة والمصروفات، حالة التحصيل، حالة الطلبات)
+// GET /api/reports/dashboard?from=&to=&branchId= (أو year=&month= كاختصار) - داش بورد المالك: كل
+// تفاصيل الشغل في نداء واحد (المبيعات اليومية، الأصناف/الفروع/المناطق الأكثر مبيعًا، التكلفة
+// والمصروفات، حالة التحصيل، حالة الطلبات)
 router.get("/dashboard", requireAuth, canSeeReports, async (req, res) => {
-  const year = Number(req.query.year);
-  const month = Number(req.query.month);
-  if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد الفترة (from/to أو year/month)" });
+  const { from, to } = range;
   let branchId = req.query.branchId ? Number(req.query.branchId) : null;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
 
   try {
+    const fullMonth = monthIfFullMonthRange(from, to);
     const [
       byBranch, dailySales, topItems, topAreas,
       paymentStatusBreakdown, orderStatusBreakdown, expensesResult, payroll,
     ] = await Promise.all([
-      computeRevenueAndCogsByBranch(year, month),
+      computeRevenueAndCogsByBranch(from, to),
       pool.query(
         `SELECT o.created_at::date AS date, COUNT(*) AS orders_count, SUM(o.total) AS revenue
          FROM orders o
-         WHERE o.status <> 'cancelled'
-           AND EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
            AND ($3::int IS NULL OR o.branch_id = $3)
          GROUP BY o.created_at::date ORDER BY date`,
-        [year, month, branchId]
+        [from, to, branchId]
       ),
       pool.query(
         `SELECT COALESCE(mi.name || ' - ' || mv.label, c.name) AS name,
@@ -340,50 +372,47 @@ router.get("/dashboard", requireAuth, canSeeReports, async (req, res) => {
          LEFT JOIN menu_item_variants mv ON mv.id = oi.variant_id
          LEFT JOIN menu_items mi ON mi.id = mv.item_id
          LEFT JOIN combos c ON c.id = oi.combo_id
-         WHERE o.status <> 'cancelled'
-           AND EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
            AND ($3::int IS NULL OR o.branch_id = $3)
          GROUP BY COALESCE(mi.name || ' - ' || mv.label, c.name)
          ORDER BY revenue DESC LIMIT 10`,
-        [year, month, branchId]
+        [from, to, branchId]
       ),
       pool.query(
         `SELECT da.id AS area_id, da.name AS area_name, COUNT(*) AS orders_count, SUM(o.total) AS revenue
          FROM orders o
          JOIN delivery_areas da ON da.id = o.delivery_area_id
-         WHERE o.status <> 'cancelled' AND o.order_type = 'delivery'
-           AND EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+         WHERE o.status <> 'cancelled' AND o.order_type = 'delivery' AND o.created_at::date BETWEEN $1 AND $2
            AND ($3::int IS NULL OR o.branch_id = $3)
          GROUP BY da.id, da.name ORDER BY revenue DESC LIMIT 10`,
-        [year, month, branchId]
+        [from, to, branchId]
       ),
       pool.query(
         `SELECT payment_status, COUNT(*) AS count, SUM(total) AS amount
          FROM orders o
-         WHERE o.status <> 'cancelled'
-           AND EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
            AND ($3::int IS NULL OR o.branch_id = $3)
          GROUP BY payment_status`,
-        [year, month, branchId]
+        [from, to, branchId]
       ),
       pool.query(
         `SELECT status, COUNT(*) AS count
          FROM orders o
-         WHERE EXTRACT(YEAR FROM o.created_at) = $1 AND EXTRACT(MONTH FROM o.created_at) = $2
+         WHERE o.created_at::date BETWEEN $1 AND $2
            AND ($3::int IS NULL OR o.branch_id = $3)
          GROUP BY status`,
-        [year, month, branchId]
+        [from, to, branchId]
       ),
       pool.query(
         `SELECT ec.name AS category, SUM(e.amount) AS total
          FROM expenses e
          JOIN expense_categories ec ON ec.id = e.category_id
-         WHERE EXTRACT(YEAR FROM e.business_date) = $1 AND EXTRACT(MONTH FROM e.business_date) = $2
+         WHERE e.business_date BETWEEN $1 AND $2
            AND ($3::int IS NULL OR e.branch_id = $3)
          GROUP BY ec.name ORDER BY total DESC`,
-        [year, month, branchId]
+        [from, to, branchId]
       ),
-      computePayrollCostByBranch(year, month),
+      fullMonth ? computePayrollCostByBranch(fullMonth.year, fullMonth.month) : Promise.resolve({ byBranch: {}, overhead: null, total: null }),
     ]);
 
     const scopedBranches = branchId ? byBranch.filter((r) => r.branchId === branchId) : byBranch;
@@ -392,12 +421,15 @@ router.get("/dashboard", requireAuth, canSeeReports, async (req, res) => {
     const ordersCount = scopedBranches.reduce((s, r) => s + r.ordersCount, 0);
     const grossProfit = revenue - cogs;
     const totalOpex = expensesResult.rows.reduce((s, r) => s + Number(r.total), 0);
-    const payrollCost = branchId ? (payroll.byBranch[branchId] || 0) : payroll.total;
+    const payrollCost = fullMonth ? (branchId ? (payroll.byBranch[branchId] || 0) : payroll.total) : null;
     const netProfitBeforePayroll = grossProfit - totalOpex;
-    const netProfitAfterPayroll = netProfitBeforePayroll - payrollCost;
+    const netProfitAfterPayroll = payrollCost != null ? netProfitBeforePayroll - payrollCost : null;
 
     res.json({
-      year, month, branchId,
+      from, to, branchId,
+      note: fullMonth
+        ? null
+        : "تكلفة الرواتب مش متاحة لمدى تاريخ جزئي أو عابر لأكتر من شهر - الرواتب شهرية بطبيعتها. اختر شهر كامل عشان تظهر.",
       summary: {
         revenue, cogs, grossProfit,
         grossMarginPercent: revenue > 0 ? grossProfit / revenue : null,
@@ -2040,10 +2072,12 @@ function computeApAgingBuckets(rows, asOfDate) {
 // في الفترة (لملء إقرار الضريبة الدوري) - إجمالي المبيعات، صافيها بعد استبعاد الضريبة، والضريبة نفسها،
 // مقسّمة على الفروع. المصدر orders.vat_amount مباشرة (نفس أسلوب computeRevenueAndCogsByBranch التشغيلي
 // فوق، مش دفتر الأستاذ) - القيمتين لازم يتطابقوا دايمًا (يتراجعوا في accounting-reconciliation تحت)
+// ملحوظة (المرحلة 7J): الإقرار الضريبي في مصر شهري بطبيعته، فالافتراضي في الواجهة لسه سنة/شهر - لكن
+// endpoint ده بيقبل from/to كمان (نفس resolveDateRange) لمرونة أكتر لمين عايز يراجع مدى مخصص
 router.get("/vat-summary", requireAuth, canSeeAccounting, async (req, res) => {
-  const year = Number(req.query.year);
-  const month = Number(req.query.month);
-  if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد الفترة (from/to أو year/month)" });
+  const { from, to } = range;
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
 
   try {
@@ -2054,13 +2088,11 @@ router.get("/vat-summary", requireAuth, canSeeAccounting, async (req, res) => {
               SUM(COALESCE(o.vat_amount, 0)) AS vat_collected
        FROM orders o
        LEFT JOIN branches b ON b.id = o.branch_id
-       WHERE o.status <> 'cancelled'
-         AND EXTRACT(YEAR FROM o.created_at) = $1
-         AND EXTRACT(MONTH FROM o.created_at) = $2
+       WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
          AND ($3::int IS NULL OR o.branch_id = $3)
        GROUP BY o.branch_id, b.name
        ORDER BY b.name`,
-      [year, month, branchId]
+      [from, to, branchId]
     );
     const byBranch = byBranchRes.rows.map((r) => {
       const grossSales = Number(r.gross_sales);
@@ -2081,7 +2113,7 @@ router.get("/vat-summary", requireAuth, canSeeAccounting, async (req, res) => {
     );
     const vatSettings = await pool.query("SELECT vat_rate FROM pos_settings WHERE id = 1");
     res.json({
-      year, month, branchId,
+      from, to, branchId,
       currentVatRate: Number(vatSettings.rows[0]?.vat_rate ?? 0),
       byBranch, ...totals,
     });
@@ -2586,22 +2618,19 @@ router.get("/net-operating-profit", requireAuth, canSeeAccounting, async (req, r
   }
 });
 
-// GET /api/reports/accounting-reconciliation?year=&month=&branchId= - مقارنة دفتر الأستاذ الرسمي
-// بمصادر البيانات التشغيلية المستقلة (income-statement القديم، جلسات الكاش اليومية، قيمة المخزون
-// الفعلية، استلام البضاعة، سداد الموردين) - أي فرق (drift) لازم يظهر هنا صراحة، مفيش دمج أو "تصحيح"
-// تلقائي بين المصدرين. أدمن/محاسب بس (بيغطي كل الفروع مع بعض عادةً)
+// GET /api/reports/accounting-reconciliation?from=&to=&branchId= (أو year=&month= كاختصار) - مقارنة
+// دفتر الأستاذ الرسمي بمصادر البيانات التشغيلية المستقلة (income-statement القديم، جلسات الكاش
+// اليومية، قيمة المخزون الفعلية، استلام البضاعة، سداد الموردين) - أي فرق (drift) لازم يظهر هنا
+// صراحة، مفيش دمج أو "تصحيح" تلقائي بين المصدرين. أدمن/محاسب بس (بيغطي كل الفروع مع بعض عادةً)
 router.get("/accounting-reconciliation", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
-  const year = Number(req.query.year);
-  const month = Number(req.query.month);
-  if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد الفترة (from/to أو year/month)" });
+  const { from, to } = range;
   const branchId = req.query.branchId ? Number(req.query.branchId) : null;
-  const from = `${year}-${String(month).padStart(2, "0")}-01`;
-  const lastDay = new Date(year, month, 0).getDate();
-  const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
   const round2 = (n) => Math.round(n * 100) / 100;
 
   try {
-    const legacyByBranch = await computeRevenueAndCogsByBranch(year, month);
+    const legacyByBranch = await computeRevenueAndCogsByBranch(from, to);
     const legacyScoped = branchId ? legacyByBranch.filter((r) => r.branchId === branchId) : legacyByBranch;
     const legacyRevenue = legacyScoped.reduce((s, r) => s + r.revenue, 0);
     const legacyCogs = legacyScoped.reduce((s, r) => s + r.cogs, 0);
@@ -2733,7 +2762,7 @@ router.get("/accounting-reconciliation", requireAuth, requireRole("admin", "acco
       },
     ].map((c) => ({ ...c, matched: Math.abs(c.diff) < 0.01 }));
 
-    res.json({ year, month, branchId, checks, allMatched: checks.every((c) => c.matched) });
+    res.json({ from, to, branchId, checks, allMatched: checks.every((c) => c.matched) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

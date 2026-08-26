@@ -92,6 +92,7 @@
   <div class="brand">📈 ساتاموني — مركز التقارير</div>
   <div id="userInfo">
     <button id="printReportBtn" title="طباعة التبويب الحالي">🖨️ طباعة</button>
+    <button id="exportCsvBtn" title="تحميل التبويب الحالي كملف Excel (CSV)">📊 تصدير Excel</button>
     <span id="userName"></span>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -396,6 +397,7 @@ document.getElementById("logoutBtn").onclick = () => { clearSession(); location.
 // تبويبي "المبيعات" و"أداء الأصناف" رسوم بيانية/بطاقات KPI مش جداول - هتطبع "مفيش بيانات لعرضها"،
 // قرار نطاق متعمّد (مش عيب) - طباعة رسم بياني بشكل نضيف محتاجة تصميم مختلف تمامًا عن الجداول
 document.getElementById("printReportBtn").onclick = () => SatamoniPrint.printCurrentTab();
+document.getElementById("exportCsvBtn").onclick = () => SatamoniPrint.exportCurrentTabCSV();
 
 // ---------------- أدوات عرض عامة ----------------
 const money = (n) => `${Number(n || 0).toLocaleString("ar-EG", { maximumFractionDigits: 0 })} ج.م`;

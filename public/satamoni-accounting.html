@@ -71,6 +71,7 @@
   <div class="brand">💰 ساتاموني — الحسابات</div>
   <div id="userInfo">
     <button id="printReportBtn" title="طباعة التبويب الحالي">🖨️ طباعة</button>
+    <button id="exportCsvBtn" title="تحميل التبويب الحالي كملف Excel (CSV)">📊 تصدير Excel</button>
     <span id="userName"></span>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -269,6 +270,11 @@
         <select id="incBranchSelect"></select>
         <button id="incRefresh">تحديث</button>
       </div>
+      <div class="row">
+        <label>أو مدى مخصص: من</label><input id="incFrom" type="date" />
+        <label>إلى</label><input id="incTo" type="date" />
+        <button id="incClearRange" class="secondary" type="button">مسح المدى المخصص</button>
+      </div>
       <div class="err" id="incErr"></div>
     </div>
 
@@ -322,6 +328,11 @@
         <select id="vatMonth"></select>
         <select id="vatBranchSelect"></select>
         <button id="vatRefresh">تحديث</button>
+      </div>
+      <div class="row">
+        <label>أو مدى مخصص: من</label><input id="vatFrom" type="date" />
+        <label>إلى</label><input id="vatTo" type="date" />
+        <button id="vatClearRange" class="secondary" type="button">مسح المدى المخصص</button>
       </div>
       <div class="err" id="vatErr"></div>
     </div>
@@ -378,7 +389,7 @@
       <h1>كشف حساب: <span id="glAccountName"></span></h1>
       <div class="formbox">
         <div class="row">
-          <input id="glFrom" type="date" /><input id="glTo" type="date" />
+          <label>من</label><input id="glFrom" type="date" /><label>إلى</label><input id="glTo" type="date" />
           <button id="glRefresh">تحديث</button>
           <button id="glClose">إغلاق الكشف</button>
         </div>
@@ -395,7 +406,7 @@
     <h1>القيود المحاسبية</h1>
     <div class="formbox">
       <div class="row">
-        <input id="jeFrom" type="date" /><input id="jeTo" type="date" />
+        <label>من</label><input id="jeFrom" type="date" /><label>إلى</label><input id="jeTo" type="date" />
         <select id="jeStatus">
           <option value="">كل الحالات</option>
           <option value="DRAFT">مسودة</option>
@@ -438,7 +449,7 @@
     <div style="font-size:11px;color:var(--faint);margin-bottom:10px">تقرير مستقل عن "قائمة الدخل" التشغيلية فوق - مصدره القيود المرحّلة بدل جداول العمليات مباشرة. لو فيه فرق بين الاتنين، شوف تبويب "المطابقة والفترات".</div>
     <div class="formbox">
       <div class="row">
-        <input id="plFrom" type="date" /><input id="plTo" type="date" />
+        <label>من</label><input id="plFrom" type="date" /><label>إلى</label><input id="plTo" type="date" />
         <select id="plBranchSelect"></select>
         <button id="plRefresh">تحديث</button>
       </div>
@@ -506,6 +517,11 @@
       <div style="font-size:11px;color:var(--faint);margin-bottom:10px">بيقارن دفتر الأستاذ الرسمي بمصادر البيانات التشغيلية المستقلة - أي فرق بيظهر هنا صراحة، مفيش دمج أو "تصحيح" تلقائي.</div>
       <div class="formbox">
         <div class="row"><select id="reconYear"></select><select id="reconMonth"></select><button id="reconRefresh">تحديث</button></div>
+        <div class="row">
+          <label>أو مدى مخصص: من</label><input id="reconFrom" type="date" />
+          <label>إلى</label><input id="reconTo" type="date" />
+          <button id="reconClearRange" class="secondary" type="button">مسح المدى المخصص</button>
+        </div>
         <div class="err" id="reconErr"></div>
       </div>
       <table>
@@ -633,6 +649,7 @@ document.getElementById("loginBtn").onclick = async () => {
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
 document.getElementById("printReportBtn").onclick = () => SatamoniPrint.printCurrentTab();
+document.getElementById("exportCsvBtn").onclick = () => SatamoniPrint.exportCurrentTabCSV();
 
 // المرحلة 6 (6D): نفس إصلاح satamoni-kitchen.html بالظبط - boot() كان بينادَى من غير await/catch،
 // فأي خطأ (سيرفر واقع/انقطاع إنترنت) كان بيسيب الصفحة فاضية من غير أي رسالة
@@ -696,6 +713,7 @@ function onTabOpen(tab) {
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
+function moneyOrNA(n) { return n == null ? "غير متاح" : money(n); }
 function currentBranchId() { return document.getElementById("branchSelect").value; }
 
 async function boot() {
@@ -1116,9 +1134,12 @@ async function loadIncomeStatement() {
   errBox.textContent = "";
   const year = document.getElementById("incYear").value;
   const month = document.getElementById("incMonth").value;
+  const from = document.getElementById("incFrom").value;
+  const to = document.getElementById("incTo").value;
+  const useCustomRange = from && to;
   const branchId = document.getElementById("incBranchSelect").value;
   try {
-    const params = new URLSearchParams({ year, month });
+    const params = new URLSearchParams(useCustomRange ? { from, to } : { year, month });
     if (branchId) params.set("branchId", branchId);
     const data = await api(`/api/reports/income-statement?${params}`);
 
@@ -1131,30 +1152,39 @@ async function loadIncomeStatement() {
     `).join("") || `<tr><td colspan="2">مفيش مصروفات مسجلة</td></tr>`;
     document.getElementById("incTotalOpex").textContent = money(data.totalOpex);
     document.getElementById("incNetProfit").textContent = money(data.netProfitBeforePayroll);
-    document.getElementById("incPayrollCost").textContent = money(data.payrollCost);
-    document.getElementById("incNetProfitFinal").innerHTML = `<b class="${data.netProfitAfterPayroll < 0 ? "diffneg" : "diffpos"}">${money(data.netProfitAfterPayroll)}</b>`;
+    document.getElementById("incPayrollCost").textContent = moneyOrNA(data.payrollCost);
+    document.getElementById("incNetProfitFinal").innerHTML = data.netProfitAfterPayroll != null
+      ? `<b class="${data.netProfitAfterPayroll < 0 ? "diffneg" : "diffpos"}">${money(data.netProfitAfterPayroll)}</b>`
+      : `<b>غير متاح</b>`;
     document.getElementById("incNote").textContent = data.ordersMissingCostData > 0
       ? `⚠ ${data.ordersMissingCostData} طلب فيه أصناف بدون تكلفة ريسبي كاملة - تكلفة البضاعة المباعة أقل من الحقيقي. ${data.note}`
       : data.note;
 
     if (auth.user.role === "admin" || auth.user.role === "accountant") {
-      const cmp = await api(`/api/reports/income-statement/by-branch?year=${year}&month=${month}`);
+      const cmpParams = new URLSearchParams(useCustomRange ? { from, to } : { year, month });
+      const cmp = await api(`/api/reports/income-statement/by-branch?${cmpParams}`);
       document.getElementById("incBranchCompareWrap").style.display = "block";
       const rows = [...cmp.branches, { branchName: "الإجمالي المجمّع", ...cmp.consolidated }];
       document.getElementById("incBranchCompareBody").innerHTML = rows.map(r => `
         <tr>
           <td>${r.branchName}</td><td>${r.ordersCount}</td><td>${money(r.revenue)}</td><td>${money(r.cogs)}</td>
           <td>${money(r.grossProfit)}</td><td>${pct(r.grossMarginPercent)}</td><td>${money(r.opex)}</td>
-          <td>${money(r.payrollCost)}</td>
-          <td class="${r.netProfitAfterPayroll < 0 ? "diffneg" : "diffpos"}">${money(r.netProfitAfterPayroll)}</td>
+          <td>${moneyOrNA(r.payrollCost)}</td>
+          <td class="${r.netProfitAfterPayroll < 0 ? "diffneg" : "diffpos"}">${r.netProfitAfterPayroll != null ? money(r.netProfitAfterPayroll) : "غير متاح"}</td>
         </tr>
       `).join("");
-      document.getElementById("incOverheadNote").textContent =
-        `تكلفة رواتب الإدارة والمطبخ المركزي (${money(cmp.payrollOverhead)}) متضمّنة في الإجمالي المجمّع بس، مش متحمّلة على فرع بيع بعينه.`;
+      document.getElementById("incOverheadNote").textContent = cmp.payrollOverhead != null
+        ? `تكلفة رواتب الإدارة والمطبخ المركزي (${money(cmp.payrollOverhead)}) متضمّنة في الإجمالي المجمّع بس، مش متحمّلة على فرع بيع بعينه.`
+        : (cmp.note || "");
     }
   } catch (e) { errBox.textContent = e.message; }
 }
 document.getElementById("incRefresh").onclick = loadIncomeStatement;
+document.getElementById("incClearRange").onclick = () => {
+  document.getElementById("incFrom").value = "";
+  document.getElementById("incTo").value = "";
+  loadIncomeStatement();
+};
 
 // ---------------- المرحلة 7H: ضريبة القيمة المضافة ----------------
 async function loadVatSummary() {
@@ -1162,9 +1192,11 @@ async function loadVatSummary() {
   errBox.textContent = "";
   const year = document.getElementById("vatYear").value;
   const month = document.getElementById("vatMonth").value;
+  const from = document.getElementById("vatFrom").value;
+  const to = document.getElementById("vatTo").value;
   const branchId = document.getElementById("vatBranchSelect").value;
   try {
-    const params = new URLSearchParams({ year, month });
+    const params = new URLSearchParams(from && to ? { from, to } : { year, month });
     if (branchId) params.set("branchId", branchId);
     const data = await api(`/api/reports/vat-summary?${params}`);
     document.getElementById("vatRateNote").textContent =
@@ -1181,6 +1213,11 @@ async function loadVatSummary() {
   } catch (e) { errBox.textContent = e.message; }
 }
 document.getElementById("vatRefresh").onclick = loadVatSummary;
+document.getElementById("vatClearRange").onclick = () => {
+  document.getElementById("vatFrom").value = "";
+  document.getElementById("vatTo").value = "";
+  loadVatSummary();
+};
 
 // ================= المرحلة 4B: المحاسبة والدفتر العام =================
 
@@ -1480,7 +1517,10 @@ async function loadReconciliation() {
   try {
     const year = document.getElementById("reconYear").value;
     const month = document.getElementById("reconMonth").value;
-    const data = await api(`/api/reports/accounting-reconciliation?year=${year}&month=${month}`);
+    const from = document.getElementById("reconFrom").value;
+    const to = document.getElementById("reconTo").value;
+    const params = new URLSearchParams(from && to ? { from, to } : { year, month });
+    const data = await api(`/api/reports/accounting-reconciliation?${params}`);
     document.getElementById("reconBody").innerHTML = data.checks.map(c => `
       <tr>
         <td>${c.name}</td><td>${money(c.operational)}</td><td>${money(c.ledger)}</td>
@@ -1491,6 +1531,11 @@ async function loadReconciliation() {
   } catch (e) { errBox.textContent = e.message; }
 }
 document.getElementById("reconRefresh").onclick = loadReconciliation;
+document.getElementById("reconClearRange").onclick = () => {
+  document.getElementById("reconFrom").value = "";
+  document.getElementById("reconTo").value = "";
+  loadReconciliation();
+};
 
 async function loadPeriods() {
   const periods = await api("/api/accounting/periods");

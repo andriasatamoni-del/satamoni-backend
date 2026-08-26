@@ -75,6 +75,7 @@
   <div class="brand">📊 ساتاموني — داش بورد المالك</div>
   <div id="userInfo">
     <button id="printReportBtn" title="طباعة الداش بورد">🖨️ طباعة</button>
+    <button id="exportCsvBtn" title="تحميل الداش بورد كملف Excel (CSV)">📊 تصدير Excel</button>
     <span id="userName"></span>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -96,6 +97,9 @@
     <select id="monthSelect"></select>
     <select id="branchSelect"><option value="">كل الفروع</option></select>
     <button id="refreshBtn">تحديث</button>
+    <label>أو مدى مخصص: من</label><input id="dashFrom" type="date" />
+    <label>إلى</label><input id="dashTo" type="date" />
+    <button id="dashClearRange" class="secondary" type="button">مسح المدى المخصص</button>
   </div>
 
   <div id="loadingState" style="display:none">...جاري التحميل</div>
@@ -243,7 +247,32 @@ function printDashboard() {
 }
 document.getElementById("printReportBtn").onclick = printDashboard;
 
+// نفس محتوى printDashboard بالظبط بس CSV بدل نافذة طباعة - معاد استخدام دوال الاستخراج (extract*)
+// اللي أصلًا اتبنت للطباعة، عشان مصدر البيانات واحد ومفيش ازدواجية منطق
+function exportDashboardCSV() {
+  const { csvEscape, downloadCsv } = SatamoniPrint;
+  const lines = [];
+  extractKpiRows().forEach((k) => lines.push(`${csvEscape(k.label)},${csvEscape(k.value)}`));
+  const sections = [
+    { title: "المبيعات اليومية", rows: extractTrendRows() },
+    { title: "الأصناف الأكثر مبيعًا", rows: extractBarRows("topItemsWrap").map(r => `${r.label}: ${r.value}`) },
+    { title: "الفروع الأكثر مبيعًا", rows: extractBarRows("topBranchesWrap").map(r => `${r.label}: ${r.value}`) },
+    { title: "مناطق التوصيل الأكثر مبيعًا", rows: extractBarRows("topAreasWrap").map(r => `${r.label}: ${r.value}`) },
+    { title: "المصروفات حسب البند", rows: extractBarRows("expensesWrap").map(r => `${r.label}: ${r.value}`) },
+    { title: "حالة التحصيل", rows: extractBarRows("paymentStatusWrap").map(r => `${r.label}: ${r.value}`) },
+    { title: "حالة الطلبات", rows: extractBarRows("orderStatusWrap").map(r => `${r.label}: ${r.value}`) },
+  ];
+  sections.forEach((s) => {
+    lines.push("");
+    lines.push(csvEscape(s.title));
+    s.rows.forEach((r) => lines.push(csvEscape(r)));
+  });
+  downloadCsv("داش بورد المالك", lines.join("\r\n"));
+}
+document.getElementById("exportCsvBtn").onclick = exportDashboardCSV;
+
 const money = (n) => `${Number(n).toLocaleString("ar-EG", { maximumFractionDigits: 0 })} ج.م`;
+const moneyOrNA = (n) => n == null ? "غير متاح" : money(n);
 const pct = (n) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;
 
 function populateFilters() {
@@ -275,14 +304,21 @@ async function boot() {
   await loadDashboard();
 }
 document.getElementById("refreshBtn").onclick = loadDashboard;
+document.getElementById("dashClearRange").onclick = () => {
+  document.getElementById("dashFrom").value = "";
+  document.getElementById("dashTo").value = "";
+  loadDashboard();
+};
 
 async function loadDashboard() {
   const year = document.getElementById("yearSelect").value;
   const month = document.getElementById("monthSelect").value;
+  const from = document.getElementById("dashFrom").value;
+  const to = document.getElementById("dashTo").value;
   const branchId = document.getElementById("branchSelect").value;
   document.getElementById("loadingState").style.display = "block";
   try {
-    const qs = new URLSearchParams({ year, month });
+    const qs = new URLSearchParams(from && to ? { from, to } : { year, month });
     if (branchId) qs.set("branchId", branchId);
     const data = await api(`/api/reports/dashboard?${qs.toString()}`);
     renderKpis(data.summary);
@@ -315,8 +351,8 @@ function renderKpis(s) {
     { label: "مجمل الربح", value: money(s.grossProfit), cls: "green" },
     { label: "هامش الربح الإجمالي", value: pct(s.grossMarginPercent), cls: "green" },
     { label: "المصروفات التشغيلية", value: money(s.totalOpex), cls: "red" },
-    { label: "تكلفة الرواتب", value: money(s.payrollCost), cls: "red" },
-    { label: "صافي الربح", value: money(s.netProfitAfterPayroll), cls: s.netProfitAfterPayroll >= 0 ? "green" : "red" },
+    { label: "تكلفة الرواتب", value: moneyOrNA(s.payrollCost), cls: "red" },
+    { label: "صافي الربح", value: moneyOrNA(s.netProfitAfterPayroll), cls: s.netProfitAfterPayroll == null ? "" : (s.netProfitAfterPayroll >= 0 ? "green" : "red") },
   ];
   document.getElementById("kpiRow").innerHTML = tiles.map(t => `
     <div class="kpi"><div class="label">${t.label}</div><div class="value ${t.cls}">${t.value}</div></div>

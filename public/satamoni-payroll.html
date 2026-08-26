@@ -66,6 +66,7 @@
   <div class="brand">🧑‍🍳 ساتاموني — الرواتب</div>
   <div id="userInfo">
     <button id="printReportBtn" title="طباعة التبويب الحالي">🖨️ طباعة</button>
+    <button id="exportCsvBtn" title="تحميل التبويب الحالي كملف Excel (CSV)">📊 تصدير Excel</button>
     <span id="userName"></span>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -286,13 +287,13 @@
 
     <h2>متوسط مدة الخدمة ومعدل الدوران</h2>
     <div class="formbox">
-      <div class="row"><input id="hrTurnoverFrom" type="date" /><input id="hrTurnoverTo" type="date" /><button id="hrTenureTurnoverBtn">تحديث</button></div>
+      <div class="row"><label>من</label><input id="hrTurnoverFrom" type="date" /><label>إلى</label><input id="hrTurnoverTo" type="date" /><button id="hrTenureTurnoverBtn">تحديث</button></div>
       <div class="row" style="font-size:12px;color:var(--faint)"><span id="hrTenureText"></span></div>
       <div class="row" style="font-size:12px;color:var(--faint)"><span id="hrTurnoverText"></span></div>
     </div>
 
     <h2>التعيينات الجديدة</h2>
-    <div class="formbox"><div class="row"><input id="hrHiresFrom" type="date" /><input id="hrHiresTo" type="date" /><button id="hrHiresBtn">تحديث</button></div></div>
+    <div class="formbox"><div class="row"><label>من</label><input id="hrHiresFrom" type="date" /><label>إلى</label><input id="hrHiresTo" type="date" /><button id="hrHiresBtn">تحديث</button></div></div>
     <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الوظيفة</th><th>تاريخ التعيين</th></tr></thead><tbody id="hrHiresBody"></tbody></table></div>
 
     <h2>الاستقالات وإنهاء الخدمة</h2>
@@ -513,6 +514,7 @@ document.getElementById("loginBtn").onclick = async () => {
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
 document.getElementById("printReportBtn").onclick = () => SatamoniPrint.printCurrentTab();
+document.getElementById("exportCsvBtn").onclick = () => SatamoniPrint.exportCurrentTabCSV();
 
 // المرحلة 4D: تبويب "تقارير HR" بيتحمّل أول مرة يتفتح بس (lazy) - نفس نمط satamoni-accounting.html
 let hrReportsLoaded = false;
