@@ -100,6 +100,7 @@
     <div class="tabbtn" data-tab="ledger">كشف حساب المخزن</div>
     <div class="tabbtn" data-tab="costanalysis">تحليل التكلفة</div>
     <div class="tabbtn" data-tab="income">قائمة الدخل</div>
+    <div class="tabbtn" data-tab="vat">ضريبة القيمة المضافة</div>
     <div class="tabbtn" data-tab="coa">شجرة الحسابات</div>
     <div class="tabbtn" data-tab="journal">القيود</div>
     <div class="tabbtn" data-tab="ledgerpl">قائمة الدخل (الدفتر)</div>
@@ -308,6 +309,35 @@
       </table>
       <div style="font-size:11px;color:var(--faint);margin-top:8px" id="incOverheadNote"></div>
     </div>
+  </div>
+
+  <!-- المرحلة 7H: ضريبة القيمة المضافة -->
+  <div class="panel" id="panel-vat">
+    <h1>ملخّص ضريبة القيمة المضافة</h1>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px" id="vatRateNote"></div>
+    <div class="formbox">
+      <div class="row">
+        <select id="vatYear"></select>
+        <select id="vatMonth"></select>
+        <select id="vatBranchSelect"></select>
+        <button id="vatRefresh">تحديث</button>
+      </div>
+      <div class="err" id="vatErr"></div>
+    </div>
+
+    <table style="margin-bottom:20px">
+      <tbody>
+        <tr><td>إجمالي المبيعات (شامل الضريبة)</td><td id="vatGrossSales" style="text-align:left"></td></tr>
+        <tr><td>صافي المبيعات (بعد استبعاد الضريبة)</td><td id="vatNetSales" style="text-align:left"></td></tr>
+        <tr><td><b>الضريبة المحصّلة (مستحقة لمصلحة الضرائب)</b></td><td id="vatCollected" style="text-align:left"><b></b></td></tr>
+      </tbody>
+    </table>
+
+    <h1>حسب الفرع</h1>
+    <table>
+      <thead><tr><th>الفرع</th><th>عدد الطلبات</th><th>إجمالي المبيعات</th><th>صافي المبيعات</th><th>الضريبة المحصّلة</th></tr></thead>
+      <tbody id="vatByBranchBody"></tbody>
+    </table>
   </div>
 
   <!-- شجرة الحسابات + ميزان المراجعة + كشف حساب -->
@@ -638,7 +668,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 
 // المرحلة 4B: التبويبات الجديدة بتتحمّل أول مرة تتفتح بس (مش وقت boot() زي التبويبات القديمة) - عشان
 // نتجنب نداءات مش لازمة لمدير فرع/محاسب لسه مفتحش التبويب ده أصلًا
-const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false, balance: false, shifts: false, dayclose: false };
+const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false, balance: false, shifts: false, dayclose: false, vat: false };
 function onTabOpen(tab) {
   if (tab === "coa" && !accountingTabLoaded.coa) { accountingTabLoaded.coa = true; loadAccountsForForms().then(loadTrialBalance); }
   if (tab === "journal" && !accountingTabLoaded.journal) { accountingTabLoaded.journal = true; loadAccountsForForms().then(loadJournalEntries); }
@@ -651,6 +681,7 @@ function onTabOpen(tab) {
     if (auth.user.role === "admin") loadFiscalYearClosings();
   }
   if (tab === "balance" && !accountingTabLoaded.balance) { accountingTabLoaded.balance = true; loadBalanceSheet(); }
+  if (tab === "vat" && !accountingTabLoaded.vat) { accountingTabLoaded.vat = true; loadVatSummary(); }
   if (tab === "shifts" && !accountingTabLoaded.shifts) { accountingTabLoaded.shifts = true; loadShifts(); }
   if (tab === "dayclose" && !accountingTabLoaded.dayclose) {
     accountingTabLoaded.dayclose = true;
@@ -718,6 +749,11 @@ async function loadBranches() {
   const plSel = document.getElementById("plBranchSelect");
   plSel.innerHTML = allBranchesOption + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
   if (auth.user.role === "branch_manager") { plSel.value = auth.user.branchId; plSel.disabled = true; }
+
+  // المرحلة 7H: تبويب الضريبة له سلكتور فرع منفصل بنفس منطق incBranchSelect بالظبط
+  const vatSel = document.getElementById("vatBranchSelect");
+  vatSel.innerHTML = allBranchesOption + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  if (auth.user.role === "branch_manager") { vatSel.value = auth.user.branchId; vatSel.disabled = true; }
 
   // فرع السداد والقيد اليدوي - أي فرع (مدير الفرع مقفول على فرعه، القيد اليدوي أصلًا مخفي له)
   const payBranchSel = document.getElementById("payBranch");
@@ -1117,6 +1153,32 @@ async function loadIncomeStatement() {
 }
 document.getElementById("incRefresh").onclick = loadIncomeStatement;
 
+// ---------------- المرحلة 7H: ضريبة القيمة المضافة ----------------
+async function loadVatSummary() {
+  const errBox = document.getElementById("vatErr");
+  errBox.textContent = "";
+  const year = document.getElementById("vatYear").value;
+  const month = document.getElementById("vatMonth").value;
+  const branchId = document.getElementById("vatBranchSelect").value;
+  try {
+    const params = new URLSearchParams({ year, month });
+    if (branchId) params.set("branchId", branchId);
+    const data = await api(`/api/reports/vat-summary?${params}`);
+    document.getElementById("vatRateNote").textContent =
+      `نسبة الضريبة الحالية: ${(data.currentVatRate * 100).toFixed(1)}% - أسعار المنيو شاملة الضريبة بالفعل، والمبالغ هنا مستخرجة منها (مش مضافة فوقها)`;
+    document.getElementById("vatGrossSales").textContent = money(data.grossSales);
+    document.getElementById("vatNetSales").textContent = money(data.netSales);
+    document.getElementById("vatCollected").innerHTML = `<b>${money(data.vatCollected)}</b>`;
+    document.getElementById("vatByBranchBody").innerHTML = data.byBranch.map(r => `
+      <tr>
+        <td>${r.branchName}</td><td>${r.ordersCount}</td>
+        <td>${money(r.grossSales)}</td><td>${money(r.netSales)}</td><td>${money(r.vatCollected)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="5">مفيش مبيعات في الفترة دي</td></tr>`;
+  } catch (e) { errBox.textContent = e.message; }
+}
+document.getElementById("vatRefresh").onclick = loadVatSummary;
+
 // ================= المرحلة 4B: المحاسبة والدفتر العام =================
 
 function accountTypeLabel(t) {
@@ -1398,12 +1460,12 @@ function populateReconSelectors() {
   const years = [];
   for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) years.push(y);
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
-  ["reconYear", "closeYear", "fycYear"].forEach(id => {
+  ["reconYear", "closeYear", "fycYear", "vatYear"].forEach(id => {
     const sel = document.getElementById(id);
     sel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join("");
     sel.value = now.getFullYear();
   });
-  ["reconMonth", "closeMonth"].forEach(id => {
+  ["reconMonth", "closeMonth", "vatMonth"].forEach(id => {
     const sel = document.getElementById(id);
     sel.innerHTML = months.map(m => `<option value="${m}">${m}</option>`).join("");
     sel.value = now.getMonth() + 1;

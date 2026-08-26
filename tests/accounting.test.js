@@ -197,7 +197,10 @@ describe("3) بيع تلقائي: قيد متزن + idempotency + عكس عند 
     const revDebit = revLines.rows.reduce((s, l) => s + Number(l.debit), 0);
     const revCredit = revLines.rows.reduce((s, l) => s + Number(l.credit), 0);
     expect(revDebit).toBe(revCredit);
-    expect(revDebit).toBe(140); // 100 (كاش/مبيعات) + 40 (تكلفة/مخزون) كل واحد اتقلب
+    // المرحلة 7H: 100 (كاش/مبيعات) + 40 (تكلفة/مخزون) + الضريبة المستقطعة من المبيعات (سطر إضافي جديد
+    // على حساب 4100 لصالح 2300) - مبلغها بيتغيّر مع vat_rate الحالي فبنجيبه من الطلب نفسه بدل ما نفترضه
+    const orderRow = await pool.query("SELECT vat_amount FROM orders WHERE id = $1", [orderId]);
+    expect(revDebit).toBeCloseTo(140 + Number(orderRow.rows[0].vat_amount), 6);
   });
 
   test("Void تاني لنفس الطلب - مينفعش يترحّل قيد عكسي تاني (الطلب أصلًا cancelled)", async () => {

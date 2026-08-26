@@ -128,9 +128,14 @@ router.get("/menu-cost-analysis", requireAuth, canSeeReports, async (req, res) =
 async function computeRevenueAndCogsByBranch(year, month) {
   // تكلفة البضاعة المباعة بتتاخد من cost_at_sale المسجّلة على كل سطر طلب وقت البيع نفسه (مش لحظيًا وقت التقرير)
   // عشان لو الريسبي أو تركيبة عرض اتغيرت بعد كدة، الطلبات القديمة تفضل بتكلفتها الحقيقية وقتها
+  // المرحلة 7H: الإيراد هنا صافي من ضريبة القيمة المضافة (total - vat_amount) - الضريبة تحصيل بالنيابة
+  // عن مصلحة الضرائب مش إيراد حقيقي للمنشأة، ونفس المنطق مطبّق في دفتر الأستاذ (routes/orders.js بيقيّد
+  // الضريبة على حساب 2300 المستحق مش على حسابات الإيراد 4100/4200). لازم الاتنين يفضلوا متطابقين عشان
+  // تقرير accounting-reconciliation (اللي بيقارن الإيراد التشغيلي هنا بصافي المبيعات في دفتر الأستاذ)
+  // يفضل صحيح - قبل الضريبة كان الرقمين متطابقين تلقائيًا لأن total نفسه كان هو الإيراد الكامل
   const result = await pool.query(
     `WITH qualifying_orders AS (
-       SELECT o.id, o.branch_id, o.total
+       SELECT o.id, o.branch_id, (o.total - COALESCE(o.vat_amount, 0)) AS net_total
        FROM orders o
        WHERE o.status <> 'cancelled'
          AND EXTRACT(YEAR FROM o.created_at) = $1
@@ -147,7 +152,7 @@ async function computeRevenueAndCogsByBranch(year, month) {
      SELECT qo.branch_id,
             COALESCE(b.name, 'غير مرتبط بفرع') AS branch_name,
             COUNT(*) AS orders_count,
-            SUM(qo.total) AS revenue,
+            SUM(qo.net_total) AS revenue,
             COALESCE(SUM(oct.cost), 0) AS cogs,
             COUNT(*) FILTER (WHERE oct.missing_cost) AS orders_missing_cost_data
      FROM qualifying_orders qo
@@ -2031,6 +2036,60 @@ function computeApAgingBuckets(rows, asOfDate) {
   return buckets.sort((a, b) => b.total - a.total);
 }
 
+// المرحلة 7H: GET /api/reports/vat-summary?year=&month=&branchId= - ملخّص ضريبة القيمة المضافة المحصّلة
+// في الفترة (لملء إقرار الضريبة الدوري) - إجمالي المبيعات، صافيها بعد استبعاد الضريبة، والضريبة نفسها،
+// مقسّمة على الفروع. المصدر orders.vat_amount مباشرة (نفس أسلوب computeRevenueAndCogsByBranch التشغيلي
+// فوق، مش دفتر الأستاذ) - القيمتين لازم يتطابقوا دايمًا (يتراجعوا في accounting-reconciliation تحت)
+router.get("/vat-summary", requireAuth, canSeeAccounting, async (req, res) => {
+  const year = Number(req.query.year);
+  const month = Number(req.query.month);
+  if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+
+  try {
+    const byBranchRes = await pool.query(
+      `SELECT o.branch_id, COALESCE(b.name, 'غير مرتبط بفرع') AS branch_name,
+              COUNT(*) AS orders_count,
+              SUM(o.total) AS gross_sales,
+              SUM(COALESCE(o.vat_amount, 0)) AS vat_collected
+       FROM orders o
+       LEFT JOIN branches b ON b.id = o.branch_id
+       WHERE o.status <> 'cancelled'
+         AND EXTRACT(YEAR FROM o.created_at) = $1
+         AND EXTRACT(MONTH FROM o.created_at) = $2
+         AND ($3::int IS NULL OR o.branch_id = $3)
+       GROUP BY o.branch_id, b.name
+       ORDER BY b.name`,
+      [year, month, branchId]
+    );
+    const byBranch = byBranchRes.rows.map((r) => {
+      const grossSales = Number(r.gross_sales);
+      const vatCollected = Number(r.vat_collected);
+      return {
+        branchId: r.branch_id, branchName: r.branch_name, ordersCount: Number(r.orders_count),
+        grossSales, vatCollected, netSales: grossSales - vatCollected,
+      };
+    });
+    const totals = byBranch.reduce(
+      (acc, r) => ({
+        ordersCount: acc.ordersCount + r.ordersCount,
+        grossSales: acc.grossSales + r.grossSales,
+        vatCollected: acc.vatCollected + r.vatCollected,
+        netSales: acc.netSales + r.netSales,
+      }),
+      { ordersCount: 0, grossSales: 0, vatCollected: 0, netSales: 0 }
+    );
+    const vatSettings = await pool.query("SELECT vat_rate FROM pos_settings WHERE id = 1");
+    res.json({
+      year, month, branchId,
+      currentVatRate: Number(vatSettings.rows[0]?.vat_rate ?? 0),
+      byBranch, ...totals,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/reports/trial-balance?asOf=&branchId= - ميزان المراجعة: كل حساب ورصيده حتى تاريخ معيّن
 router.get("/trial-balance", requireAuth, canSeeAccounting, async (req, res) => {
   const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
@@ -2611,6 +2670,28 @@ router.get("/accounting-reconciliation", requireAuth, requireRole("admin", "acco
       [from, to, branchId]
     );
 
+    // المرحلة 7H: الضريبة المحصّلة تشغيليًا (orders.vat_amount) مقابل صافي حساب 2300 من نفس قيود البيع -
+    // نفس فلسفة فحص الكاش فوق بالظبط (مقارنة جدول تشغيلي بأثره في دفتر الأستاذ). لازم يشمل قيود العكس
+    // (source_type='reversal') كمان مش order_sale بس - طلب اتلغى (voided) بيتستبعد من الجانب التشغيلي
+    // (status<>'cancelled') فوق، فلازم قيد عكسه يتحسب في الجانب الدفتري برضه عشان الاتنين يفضلوا متطابقين
+    // (لو اقتصرنا على order_sale بس، القيد الأصلي (لسه موجود بعلامة REVERSED) هيفضل محسوب من غير ما ينلغي)
+    const operationalVatRes = await pool.query(
+      `SELECT COALESCE(SUM(o.vat_amount),0) AS vat_collected
+       FROM orders o
+       WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR o.branch_id = $3)`,
+      [from, to, branchId]
+    );
+    const ledgerVatRes = await pool.query(
+      `SELECT COALESCE(SUM(jel.credit) - SUM(jel.debit),0) AS vat_collected
+       FROM journal_entry_lines jel
+       JOIN journal_entries je ON je.id = jel.journal_entry_id
+       JOIN accounts a ON a.id = jel.account_id AND a.code = '2300'
+       WHERE je.status <> 'DRAFT' AND je.source_type IN ('order_sale', 'reversal')
+         AND je.entry_date BETWEEN $1 AND $2 AND ($3::int IS NULL OR je.branch_id = $3)`,
+      [from, to, branchId]
+    );
+
     const checks = [
       {
         name: "المبيعات (الإيراد): التقرير التشغيلي income-statement مقابل صافي المبيعات في دفتر الأستاذ",
@@ -2619,6 +2700,12 @@ router.get("/accounting-reconciliation", requireAuth, requireRole("admin", "acco
       {
         name: "تكلفة البضاعة المباعة: التقرير التشغيلي income-statement مقابل دفتر الأستاذ",
         operational: round2(legacyCogs), ledger: round2(pl.cogs), diff: round2(legacyCogs - pl.cogs),
+      },
+      {
+        name: "ضريبة القيمة المضافة: إجمالي orders.vat_amount مقابل رصيد حساب 2300 (ضرائب مستحقة) الدائن من قيود البيع",
+        operational: round2(Number(operationalVatRes.rows[0].vat_collected)),
+        ledger: round2(Number(ledgerVatRes.rows[0].vat_collected)),
+        diff: round2(Number(operationalVatRes.rows[0].vat_collected) - Number(ledgerVatRes.rows[0].vat_collected)),
       },
       {
         name: "الكاش: مبيعات الكاش في جلسات الكاش اليومية مقابل مدين حسابات الكاش من قيود البيع في دفتر الأستاذ",

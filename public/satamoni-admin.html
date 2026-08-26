@@ -132,6 +132,12 @@
       <button id="posSettingsSubmit">حفظ</button>
     </div>
     <div id="posSettingsErr" class="err"></div>
+    <div class="row">
+      <label class="chk" style="flex:0 0 auto">نسبة ضريبة القيمة المضافة (%) - شاملة في أسعار المنيو</label>
+      <input id="vatRateInput" type="number" min="0" max="100" step="0.5" style="max-width:100px" />
+      <button id="vatRateSubmit">حفظ</button>
+    </div>
+    <div id="vatRateErr" class="err"></div>
   </div>
 </div>
 
@@ -305,6 +311,7 @@ async function loadUsers() {
 async function loadPosSettings() {
   const settings = await api("/api/pos-settings");
   document.getElementById("maxDiscountInput").value = Math.round(Number(settings.max_unapproved_discount_percent) * 100);
+  document.getElementById("vatRateInput").value = Number(settings.vat_rate) * 100;
 }
 document.getElementById("posSettingsSubmit").onclick = async () => {
   const errBox = document.getElementById("posSettingsErr");
@@ -312,6 +319,16 @@ document.getElementById("posSettingsSubmit").onclick = async () => {
   try {
     const percent = Number(document.getElementById("maxDiscountInput").value) / 100;
     await api("/api/pos-settings", { method: "PATCH", body: JSON.stringify({ maxUnapprovedDiscountPercent: percent }) });
+    errBox.style.color = "var(--green)";
+    errBox.textContent = "اتحفظ ✓";
+  } catch (e) { errBox.style.color = "#F08A83"; errBox.textContent = e.message; }
+};
+document.getElementById("vatRateSubmit").onclick = async () => {
+  const errBox = document.getElementById("vatRateErr");
+  errBox.textContent = "";
+  try {
+    const rate = Number(document.getElementById("vatRateInput").value) / 100;
+    await api("/api/pos-settings", { method: "PATCH", body: JSON.stringify({ vatRate: rate }) });
     errBox.style.color = "var(--green)";
     errBox.textContent = "اتحفظ ✓";
   } catch (e) { errBox.style.color = "#F08A83"; errBox.textContent = e.message; }

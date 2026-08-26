@@ -66,7 +66,12 @@ CREATE TABLE pos_settings (
   -- لأن حجم المبالغ اللي سائق ممكن يحصّلها في دفعة (يوم كامل من طلبات كاش عند التسليم) غالبًا أكبر من
   -- درج كاشير واحد، فالحد المقبول للفرق منطقي يكون مختلف
   driver_settlement_variance_ack_threshold_egp    NUMERIC NOT NULL DEFAULT 30,
-  driver_settlement_variance_review_threshold_egp NUMERIC NOT NULL DEFAULT 150
+  driver_settlement_variance_review_threshold_egp NUMERIC NOT NULL DEFAULT 150,
+  -- المرحلة 7H: نسبة ضريبة القيمة المضافة - افتراضيًا 14% (المعدل القياسي في مصر حاليًا). أسعار المنيو
+  -- شاملة الضريبة بالفعل (قرار العميل صراحة) - يعني السعر اللي العميل بيدفعه ثابت من غير تغيير، والضريبة
+  -- بتتحسب بطريقة الاستخراج العكسي من الإجمالي (total نفسه ميتغيّرش)، مش بتتضاف فوق. صفر يعني عمليًا
+  -- تعطيل الضريبة بدون الحاجة لعلم منفصل (مفيش vat_enabled - القيمة نفسها كفاية)
+  vat_rate NUMERIC NOT NULL DEFAULT 0.14
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -240,7 +245,11 @@ CREATE TABLE orders (
   kitchen_status        TEXT NOT NULL DEFAULT 'NEW'
                           CHECK (kitchen_status IN ('NEW', 'ACCEPTED', 'PREPARING', 'READY')),
   kitchen_accepted_at   TIMESTAMPTZ,
-  kitchen_ready_at      TIMESTAMPTZ
+  kitchen_ready_at      TIMESTAMPTZ,
+  -- المرحلة 7H: قيمة ضريبة القيمة المضافة المستخرجة من total (مش إضافة فوقه - الأسعار شاملة الضريبة
+  -- بالفعل). بتتجمّد وقت إنشاء/تعديل الطلب بسعر pos_settings.vat_rate وقتها بالظبط (نفس فلسفة
+  -- loyalty_points_earned المجمّدة) عشان لو الفرع غيّر النسبة بعدين، الطلبات القديمة تفضل صحيحة تاريخيًا
+  vat_amount            NUMERIC NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX idx_orders_idempotency_key ON orders(idempotency_key) WHERE idempotency_key IS NOT NULL;
 -- المرحلة 7G: لوحة المطبخ بتفلتر بالفرع + استبعاد READY القديم (الاستعلام في routes/kds.js) على كل تحديث

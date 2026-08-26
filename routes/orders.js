@@ -223,6 +223,13 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     const total = subtotal + deliveryFee - discount - loyaltyRedeemValue;
     const createdBy = source === "pos" || source === "callcenter" || source === "talabat" ? req.user.id : null;
 
+    // المرحلة 7H: ضريبة القيمة المضافة - أسعار المنيو شاملة الضريبة بالفعل (قرار صريح)، يعني total مبيتغيرش
+    // خالص، والضريبة بتتحسب باستخراجها عكسيًا من total نفسه (مش إضافة فوقه). vat_rate بيتجمّد وقت الإنشاء
+    // (نفس فلسفة loyalty_points_earned) عشان لو الفرع غيّر النسبة بعدين الطلبات القديمة تفضل صحيحة تاريخيًا
+    const vatSettings = await client.query("SELECT vat_rate FROM pos_settings WHERE id = 1");
+    const vatRate = Number(vatSettings.rows[0]?.vat_rate ?? 0);
+    const vatAmount = total > 0 && vatRate > 0 ? Math.round((total - total / (1 + vatRate)) * 100) / 100 : 0;
+
     // حالة الطلب المبدئية: طلبات الدليفري بتدخل دورة حياة (تحت التحضير -> في الطريق -> اتسلمت)،
     // أما الصالة/تيك أواي فبتتحاسب وتتسلم فورًا عند الكاشير فمفيش داعي لدورة حياة.
     const initialStatus = orderType === "delivery" ? "preparing" : "completed";
@@ -283,14 +290,14 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
          address_details, customer_name, customer_phone, payment_method_id,
          created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status,
          loyalty_points_earned, loyalty_points_redeemed, loyalty_redeem_value, idempotency_key, shift_id,
-         dispatch_status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+         dispatch_status, vat_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, customerName, customerPhone, paymentMethodId,
        createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus,
        loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, idempotencyKey || null, shiftId,
-       initialDispatchStatus]
+       initialDispatchStatus, vatAmount]
     );
     const orderId = orderResult.rows[0].id;
 
@@ -509,6 +516,13 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       if (deliveryFee > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4200")).id, credit: deliveryFee });
       if (discount > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: discount });
       if (loyaltyRedeemValue > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: loyaltyRedeemValue, description: "خصم نقاط ولاء" });
+      // المرحلة 7H: الضريبة مش إيراد حقيقي للمنشأة (تحصيل بالنيابة عن مصلحة الضرائب) - بتتشال من صافي
+      // الإيراد (4100) وتتسجل كخصم مستحق (2300) بدل ما تفضل جزء من رقم المبيعات. القيد لسه متزن: الجزء
+      // المدين الإضافي (4100) بيوازي الجزء الدائن الإضافي (2300) بالظبط، فمجموع المدين يفضل = مجموع الدائن
+      if (vatAmount > 0) {
+        revenueLines.push({ accountId: (await getAccountByCode(client, "4100")).id, debit: vatAmount, description: "ضريبة القيمة المضافة (مستقطعة من الإيراد)" });
+        revenueLines.push({ accountId: (await getAccountByCode(client, "2300")).id, credit: vatAmount, description: "ضريبة قيمة مضافة على المبيعات" });
+      }
 
       if (costTotal > 0) {
         revenueLines.push({ accountId: (await getAccountByCode(client, "5100")).id, debit: costTotal, description: costIncomplete ? "تكلفة جزئية (بيانات تكلفة ناقصة لبعض الأصناف)" : null });
@@ -1287,6 +1301,11 @@ router.put(
 
       const total = subtotal + deliveryFee - discount - loyaltyRedeemValue;
 
+      // المرحلة 7H: نفس منطق POST / بالظبط - الضريبة بتتحسب من جديد على الـtotal الجديد بعد التعديل
+      const vatSettings = await client.query("SELECT vat_rate FROM pos_settings WHERE id = 1");
+      const vatRate = Number(vatSettings.rows[0]?.vat_rate ?? 0);
+      const vatAmount = total > 0 && vatRate > 0 ? Math.round((total - total / (1 + vatRate)) * 100) / 100 : 0;
+
       let loyaltyPointsEarned = 0;
       if (finalCustomerPhone && total > 0) {
         const loyaltySettings = await client.query("SELECT loyalty_points_per_egp FROM pos_settings WHERE id = 1");
@@ -1300,12 +1319,12 @@ router.put(
            customer_name = $4, customer_phone = $5, payment_method_id = $6,
            subtotal = $7, delivery_fee = $8, discount = $9, discount_approved_by = $10,
            total = $11, loyalty_points_earned = $12, loyalty_points_redeemed = $13, loyalty_redeem_value = $14,
-           synced_at = NULL
-         WHERE id = $15`,
+           vat_amount = $15, synced_at = NULL
+         WHERE id = $16`,
         [
           finalTableNumber, finalDeliveryAreaId, finalAddressDetails, finalCustomerName, finalCustomerPhone,
           finalPaymentMethodId, subtotal, deliveryFee, discount, discountApprovedBy || null,
-          total, loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, order.id,
+          total, loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, vatAmount, order.id,
         ]
       );
 
@@ -1373,6 +1392,11 @@ router.put(
         if (deliveryFee > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4200")).id, credit: deliveryFee });
         if (discount > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: discount });
         if (loyaltyRedeemValue > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: loyaltyRedeemValue, description: "خصم نقاط ولاء" });
+        // المرحلة 7H: نفس منطق POST / بالظبط - راجع الشرح هناك
+        if (vatAmount > 0) {
+          revenueLines.push({ accountId: (await getAccountByCode(client, "4100")).id, debit: vatAmount, description: "ضريبة القيمة المضافة (مستقطعة من الإيراد)" });
+          revenueLines.push({ accountId: (await getAccountByCode(client, "2300")).id, credit: vatAmount, description: "ضريبة قيمة مضافة على المبيعات" });
+        }
 
         if (costTotal > 0) {
           revenueLines.push({ accountId: (await getAccountByCode(client, "5100")).id, debit: costTotal, description: costIncomplete ? "تكلفة جزئية (بيانات تكلفة ناقصة لبعض الأصناف)" : null });

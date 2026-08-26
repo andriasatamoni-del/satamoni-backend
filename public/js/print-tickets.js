@@ -111,6 +111,10 @@
       if (Number(full.delivery_fee) > 0) totalsRows.push(`<tr><td>رسوم التوصيل</td><td>${money(full.delivery_fee)}</td></tr>`);
       if (Number(full.discount) > 0) totalsRows.push(`<tr><td>الخصم</td><td>-${money(full.discount)}</td></tr>`);
       if (Number(full.loyalty_redeem_value) > 0) totalsRows.push(`<tr><td>نقاط ولاء مستخدمة</td><td>-${money(full.loyalty_redeem_value)}</td></tr>`);
+      // المرحلة 7H: الضريبة مش سطر بيتضاف للإجمالي - هي جزء من full.total نفسه أصلًا (السعر شامل الضريبة)،
+      // هنا بس بيان توضيحي (استخراج عكسي) لقيمتها المضمّنة، زي أي إيصال ضريبي حقيقي. لازم يفضل قبل سطر
+      // "الإجمالي" عشان الإجمالي يفضل هو آخر سطر (فيه تنسيق بولد/خط علوي مخصوص له بس في CSS الجدول)
+      if (Number(full.vat_amount) > 0) totalsRows.push(`<tr><td>منها ضريبة قيمة مضافة</td><td>${money(full.vat_amount)}</td></tr>`);
       totalsRows.push(`<tr><td>الإجمالي</td><td>${money(full.total)}</td></tr>`);
       body.innerHTML = `
         <h2>ساتاموني</h2>

@@ -14,10 +14,11 @@ router.get("/", requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/pos-settings - تعديل الحد المسموح للخصم من غير موافقة و/أو معدّل نقاط الولاء (أدمن بس)
+// PATCH /api/pos-settings - تعديل الحد المسموح للخصم من غير موافقة و/أو معدّل نقاط الولاء و/أو نسبة
+// الضريبة (أدمن بس)
 router.patch("/", requireAuth, requireRole("admin"), async (req, res) => {
-  const { maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp } = req.body;
-  if ([maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp].every((v) => v === undefined)) {
+  const { maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp, vatRate } = req.body;
+  if ([maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp, vatRate].every((v) => v === undefined)) {
     return res.status(400).json({ error: "مفيش حاجة تتعدل" });
   }
   if (maxUnapprovedDiscountPercent !== undefined && (maxUnapprovedDiscountPercent < 0 || maxUnapprovedDiscountPercent > 1)) {
@@ -32,6 +33,9 @@ router.patch("/", requireAuth, requireRole("admin"), async (req, res) => {
   if (loyaltyRedeemValueEgp !== undefined && loyaltyRedeemValueEgp < 0) {
     return res.status(400).json({ error: "قيمة النقطة عند الاستخدام لازم تكون صفر أو أكبر" });
   }
+  if (vatRate !== undefined && (vatRate < 0 || vatRate > 1)) {
+    return res.status(400).json({ error: "نسبة الضريبة لازم تكون بين 0 و 1 (مثلًا 0.14 يعني 14%)" });
+  }
   const fields = [];
   const values = [];
   let i = 1;
@@ -39,6 +43,7 @@ router.patch("/", requireAuth, requireRole("admin"), async (req, res) => {
   if (discountManagerMaxPercent !== undefined) { fields.push(`discount_manager_max_percent = $${i++}`); values.push(discountManagerMaxPercent); }
   if (loyaltyPointsPerEgp !== undefined) { fields.push(`loyalty_points_per_egp = $${i++}`); values.push(loyaltyPointsPerEgp); }
   if (loyaltyRedeemValueEgp !== undefined) { fields.push(`loyalty_redeem_value_egp = $${i++}`); values.push(loyaltyRedeemValueEgp); }
+  if (vatRate !== undefined) { fields.push(`vat_rate = $${i++}`); values.push(vatRate); }
   try {
     const result = await pool.query(
       `UPDATE pos_settings SET ${fields.join(", ")} WHERE id = 1 RETURNING *`,
