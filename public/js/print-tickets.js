@@ -131,5 +131,7 @@
     }
   }
 
-  window.SatamoniPrint = { printKitchenTicket, printCashierReceipt };
+  // Object.assign بدل استبدال مباشر - عشان لو صفحة حمّلت print-reports.js (المرحلة 7I) كمان
+  // مع الملف ده، الاتنين يتجمّعوا في نفس الكائن مهما كان ترتيب التحميل، مش يمسح واحد التاني
+  window.SatamoniPrint = Object.assign(window.SatamoniPrint || {}, { printKitchenTicket, printCashierReceipt });
 })();

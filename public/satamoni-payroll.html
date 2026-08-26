@@ -65,6 +65,7 @@
 <div id="topbar">
   <div class="brand">🧑‍🍳 ساتاموني — الرواتب</div>
   <div id="userInfo">
+    <button id="printReportBtn" title="طباعة التبويب الحالي">🖨️ طباعة</button>
     <span id="userName"></span>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -426,6 +427,7 @@
 
 <div id="accessDenied" style="display:none">مفيش صلاحية أدمن/محاسب على الحساب ده.</div>
 
+<script src="/js/print-reports.js"></script>
 <script>
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
 // المرحلة 4D: مدير الفرع بقى يقدر يدخل الصفحة دي (كان أدمن/محاسب بس قبل كده) - لكن بيشوف تبويبي
@@ -510,6 +512,7 @@ document.getElementById("loginBtn").onclick = async () => {
   }
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+document.getElementById("printReportBtn").onclick = () => SatamoniPrint.printCurrentTab();
 
 // المرحلة 4D: تبويب "تقارير HR" بيتحمّل أول مرة يتفتح بس (lazy) - نفس نمط satamoni-accounting.html
 let hrReportsLoaded = false;
