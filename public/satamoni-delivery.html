@@ -29,6 +29,9 @@
   }
   .tab { padding: 8px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 12px; }
   .tab.active { background: var(--red); color: #fff; border-color: var(--red); }
+  /* المرحلة 7L: صف تبويبات نوع الطلب (تيك أواي/دليفري/صالة/طلبات) تحت صف الفلاتر الأساسي */
+  #typeFilters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  #typeFilters .tab.active { background: var(--gold); border-color: var(--gold); color: var(--bg); }
   #refreshBtn { margin-right: auto; background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 6px; padding: 8px 12px; cursor: pointer; font-size: 12px; }
 
   #ordersList { display: flex; flex-direction: column; gap: 10px; }
@@ -128,6 +131,14 @@
     </select>
     <button id="refreshBtn">تحديث</button>
   </div>
+  <!-- المرحلة 7L: فصل تيك أواي عن دليفري (وباقي الأنواع) في شاشة متابعة الطلبات -->
+  <div id="typeFilters">
+    <div class="tab active" data-otype="">كل الأنواع</div>
+    <div class="tab" data-otype="takeaway">تيك أواي</div>
+    <div class="tab" data-otype="delivery">دليفري</div>
+    <div class="tab" data-otype="dinein">صالة</div>
+    <div class="tab" data-otype="talabat">طلبات 🛵</div>
+  </div>
   <div id="ordersList"></div>
   <div id="emptyState" style="display:none">مفيش طلبات مطابقة</div>
 </div>
@@ -176,7 +187,7 @@ const auth = {
 if (auth.user && auth.user.role === "cashier") location.replace("satamoni-pos.html");
 if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
 
-const state = { status: "", branchId: "", paymentStatus: "", branches: [], paymentMethods: [] };
+const state = { status: "", branchId: "", paymentStatus: "", orderType: "", branches: [], paymentMethods: [] };
 
 function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
 function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
@@ -252,10 +263,18 @@ async function boot() {
   await loadOrders();
 }
 
-document.querySelectorAll(".tab").forEach(tab => {
+document.querySelectorAll("#filters .tab[data-status]").forEach(tab => {
   tab.onclick = () => {
     state.status = tab.dataset.status;
-    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t === tab));
+    document.querySelectorAll("#filters .tab[data-status]").forEach(t => t.classList.toggle("active", t === tab));
+    loadOrders();
+  };
+});
+// المرحلة 7L: فصل تيك أواي عن دليفري (وباقي الأنواع) - صف تبويبات منفصل، مستقل عن فلتر الحالة
+document.querySelectorAll("#typeFilters .tab[data-otype]").forEach(tab => {
+  tab.onclick = () => {
+    state.orderType = tab.dataset.otype;
+    document.querySelectorAll("#typeFilters .tab[data-otype]").forEach(t => t.classList.toggle("active", t === tab));
     loadOrders();
   };
 });
@@ -274,6 +293,7 @@ async function loadOrders() {
     if (state.status) qs.set("status", state.status);
     if (state.branchId) qs.set("branchId", state.branchId);
     if (state.paymentStatus) qs.set("paymentStatus", state.paymentStatus);
+    if (state.orderType) qs.set("orderType", state.orderType);
     const orders = await api(`/api/orders?${qs.toString()}`);
     renderOrders(orders);
   } catch (e) {

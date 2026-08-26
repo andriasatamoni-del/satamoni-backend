@@ -108,6 +108,9 @@
   #ordersTopbar select { background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 10px; font-size: 12px; }
   .otab { padding: 7px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 12px; }
   .otab.active { background: var(--red); color: #fff; border-color: var(--red); }
+  /* المرحلة 7L: صف تبويبات نوع الطلب (تيك أواي/دليفري/صالة/طلبات) تحت صف حالة الطلب مباشرة */
+  #ordersTypeTabs { background: var(--bg-alt); border-bottom: 1px solid var(--line); padding: 8px 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+  #ordersTypeTabs .otab.active { background: var(--gold); border-color: var(--gold); color: var(--bg); }
   #ordersRefreshBtn { background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 12px; }
   #ordersList { display: flex; flex-direction: column; gap: 10px; padding: 16px; max-width: 900px; margin: 0 auto; }
   .order-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
@@ -200,6 +203,14 @@
     <div class="otab" data-ostatus="cancelled">ملغاة</div>
     <select id="ordersBranchSelect"><option value="">كل الفروع</option></select>
     <button id="ordersRefreshBtn">تحديث</button>
+  </div>
+  <!-- المرحلة 7L: فصل تيك أواي عن دليفري (وباقي الأنواع) في شاشة متابعة الطلبات -->
+  <div id="ordersTypeTabs">
+    <div class="otab active" data-otype="">كل الأنواع</div>
+    <div class="otab" data-otype="takeaway">تيك أواي</div>
+    <div class="otab" data-otype="delivery">دليفري</div>
+    <div class="otab" data-otype="dinein">صالة</div>
+    <div class="otab" data-otype="talabat">طلبات 🛵</div>
   </div>
   <div id="ordersList"></div>
   <div id="ordersEmptyState" style="display:none">مفيش طلبات مطابقة</div>
@@ -955,7 +966,7 @@ if (auth.token && auth.user && (auth.user.role === "callcenter" || auth.user.rol
 }
 
 // ---------------- الطلبات الجارية (نفس منطق satamoni-delivery.html، الكول سنتر بيشوف كل الفروع) ----------------
-const ordersState = { status: "", branchId: "" };
+const ordersState = { status: "", branchId: "", orderType: "" };
 const DELAY_THRESHOLD_MINUTES = 45;
 const orderStatusLabels = { preparing: "تحت التحضير", out_for_delivery: "في الطريق", completed: "مكتملة", cancelled: "ملغاة" };
 const orderPaymentLabels = { collected: "محصّل", pending_collection: "تحت التحصيل" };
@@ -970,10 +981,18 @@ document.getElementById("ordersOpenBtn").onclick = () => {
 document.getElementById("ordersCloseBtn").onclick = () => {
   document.getElementById("ordersOverlay").classList.remove("show");
 };
-document.querySelectorAll(".otab").forEach(tab => {
+// المرحلة 7L: صفين تبويبات منفصلين (حالة/نوع) - كل واحد بيأثر على نفسه بس، مش بيلغي اختيار التاني
+document.querySelectorAll("#ordersTopbar .otab[data-ostatus]").forEach(tab => {
   tab.onclick = () => {
     ordersState.status = tab.dataset.ostatus;
-    document.querySelectorAll(".otab").forEach(t => t.classList.toggle("active", t === tab));
+    document.querySelectorAll("#ordersTopbar .otab[data-ostatus]").forEach(t => t.classList.toggle("active", t === tab));
+    loadActiveOrders();
+  };
+});
+document.querySelectorAll("#ordersTypeTabs .otab[data-otype]").forEach(tab => {
+  tab.onclick = () => {
+    ordersState.orderType = tab.dataset.otype;
+    document.querySelectorAll("#ordersTypeTabs .otab[data-otype]").forEach(t => t.classList.toggle("active", t === tab));
     loadActiveOrders();
   };
 });
@@ -992,6 +1011,7 @@ async function loadActiveOrders() {
   try {
     const qs = new URLSearchParams();
     if (ordersState.status) qs.set("status", ordersState.status);
+    if (ordersState.orderType) qs.set("orderType", ordersState.orderType);
     if (ordersState.branchId) qs.set("branchId", ordersState.branchId);
     const orders = await api(`/api/orders?${qs.toString()}`);
     renderActiveOrders(orders);

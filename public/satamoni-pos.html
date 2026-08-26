@@ -146,6 +146,9 @@
   #ordersCloseBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
   .otab { padding: 7px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 12px; }
   .otab.active { background: var(--red); color: #fff; border-color: var(--red); }
+  /* المرحلة 7L: صف تبويبات نوع الطلب (تيك أواي/دليفري/صالة/طلبات) تحت صف حالة الطلب مباشرة */
+  #ordersTypeTabs { background: var(--bg-alt); border-bottom: 1px solid var(--line); padding: 8px 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+  #ordersTypeTabs .otab.active { background: var(--gold); border-color: var(--gold); color: var(--bg); }
   #ordersRefreshBtn { background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 12px; }
   #ordersList { display: flex; flex-direction: column; gap: 10px; padding: 16px; max-width: 900px; margin: 0 auto; }
   .order-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
@@ -288,6 +291,14 @@
     <div class="otab" data-ostatus="cancelled">ملغاة</div>
     <button id="ordersRefreshBtn">تحديث</button>
   </div>
+  <!-- المرحلة 7L: فصل تيك أواي عن دليفري (وباقي الأنواع) في شاشة متابعة الطلبات -->
+  <div id="ordersTypeTabs">
+    <div class="otab active" data-otype="">كل الأنواع</div>
+    <div class="otab" data-otype="takeaway">تيك أواي</div>
+    <div class="otab" data-otype="delivery">دليفري</div>
+    <div class="otab" data-otype="dinein">صالة</div>
+    <div class="otab" data-otype="talabat">طلبات 🛵</div>
+  </div>
   <div id="ordersList"></div>
   <div id="ordersEmptyState" style="display:none">مفيش طلبات مطابقة</div>
 </div>
@@ -319,13 +330,20 @@
 
     <div id="extraFields">
       <input id="tableInput" placeholder="رقم الطاولة" style="display:none" />
-      <input id="phoneInput" placeholder="رقم موبايل العميل (اختياري)" />
+      <input id="phoneInput" placeholder="رقم موبايل العميل" />
+      <div id="customerStatus" style="font-size:11px;min-height:14px"></div>
+      <input id="nameInput" placeholder="اسم العميل" style="display:none" />
+      <input id="phone2Input" placeholder="رقم موبايل تاني (اختياري)" style="display:none" />
+      <select id="areaSelect" style="display:none"></select>
+      <input id="addressInput" placeholder="تفاصيل العنوان (شارع/عمارة/دور/شقة)" style="display:none" />
+      <input id="markInput" placeholder="علامة مميزة (بجوار كذا...)" style="display:none" />
     </div>
 
     <div id="cartList"><div class="cart-empty">السلة فاضية — دوس على أي صنف من المنيو</div></div>
 
     <div id="cartFooter">
       <div class="row"><span>الإجمالي الفرعي</span><span id="subtotalVal">0 ج.م</span></div>
+      <div class="row" id="deliveryRow" style="display:none"><span>التوصيل</span><span id="deliveryVal">0 ج.م</span></div>
       <div class="row" style="align-items:center">
         <span>خصم</span>
         <input id="discountInput" type="number" min="0" value="0" style="width:90px;background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 8px;font-size:13px" />
@@ -413,6 +431,8 @@ const state = {
   branches: [],
   paymentMethods: [],
   combos: [],
+  deliveryAreas: [], // المرحلة 7L: مناطق التوصيل - لدعم طلبات الدليفري من شاشة الكاشير زي الكول سنتر بالظبط
+  selectedAreaId: "",
   // key: `${itemId}__${variantId}` أو `combo__${comboId}` للعروض
   // -> {itemId, variantId, name, label, price, qty} أو {comboId, name, label, price, qty}
   cart: {},
@@ -507,8 +527,10 @@ async function loadConfig() {
     state.branches = data.branches;
     state.paymentMethods = data.paymentMethods;
     state.combos = data.combos || [];
+    state.deliveryAreas = data.deliveryAreas || [];
     const ownBranchId = auth.user && auth.user.role !== "admin" ? auth.user.branchId : null;
     state.selectedBranchId = ownBranchId || data.branches[0]?.id || "";
+    state.selectedAreaId = state.deliveryAreas.find(a => String(a.branchId) === String(state.selectedBranchId))?.id || "";
     state.selectedPaymentId = data.paymentMethods.find(p => p.enabled)?.id || "";
     state.activeCategory = [...new Set(menuForChannel().map(m => m.category))][0];
 
@@ -526,6 +548,7 @@ async function loadConfig() {
     document.getElementById("connDot").className = "dot ok";
     document.getElementById("connText").textContent = "متصل بالسيرفر";
     renderBranchSelect();
+    renderAreaSelect();
     renderMenuGroupToggle();
     renderTabs();
     renderGrid();
@@ -547,8 +570,24 @@ function renderBranchSelect() {
   sel.value = state.selectedBranchId;
   const isLockedToOwnBranch = auth.user && auth.user.role !== "admin";
   sel.disabled = isLockedToOwnBranch;
-  sel.onchange = () => { state.selectedBranchId = sel.value; applyDineInVisibility(); };
+  sel.onchange = () => { state.selectedBranchId = sel.value; applyDineInVisibility(); renderAreaSelect(); };
   applyDineInVisibility();
+}
+
+// المرحلة 7L: مناطق التوصيل مربوطة بفرع (زي الكول سنتر بالظبط) - كل فرع بيوري مناطقه بس
+function renderAreaSelect() {
+  const sel = document.getElementById("areaSelect");
+  const areasForBranch = state.deliveryAreas.filter(a => String(a.branchId) === String(state.selectedBranchId));
+  sel.innerHTML = areasForBranch.map(a => `<option value="${a.id}">${a.name} (+${money(a.fee)})</option>`).join("");
+  sel.value = state.selectedAreaId;
+  state.selectedAreaId = sel.value;
+  sel.onchange = () => { state.selectedAreaId = sel.value; renderCart(); updateSubmitState(); };
+}
+
+function currentDeliveryFee() {
+  if (state.orderType !== "delivery") return 0;
+  const area = state.deliveryAreas.find(a => String(a.id) === String(state.selectedAreaId));
+  return area ? Number(area.fee) : 0;
 }
 
 // "صالة" بتظهر بس للفروع اللي فيها صالة تناول داخلي فعلًا (زي الإبراهيمية) - غيرها تيك أواي/دليفري بس
@@ -784,8 +823,11 @@ function renderCart() {
   }
 
   const subtotal = rows.reduce((s, [,v]) => s + v.price * v.qty, 0);
+  const deliveryFee = currentDeliveryFee();
   document.getElementById("subtotalVal").textContent = money(subtotal);
-  document.getElementById("totalVal").textContent = money(Math.max(subtotal - currentDiscount(), 0));
+  document.getElementById("deliveryRow").style.display = state.orderType === "delivery" ? "flex" : "none";
+  document.getElementById("deliveryVal").textContent = money(deliveryFee);
+  document.getElementById("totalVal").textContent = money(Math.max(subtotal + deliveryFee - currentDiscount(), 0));
   updateDiscountNote();
   updateSubmitState();
 }
@@ -1130,7 +1172,15 @@ function updateSubmitState() {
   const okBranch = !!state.selectedBranchId;
   const okTable = state.channel === "talabat" || state.orderType !== "dinein" ||
     document.getElementById("tableInput").value.trim();
-  const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okTable;
+  // المرحلة 7L: طلب الدليفري محتاج اسم/تليفون/منطقة/عنوان - نفس شرط الكول سنتر بالظبط
+  const isDelivery = state.channel !== "talabat" && state.orderType === "delivery";
+  const okDelivery = !isDelivery || (
+    state.selectedAreaId &&
+    document.getElementById("addressInput").value.trim() &&
+    document.getElementById("nameInput").value.trim() &&
+    document.getElementById("phoneInput").value.trim()
+  );
+  const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okTable && okDelivery;
   document.getElementById("submitBtn").disabled = !ok;
 }
 
@@ -1153,15 +1203,86 @@ document.querySelectorAll(".channel-btn").forEach(btn => {
   };
 });
 
+// المرحلة 7L: عناصر بيانات عميل الدليفري (اسم/رقم تاني/منطقة/عنوان/علامة مميزة) بتظهر بس لما نوع
+// الطلب "دليفري" - نفس نمط الكول سنتر بالظبط
+function applyDeliveryFieldsVisibility() {
+  const isDelivery = state.orderType === "delivery";
+  document.getElementById("nameInput").style.display = isDelivery ? "block" : "none";
+  document.getElementById("phone2Input").style.display = isDelivery ? "block" : "none";
+  document.getElementById("areaSelect").style.display = isDelivery ? "block" : "none";
+  document.getElementById("addressInput").style.display = isDelivery ? "block" : "none";
+  document.getElementById("markInput").style.display = isDelivery ? "block" : "none";
+  renderCart();
+}
+
 document.querySelectorAll(".otype-btn").forEach(btn => {
   btn.onclick = () => {
     state.orderType = btn.dataset.type;
     document.querySelectorAll(".otype-btn").forEach(b => b.classList.toggle("active", b === btn));
     document.getElementById("tableInput").style.display = state.orderType === "dinein" ? "block" : "none";
+    applyDeliveryFieldsVisibility();
     updateSubmitState();
   };
 });
 document.getElementById("tableInput").addEventListener("input", updateSubmitState);
+["nameInput", "phone2Input", "addressInput", "markInput"].forEach(id => {
+  document.getElementById(id).addEventListener("input", updateSubmitState);
+});
+
+// المرحلة 7L: بحث تلقائي بالتليفون بمجرد ما الكاشير يكتب رقم كامل - نفس آلية الكول سنتر بالظبط.
+// عميل متسجل: بياناته المحفوظة (اسم/عنوان/منطقة/علامة) بتتملى تلقائي من غير ما تمسح أي حاجة الكاشير
+// كتبها بإيده. عميل جديد: الحقول تفضل فاضية والكاشير لازم يسجلها بنفسه قبل ما يقدر يبعت الطلب
+let posPhoneLookupTimer = null;
+function applyCustomerLookup(phone, p) {
+  document.getElementById("phoneInput").value = phone;
+  const statusEl = document.getElementById("customerStatus");
+  if (p.isRegistered) {
+    statusEl.textContent = "✅ عميل مسجل من قبل";
+    statusEl.style.color = "var(--green)";
+    if (p.name && !document.getElementById("nameInput").value.trim()) document.getElementById("nameInput").value = p.name;
+    if (p.phone2 && !document.getElementById("phone2Input").value.trim()) document.getElementById("phone2Input").value = p.phone2;
+    if (p.addressDetails && !document.getElementById("addressInput").value.trim()) document.getElementById("addressInput").value = p.addressDetails;
+    if (p.distinguishingMark && !document.getElementById("markInput").value.trim()) document.getElementById("markInput").value = p.distinguishingMark;
+    if (p.deliveryAreaId) {
+      const area = state.deliveryAreas.find(a => String(a.id) === String(p.deliveryAreaId));
+      if (area && String(area.branchId) !== String(state.selectedBranchId) && !(auth.user && auth.user.role !== "admin")) {
+        // مدير الفرع/الكاشير مقفولين على فرعهم أصلًا (branchSelect معطّل) - التبديل ده لأدمن بس، زي الكول سنتر
+        const branchSel = document.getElementById("branchSelect");
+        branchSel.value = area.branchId;
+        state.selectedBranchId = branchSel.value;
+        renderAreaSelect();
+      }
+      if (area && String(area.branchId) === String(state.selectedBranchId)) {
+        const sel = document.getElementById("areaSelect");
+        sel.value = p.deliveryAreaId;
+        state.selectedAreaId = sel.value;
+      }
+    }
+  } else {
+    statusEl.textContent = "🆕 عميل جديد - سجّل بياناته تحت";
+    statusEl.style.color = "var(--faint)";
+  }
+  renderCart();
+  updateSubmitState();
+}
+document.getElementById("phoneInput").addEventListener("input", () => {
+  updateSubmitState();
+  clearTimeout(posPhoneLookupTimer);
+  const phone = document.getElementById("phoneInput").value.trim();
+  const statusEl = document.getElementById("customerStatus");
+  if (state.orderType !== "delivery" || !/^\d{8,}$/.test(phone)) { statusEl.textContent = ""; return; }
+  statusEl.textContent = "...جاري البحث";
+  posPhoneLookupTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/customers?phone=${encodeURIComponent(phone)}`, {
+        headers: { Authorization: `Bearer ${auth.token}` },
+      });
+      if (!res.ok) throw new Error();
+      const p = await res.json();
+      applyCustomerLookup(phone, p);
+    } catch (e) { statusEl.textContent = ""; }
+  }, 500);
+});
 
 document.getElementById("submitBtn").onclick = async () => {
   const btn = document.getElementById("submitBtn");
@@ -1179,14 +1300,21 @@ document.getElementById("submitBtn").onclick = async () => {
   btn.textContent = "جاري الإرسال...";
   try {
     const isTalabat = state.channel === "talabat";
+    const isDelivery = !isTalabat && state.orderType === "delivery";
     const payload = {
       branchId: state.selectedBranchId,
       source: isTalabat ? "talabat" : "pos",
       orderType: isTalabat ? "talabat" : state.orderType,
       tableNumber: !isTalabat && state.orderType === "dinein" ? document.getElementById("tableInput").value.trim() : null,
       customerPhone: !isTalabat ? (document.getElementById("phoneInput").value.trim() || null) : null,
+      // المرحلة 7L: بيانات عميل الدليفري - نفس الحقول اللي شاشة الكول سنتر بتبعتها بالظبط
+      customerName: isDelivery ? document.getElementById("nameInput").value.trim() : null,
+      customerPhone2: isDelivery ? (document.getElementById("phone2Input").value.trim() || null) : null,
+      deliveryAreaId: isDelivery ? state.selectedAreaId : null,
+      addressDetails: isDelivery ? document.getElementById("addressInput").value.trim() : null,
+      distinguishingMark: isDelivery ? (document.getElementById("markInput").value.trim() || null) : null,
       paymentMethodId: state.selectedPaymentId,
-      deliveryFee: 0,
+      deliveryFee: currentDeliveryFee(),
       discount: isTalabat ? 0 : currentDiscount(),
       discountApprovedBy: !isTalabat && state.discountApproval ? state.discountApproval.approverId : null,
       items: Object.values(state.cart).map(v => v.comboId
@@ -1223,6 +1351,11 @@ document.getElementById("newOrderBtn").onclick = () => {
   state.discountApproval = null;
   document.getElementById("tableInput").value = "";
   document.getElementById("phoneInput").value = "";
+  document.getElementById("nameInput").value = "";
+  document.getElementById("phone2Input").value = "";
+  document.getElementById("addressInput").value = "";
+  document.getElementById("markInput").value = "";
+  document.getElementById("customerStatus").textContent = "";
   document.getElementById("discountInput").value = "0";
   document.getElementById("confirmOverlay").classList.remove("show");
   renderCart();
@@ -1247,7 +1380,7 @@ async function ordersApi(path, opts = {}) {
   return data;
 }
 
-const ordersState = { status: "" };
+const ordersState = { status: "", orderType: "" };
 const DELAY_THRESHOLD_MINUTES = 45;
 const orderStatusLabels = { preparing: "تحت التحضير", out_for_delivery: "في الطريق", completed: "مكتملة", cancelled: "ملغاة" };
 const orderPaymentLabels = { collected: "محصّل", pending_collection: "تحت التحصيل" };
@@ -1260,10 +1393,18 @@ document.getElementById("ordersOpenBtn").onclick = () => {
 document.getElementById("ordersCloseBtn").onclick = () => {
   document.getElementById("ordersOverlay").classList.remove("show");
 };
-document.querySelectorAll(".otab").forEach(tab => {
+// المرحلة 7L: صفين تبويبات منفصلين (حالة/نوع) - كل واحد بيأثر على نفسه بس، مش بيلغي اختيار التاني
+document.querySelectorAll("#ordersTopbar .otab[data-ostatus]").forEach(tab => {
   tab.onclick = () => {
     ordersState.status = tab.dataset.ostatus;
-    document.querySelectorAll(".otab").forEach(t => t.classList.toggle("active", t === tab));
+    document.querySelectorAll("#ordersTopbar .otab[data-ostatus]").forEach(t => t.classList.toggle("active", t === tab));
+    loadActiveOrders();
+  };
+});
+document.querySelectorAll("#ordersTypeTabs .otab[data-otype]").forEach(tab => {
+  tab.onclick = () => {
+    ordersState.orderType = tab.dataset.otype;
+    document.querySelectorAll("#ordersTypeTabs .otab[data-otype]").forEach(t => t.classList.toggle("active", t === tab));
     loadActiveOrders();
   };
 });
@@ -1277,6 +1418,7 @@ async function loadActiveOrders() {
   try {
     const qs = new URLSearchParams();
     if (ordersState.status) qs.set("status", ordersState.status);
+    if (ordersState.orderType) qs.set("orderType", ordersState.orderType);
     if (state.selectedBranchId) qs.set("branchId", state.selectedBranchId);
     const orders = await ordersApi(`/api/orders?${qs.toString()}`);
     renderActiveOrders(orders);
