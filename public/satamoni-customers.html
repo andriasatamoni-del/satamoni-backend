@@ -173,6 +173,17 @@
     <button id="profileSaveBtn">حفظ التعديلات</button>
     <div class="err" id="profileErr"></div>
     <div class="ok" id="profileOk"></div>
+    <h1 style="font-size:13px;margin:16px 0 6px">دفتر العناوين</h1>
+    <div id="addressBookList"></div>
+    <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+      <input id="newAddrLabel" placeholder="مسمى (البيت/الشغل...)" style="max-width:140px" />
+      <input id="newAddrDetails" placeholder="تفاصيل العنوان" style="flex:1;min-width:160px" />
+      <select id="newAddrArea" style="max-width:160px"><option value="">بدون منطقة</option></select>
+      <input id="newAddrMark" placeholder="علامة مميزة" style="max-width:140px" />
+      <button id="addAddressBtn" type="button">إضافة عنوان</button>
+    </div>
+    <div class="err" id="addressErr"></div>
+
     <h1 style="font-size:13px;margin:16px 0 6px">آخر الطلبات</h1>
     <div id="profileOrdersList"></div>
   </div>
@@ -245,6 +256,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 const money = (n) => `${Number(n || 0).toLocaleString("ar-EG", { maximumFractionDigits: 0 })} ج.م`;
 const dt = (s) => s ? new Date(s).toLocaleString("ar-EG", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
 
+let deliveryAreas = [];
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
@@ -252,6 +264,12 @@ async function boot() {
     document.getElementById("loyaltyTabBtn").style.display = "block";
     await loadLoyaltySettings();
   }
+  try {
+    const cfg = await api("/api/config/full");
+    deliveryAreas = cfg.deliveryAreas || [];
+    document.getElementById("newAddrArea").innerHTML = `<option value="">بدون منطقة</option>` +
+      deliveryAreas.map(a => `<option value="${a.id}">${a.name}</option>`).join("");
+  } catch (e) { /* دفتر العناوين هيشتغل من غير اختيار منطقة لو فشل التحميل ده */ }
   await loadDirectory();
 }
 
@@ -288,6 +306,7 @@ async function openProfile(phone) {
   currentProfilePhone = phone;
   document.getElementById("profileErr").textContent = "";
   document.getElementById("profileOk").textContent = "";
+  document.getElementById("addressErr").textContent = "";
   document.getElementById("profileTitle").textContent = `بروفايل العميل — ${phone}`;
   document.getElementById("profileOverlay").classList.add("show");
   try {
@@ -306,7 +325,70 @@ async function openProfile(phone) {
   } catch (e) {
     document.getElementById("profileOrdersList").innerHTML = e.message;
   }
+  await loadAddressBook(phone);
 }
+
+// ---------------- المرحلة 7M: دفتر عناوين العميل ----------------
+async function loadAddressBook(phone) {
+  const box = document.getElementById("addressBookList");
+  box.innerHTML = "...جاري التحميل";
+  try {
+    const addrs = await api(`/api/customers/${encodeURIComponent(phone)}/addresses`);
+    box.innerHTML = addrs.map(a => `
+      <div class="field" style="border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:6px">
+        <div><b>${a.label || "بدون مسمى"}</b>${a.isDefault ? ' <span class="pill">افتراضي</span>' : ""}</div>
+        <div style="font-size:12px;color:var(--faint)">${a.addressDetails}${a.deliveryAreaName ? " — " + a.deliveryAreaName : ""}${a.distinguishingMark ? " — " + a.distinguishingMark : ""}</div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          ${a.isDefault ? "" : `<button type="button" data-setdefault="${a.id}">اجعله افتراضي</button>`}
+          <button type="button" data-deladdr="${a.id}">حذف</button>
+        </div>
+      </div>
+    `).join("") || `<div style="font-size:12px;color:var(--faint)">مفيش عناوين محفوظة لسه</div>`;
+    box.querySelectorAll("[data-setdefault]").forEach(btn => {
+      btn.onclick = async () => {
+        try {
+          await api(`/api/customers/${encodeURIComponent(phone)}/addresses/${btn.dataset.setdefault}`, {
+            method: "PATCH", body: JSON.stringify({ isDefault: true }),
+          });
+          loadAddressBook(phone);
+        } catch (e) { document.getElementById("addressErr").textContent = e.message; }
+      };
+    });
+    box.querySelectorAll("[data-deladdr]").forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm("متأكد إنك عايز تحذف العنوان ده؟")) return;
+        try {
+          await api(`/api/customers/${encodeURIComponent(phone)}/addresses/${btn.dataset.deladdr}`, { method: "DELETE" });
+          loadAddressBook(phone);
+        } catch (e) { document.getElementById("addressErr").textContent = e.message; }
+      };
+    });
+  } catch (e) {
+    box.innerHTML = e.message;
+  }
+}
+document.getElementById("addAddressBtn").onclick = async () => {
+  const errBox = document.getElementById("addressErr");
+  errBox.textContent = "";
+  const addressDetails = document.getElementById("newAddrDetails").value.trim();
+  if (!addressDetails) { errBox.textContent = "العنوان التفصيلي مطلوب"; return; }
+  try {
+    await api(`/api/customers/${encodeURIComponent(currentProfilePhone)}/addresses`, {
+      method: "POST",
+      body: JSON.stringify({
+        label: document.getElementById("newAddrLabel").value.trim() || null,
+        addressDetails,
+        deliveryAreaId: document.getElementById("newAddrArea").value || null,
+        distinguishingMark: document.getElementById("newAddrMark").value.trim() || null,
+      }),
+    });
+    document.getElementById("newAddrLabel").value = "";
+    document.getElementById("newAddrDetails").value = "";
+    document.getElementById("newAddrArea").value = "";
+    document.getElementById("newAddrMark").value = "";
+    loadAddressBook(currentProfilePhone);
+  } catch (e) { errBox.textContent = e.message; }
+};
 document.getElementById("profileCloseBtn").onclick = () => {
   document.getElementById("profileOverlay").classList.remove("show");
 };

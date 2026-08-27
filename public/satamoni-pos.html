@@ -145,6 +145,9 @@
   #ordersTopbar .brand2 { font-weight: 800; color: var(--gold-bright); font-size: 15px; margin-left: auto; order: 99; }
   #ordersCloseBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
   .otab { padding: 7px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 12px; }
+  /* المرحلة 7M: شرائح دفتر عناوين العميل */
+  .addr-chip { padding: 6px 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .addr-chip.active { background: var(--gold); border-color: var(--gold); color: var(--bg); }
   .otab.active { background: var(--red); color: #fff; border-color: var(--red); }
   /* المرحلة 7L: صف تبويبات نوع الطلب (تيك أواي/دليفري/صالة/طلبات) تحت صف حالة الطلب مباشرة */
   #ordersTypeTabs { background: var(--bg-alt); border-bottom: 1px solid var(--line); padding: 8px 16px; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -337,6 +340,10 @@
       <select id="areaSelect" style="display:none"></select>
       <input id="addressInput" placeholder="تفاصيل العنوان (شارع/عمارة/دور/شقة)" style="display:none" />
       <input id="markInput" placeholder="علامة مميزة (بجوار كذا...)" style="display:none" />
+      <div id="savedAddressesRow" style="display:none">
+        <div style="font-size:11px;color:var(--faint);font-weight:700;margin-bottom:4px">عناوين محفوظة للعميل ده:</div>
+        <div id="savedAddressesList" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
     </div>
 
     <div id="cartList"><div class="cart-empty">السلة فاضية — دوس على أي صنف من المنيو</div></div>
@@ -1264,6 +1271,60 @@ function applyCustomerLookup(phone, p) {
   }
   renderCart();
   updateSubmitState();
+  loadSavedAddresses(phone, p.isRegistered);
+}
+
+// المرحلة 7M: دفتر عناوين العميل - نفس فكرة الكول سنتر بالظبط
+async function loadSavedAddresses(phone, isRegistered) {
+  const row = document.getElementById("savedAddressesRow");
+  const list = document.getElementById("savedAddressesList");
+  if (!isRegistered) { row.style.display = "none"; list.innerHTML = ""; return; }
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/customers/${encodeURIComponent(phone)}/addresses`, {
+      headers: { Authorization: `Bearer ${auth.token}` },
+    });
+    if (!res.ok) throw new Error();
+    const addrs = await res.json();
+    if (!addrs || addrs.length === 0) { row.style.display = "none"; list.innerHTML = ""; return; }
+    row.style.display = "block";
+    list.innerHTML = "";
+    addrs.forEach((a) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "addr-chip";
+      chip.textContent = (a.label ? a.label + " - " : "") + a.addressDetails;
+      chip.title = a.addressDetails + (a.deliveryAreaName ? ` (${a.deliveryAreaName})` : "");
+      chip.addEventListener("click", () => {
+        Array.from(list.children).forEach((c) => c.classList.remove("active"));
+        chip.classList.add("active");
+        selectSavedAddress(a);
+      });
+      list.appendChild(chip);
+    });
+  } catch (e) {
+    row.style.display = "none";
+  }
+}
+
+function selectSavedAddress(a) {
+  document.getElementById("addressInput").value = a.addressDetails || "";
+  document.getElementById("markInput").value = a.distinguishingMark || "";
+  if (a.deliveryAreaId) {
+    const area = state.deliveryAreas.find((x) => String(x.id) === String(a.deliveryAreaId));
+    if (area && String(area.branchId) !== String(state.selectedBranchId) && !(auth.user && auth.user.role !== "admin")) {
+      const branchSel = document.getElementById("branchSelect");
+      branchSel.value = area.branchId;
+      state.selectedBranchId = branchSel.value;
+      renderAreaSelect();
+    }
+    if (area && String(area.branchId) === String(state.selectedBranchId)) {
+      const sel = document.getElementById("areaSelect");
+      sel.value = a.deliveryAreaId;
+      state.selectedAreaId = sel.value;
+    }
+  }
+  updateSubmitState();
+  renderCart();
 }
 document.getElementById("phoneInput").addEventListener("input", () => {
   updateSubmitState();
@@ -1358,6 +1419,8 @@ document.getElementById("newOrderBtn").onclick = () => {
   document.getElementById("customerStatus").textContent = "";
   document.getElementById("discountInput").value = "0";
   document.getElementById("confirmOverlay").classList.remove("show");
+  document.getElementById("savedAddressesRow").style.display = "none";
+  document.getElementById("savedAddressesList").innerHTML = "";
   renderCart();
 };
 

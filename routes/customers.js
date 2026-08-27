@@ -5,6 +5,10 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 
 const canView = requireRole("admin", "callcenter", "branch_manager", "cashier", "accountant");
 const canEdit = requireRole("admin", "callcenter", "branch_manager");
+// الكاشير أصلًا بيسجل عناوين العملاء ضمنيًا وقت إنشاء طلب دليفري من الكاشير (Phase 7L/7M) - بالتالي له
+// نفس الصلاحية هنا لإضافة/تعديل عنوان صراحة. الحذف أخطر (فقد بيانات) فمقصور على اللي بيديروا بيانات العملاء.
+const canManageAddresses = requireRole("admin", "callcenter", "branch_manager", "cashier");
+const canDeleteAddress = requireRole("admin", "callcenter", "branch_manager");
 
 // GET /api/customers?q=  - بحث بالاسم أو رقم التليفون (لشاشة الكول سنتر)
 // GET /api/customers?phone=  - بروفايل عميل واحد كامل (إحصائياته + آخر طلباته) - بيدوّر في phone و phone2 معًا
@@ -137,6 +141,121 @@ router.patch("/:phone", requireAuth, canEdit, async (req, res) => {
        addressDetails ?? null, deliveryAreaId ?? null, distinguishingMark ?? null]
     );
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------- المرحلة 7M: دفتر عناوين العميل (عنوان واحد أو أكتر) ----------------
+
+// GET /api/customers/:phone/addresses - كل عناوين العميل المحفوظة (الافتراضي أولًا)
+router.get("/:phone/addresses", requireAuth, canView, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT ca.id, ca.label, ca.address_details, ca.delivery_area_id, da.name AS delivery_area_name,
+              ca.distinguishing_mark, ca.is_default, ca.created_at
+       FROM customer_addresses ca
+       LEFT JOIN delivery_areas da ON da.id = ca.delivery_area_id
+       WHERE ca.customer_phone = $1
+       ORDER BY ca.is_default DESC, ca.created_at DESC`,
+      [req.params.phone]
+    );
+    res.json(result.rows.map((r) => ({
+      id: r.id, label: r.label, addressDetails: r.address_details,
+      deliveryAreaId: r.delivery_area_id, deliveryAreaName: r.delivery_area_name,
+      distinguishingMark: r.distinguishing_mark, isDefault: r.is_default, createdAt: r.created_at,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/customers/:phone/addresses - إضافة عنوان جديد (بينشئ العميل نفسه لو مش موجود بعد)
+router.post("/:phone/addresses", requireAuth, canManageAddresses, async (req, res) => {
+  const { phone } = req.params;
+  const { label, addressDetails, deliveryAreaId, distinguishingMark, isDefault } = req.body;
+  if (!addressDetails) return res.status(400).json({ error: "العنوان التفصيلي مطلوب" });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `INSERT INTO customers (phone) VALUES ($1) ON CONFLICT (phone) DO NOTHING`, [phone]
+    );
+    if (isDefault) {
+      await client.query(`UPDATE customer_addresses SET is_default = FALSE WHERE customer_phone = $1`, [phone]);
+    }
+    const result = await client.query(
+      `INSERT INTO customer_addresses (customer_phone, label, address_details, delivery_area_id, distinguishing_mark, is_default)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [phone, label || null, addressDetails, deliveryAreaId || null, distinguishingMark || null, !!isDefault]
+    );
+    await client.query("COMMIT");
+    const row = result.rows[0];
+    res.status(201).json({
+      id: row.id, label: row.label, addressDetails: row.address_details,
+      deliveryAreaId: row.delivery_area_id, distinguishingMark: row.distinguishing_mark,
+      isDefault: row.is_default, createdAt: row.created_at,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/customers/:phone/addresses/:id - تعديل عنوان محفوظ
+router.patch("/:phone/addresses/:id", requireAuth, canManageAddresses, async (req, res) => {
+  const { phone, id } = req.params;
+  const { label, addressDetails, deliveryAreaId, distinguishingMark, isDefault } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query(
+      `SELECT * FROM customer_addresses WHERE id = $1 AND customer_phone = $2`, [id, phone]
+    );
+    if (existing.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "العنوان غير موجود" });
+    }
+    if (isDefault === true) {
+      await client.query(`UPDATE customer_addresses SET is_default = FALSE WHERE customer_phone = $1`, [phone]);
+    }
+    const result = await client.query(
+      `UPDATE customer_addresses SET
+         label = COALESCE($3, label),
+         address_details = COALESCE($4, address_details),
+         delivery_area_id = COALESCE($5, delivery_area_id),
+         distinguishing_mark = COALESCE($6, distinguishing_mark),
+         is_default = COALESCE($7, is_default),
+         updated_at = now()
+       WHERE id = $1 AND customer_phone = $2 RETURNING *`,
+      [id, phone, label ?? null, addressDetails ?? null, deliveryAreaId ?? null, distinguishingMark ?? null, isDefault ?? null]
+    );
+    await client.query("COMMIT");
+    const row = result.rows[0];
+    res.json({
+      id: row.id, label: row.label, addressDetails: row.address_details,
+      deliveryAreaId: row.delivery_area_id, distinguishingMark: row.distinguishing_mark,
+      isDefault: row.is_default,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/customers/:phone/addresses/:id - حذف عنوان محفوظ
+router.delete("/:phone/addresses/:id", requireAuth, canDeleteAddress, async (req, res) => {
+  const { phone, id } = req.params;
+  try {
+    const result = await pool.query(
+      `DELETE FROM customer_addresses WHERE id = $1 AND customer_phone = $2 RETURNING id`, [id, phone]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "العنوان غير موجود" });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

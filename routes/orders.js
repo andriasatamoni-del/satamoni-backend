@@ -6,6 +6,7 @@ const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
+const { upsertCustomerAddress } = require("../db/customer-addresses");
 
 // طلبات الموقع (source=website) عامة من غير تسجيل دخول.
 // طلبات الكاشير (source=pos) وطلبات طلبات (source=talabat، بتتسجل يدويًا بعد التنفيذ
@@ -337,6 +338,9 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
           loyaltyPointsEarned, loyaltyPointsRedeemed,
         ]
       );
+      if (orderType === "delivery" && addressDetails) {
+        await upsertCustomerAddress(client, customerPhone, addressDetails, deliveryAreaId, distinguishingMark);
+      }
     }
 
     // كل صنف ممكن يبقى معاه مرفقات مختارة (إضافة موتزريلا، بدون طماطم...) - unitPrice/lineTotal ومرفقات
@@ -1358,6 +1362,9 @@ router.put(
             loyaltyPointsEarned, loyaltyPointsRedeemed,
           ]
         );
+        if (order.order_type === "delivery" && finalAddressDetails) {
+          await upsertCustomerAddress(client, finalCustomerPhone, finalAddressDetails, finalDeliveryAreaId, distinguishingMark);
+        }
       }
 
       // ---- إعادة ترحيل قيد البيع محاسبيًا بالإجمالي الجديد - نفس منطق اختيار الحساب المدين بتاع POST / بالظبط ----

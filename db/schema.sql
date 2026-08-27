@@ -1150,6 +1150,21 @@ CREATE TABLE customers (
   updated_at           TIMESTAMPTZ DEFAULT now()
 );
 
+-- دفتر عناوين العميل - عنوان واحد أو أكتر (بيت/شغل/...)، بيتراكم أوتوماتيك مع كل طلب دليفري على عنوان
+-- جديد (routes/orders.js). customers.address_details فوق فاضل "آخر عنوان معروف" للـbackward-compat.
+CREATE TABLE customer_addresses (
+  id                   SERIAL PRIMARY KEY,
+  customer_phone       TEXT NOT NULL REFERENCES customers(phone) ON DELETE CASCADE,
+  label                TEXT,
+  address_details      TEXT NOT NULL,
+  delivery_area_id     INTEGER REFERENCES delivery_areas(id),
+  distinguishing_mark  TEXT,
+  is_default           BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_customer_addresses_phone ON customer_addresses(customer_phone);
+
 -- ---------------- الموارد البشرية: شيفتات وحضور/انصراف ----------------
 CREATE TABLE shifts (
   id            SERIAL PRIMARY KEY,
