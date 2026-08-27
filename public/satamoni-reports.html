@@ -73,6 +73,10 @@
   .badge.cancel { background: rgba(156,148,138,.15); color: var(--faint); }
   .warnrow td { background: rgba(194,42,36,.08); }
   .tablewrap { overflow-x: auto; }
+  /* المرحلة 7Q: بحث داخل التقرير الحالي */
+  #reportSearchRow { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  #reportSearchInput { background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 9px 12px; font-size: 13px; flex: 1; max-width: 340px; }
+  #reportSearchCount { font-size: 12px; color: var(--faint); }
 
   #loadingState { padding: 40px 20px; text-align: center; color: var(--faint); }
 
@@ -133,6 +137,12 @@
     <div class="tabbtn" data-tab="peakhours">ساعات الذروة</div>
     <div class="tabbtn" data-tab="customerspend">إنفاق العملاء</div>
     <div class="tabbtn" data-tab="inventoryvaluation">قيمة المخزون</div>
+  </div>
+
+  <!-- المرحلة 7Q: بحث/فلترة داخل نتائج التقرير الحالي - بيفلتر صفوف الجدول(ات) في التبويب المفتوح بس -->
+  <div id="reportSearchRow">
+    <input id="reportSearchInput" placeholder="🔍 بحث في نتائج التقرير الحالي..." />
+    <span id="reportSearchCount"></span>
   </div>
 
   <div id="loadingState" style="display:none">...جاري التحميل</div>
@@ -473,6 +483,8 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
   btn.onclick = async () => {
     document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    document.getElementById("reportSearchInput").value = "";
+    document.getElementById("reportSearchCount").textContent = "";
     await loadTab(btn.dataset.tab);
   };
 });
@@ -482,8 +494,26 @@ document.getElementById("applyBtn").onclick = async () => {
   await loadTab(active);
 };
 
+// المرحلة 7Q: فلترة صفوف الجدول(ات) في التبويب المفتوح بس - بيقارن نص كل صف (كل الأعمدة مع بعض) مع
+// كلمة البحث، من غير حساسية لحالة الحروف. مفيش تأثير على تبويبات بدون جدول (KPI/رسومات بس)
+function applyReportSearch() {
+  const term = document.getElementById("reportSearchInput").value.trim().toLowerCase();
+  const activePanel = document.querySelector(".panel.active");
+  if (!activePanel) return;
+  const rows = activePanel.querySelectorAll(".tablewrap tbody tr");
+  if (rows.length === 0) { document.getElementById("reportSearchCount").textContent = ""; return; }
+  let visible = 0;
+  rows.forEach(row => {
+    const match = !term || row.textContent.toLowerCase().includes(term);
+    row.style.display = match ? "" : "none";
+    if (match) visible++;
+  });
+  document.getElementById("reportSearchCount").textContent = term ? `${visible} من ${rows.length} نتيجة` : "";
+}
+document.getElementById("reportSearchInput").addEventListener("input", applyReportSearch);
+
 async function loadTab(tab) {
-  if (!dirty[tab] && dirty[tab] !== undefined) return;
+  if (!dirty[tab] && dirty[tab] !== undefined) return applyReportSearch();
   const loading = document.getElementById("loadingState");
   loading.style.display = "block";
   try {
@@ -493,6 +523,7 @@ async function loadTab(tab) {
     document.getElementById(`panel-${tab}`).insertAdjacentHTML("afterbegin", `<div class="empty" style="color:#F08A83">${e.message}</div>`);
   } finally {
     loading.style.display = "none";
+    applyReportSearch();
   }
 }
 
