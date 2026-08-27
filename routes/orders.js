@@ -8,6 +8,11 @@ const { postInventoryMovement } = require("../db/inventory-ledger");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
 const { upsertCustomerAddress } = require("../db/customer-addresses");
 const { maybeSendOrderConfirmation } = require("../db/order-notifications");
+const { validateIdParam } = require("../middleware/validate-id-param");
+
+// المرحلة 8B: :id لازم يكون رقم صحيح قبل ما يوصل لأي راوت هنا - غير كده Postgres بيرمي خطأ cast خام
+// كـ500 بدل 400 واضح (اتكشف بهجوم أمني حي - راجع middleware/validate-id-param.js)
+router.param("id", validateIdParam);
 
 // طلبات الموقع (source=website) عامة من غير تسجيل دخول.
 // طلبات الكاشير (source=pos) وطلبات طلبات (source=talabat، بتتسجل يدويًا بعد التنفيذ
@@ -590,6 +595,13 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
   }
 });
 
+// المرحلة 8E: كان الاستعلام ده من غير أي LIMIT - على فرع واحد أو تاريخ واحد مفيش مشكلة عمليًا، لكن
+// admin/accountant/callcenter لما يفتحوا الشاشة من غير فلتر فرع (زي شاشة "كل الفروع" في التوصيل)
+// كان بيرجع الجدول كله. اتكشف بقياس أداء حقيقي على 100 ألف طلب: ~2.3 ثانية استجابة (الاستعلام نفسه
+// في Postgres بياخد ~46ms بس - الوقت الضايع في تسلسل ونقل 100 ألف صف JSON). حد أعلى معقول لشاشة
+// "الطلبات الجارية/الحديثة" التشغيلية، من غير ما يغيّر شكل الاستجابة (لسه array عادي - توافق للخلف)
+const ORDERS_LIST_ROW_LIMIT = 500;
+
 // GET /api/orders?branchId=&date=&status=&orderType= - عرض طلبات فرع (موظفين مسجلين دخول بس)
 // status/orderType بيتفلتروا أوردرات الدليفري في شاشة متابعة دورة الحياة (تحت التحضير/في الطريق/تحصيل)
 router.get(
@@ -614,8 +626,9 @@ router.get(
            AND ($3::text IS NULL OR status = $3)
            AND ($4::text IS NULL OR order_type = $4)
            AND ($5::text IS NULL OR payment_status = $5)
-         ORDER BY created_at DESC`,
-        [branchId || null, date || null, status || null, orderType || null, paymentStatus || null]
+         ORDER BY created_at DESC
+         LIMIT $6`,
+        [branchId || null, date || null, status || null, orderType || null, paymentStatus || null, ORDERS_LIST_ROW_LIMIT]
       );
       res.json(result.rows);
     } catch (err) {
