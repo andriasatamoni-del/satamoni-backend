@@ -82,52 +82,72 @@ router.post(
 
 // المرحلة 7K: POST /api/purchases/:id/confirm - PENDING → CONFIRMED - مدير الفرع/المحاسب بيراجع
 // مشترى الكاشير النقدي ويأكّده - بعدها بس بيتحسب رسميًا في تقارير المشتريات/تحليل التكلفة
+//
+// المرحلة 7U: قبل كده كانت القراءة والتحديث في نداءين منفصلين من غير أي قفل (زي purchase_returns.js/
+// expenses.js/driver_settlements.js بالظبط اللي بيستخدموا BEGIN + SELECT...FOR UPDATE) - يعني نافذة
+// سباق حقيقية: confirm وreject متزامنين (أو confirm مرتين) كانوا يقدروا الاتنين يعدّوا فحص "لسه PENDING"
+// قبل ما أي حد يكتب، فالاتنين ينجحوا (200) والنتيجة النهائية تبقى عشوائية حسب مين كتب أخيرًا - اتكشفت
+// وثبتت بتدقيق 7U (tests/phase7u-audit.test.js)، مصلّحة هنا بنفس نمط الأقفال المستخدم في كل مكان تاني
 router.post("/:id/confirm", requireAuth, requirePermission("purchases.review"), async (req, res) => {
+  const client = await pool.connect();
   try {
-    const existing = await pool.query("SELECT * FROM purchases WHERE id = $1", [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: "المشترى مش موجود" });
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM purchases WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "المشترى مش موجود" }); }
     const purchase = existing.rows[0];
-    if (purchase.status !== "PENDING") return res.status(400).json({ error: "المشترى ده مش في حالة انتظار مراجعة" });
+    if (purchase.status !== "PENDING") { await client.query("ROLLBACK"); return res.status(400).json({ error: "المشترى ده مش في حالة انتظار مراجعة" }); }
     if (req.user.role === "branch_manager" && !assertOwnBranch(req.user, purchase.branch_id)) {
+      await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
     }
 
-    const result = await pool.query(
+    const result = await client.query(
       "UPDATE purchases SET status = 'CONFIRMED', reviewed_by = $1, reviewed_at = now() WHERE id = $2 RETURNING *",
       [req.user.id, req.params.id]
     );
-    await logAudit(pool, {
+    await logAudit(client, {
       branchId: purchase.branch_id, userId: req.user.id, action: "PURCHASE_CONFIRMED", entityType: "purchase", entityId: purchase.id, req,
     });
+    await client.query("COMMIT");
     res.json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
 // POST /api/purchases/:id/reject - PENDING → REJECTED - نفس صلاحية التأكيد، مع سبب اختياري
 router.post("/:id/reject", requireAuth, requirePermission("purchases.review"), async (req, res) => {
   const { reason } = req.body;
+  const client = await pool.connect();
   try {
-    const existing = await pool.query("SELECT * FROM purchases WHERE id = $1", [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: "المشترى مش موجود" });
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM purchases WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "المشترى مش موجود" }); }
     const purchase = existing.rows[0];
-    if (purchase.status !== "PENDING") return res.status(400).json({ error: "المشترى ده مش في حالة انتظار مراجعة" });
+    if (purchase.status !== "PENDING") { await client.query("ROLLBACK"); return res.status(400).json({ error: "المشترى ده مش في حالة انتظار مراجعة" }); }
     if (req.user.role === "branch_manager" && !assertOwnBranch(req.user, purchase.branch_id)) {
+      await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
     }
 
-    const result = await pool.query(
+    const result = await client.query(
       "UPDATE purchases SET status = 'REJECTED', reviewed_by = $1, reviewed_at = now(), rejection_reason = $2 WHERE id = $3 RETURNING *",
       [req.user.id, reason || null, req.params.id]
     );
-    await logAudit(pool, {
+    await logAudit(client, {
       branchId: purchase.branch_id, userId: req.user.id, action: "PURCHASE_REJECTED", entityType: "purchase", entityId: purchase.id,
       metadata: { reason }, req,
     });
+    await client.query("COMMIT");
     res.json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

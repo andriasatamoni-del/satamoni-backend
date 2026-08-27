@@ -17,10 +17,14 @@ module.exports = {
       EXCEPTION WHEN duplicate_column THEN NULL;
       END $$;
     `);
+    // المرحلة 7U: Postgres بيرجّع duplicate_table (مش duplicate_object) لما تحاول تضيف UNIQUE constraint
+    // اسمه موجود بالفعل - لأن الفهرس اللي القيد بيتبني عليه ضمنيًا relation منفصل. اتكشف الفرق ده فعليًا
+    // بتدقيق 7U: schema.sql فيه العمود ده أصلًا (من نفس المرحلة 7T)، فتشغيل db/migrate.js بعد تثبيت أول
+    // مرة (npm run migrate = schema.sql) كان بيفشل هنا بالظبط - أي نشر إنتاج جديد كان هيقع وقت الإقلاع
     await client.query(`
       DO $$ BEGIN
         ALTER TABLE employees ADD CONSTRAINT employees_user_id_key UNIQUE (user_id);
-      EXCEPTION WHEN duplicate_object THEN NULL;
+      EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL;
       END $$;
     `);
 

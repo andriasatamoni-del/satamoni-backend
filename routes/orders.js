@@ -156,6 +156,10 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       }
     }
 
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      return res.status(400).json({ error: "لازم صنف واحد على الأقل في الطلب" });
+    }
+
     let items;
     try {
       items = await resolveOrderItems(client, rawItems, source || "website");
