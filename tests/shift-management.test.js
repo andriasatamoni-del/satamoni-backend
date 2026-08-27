@@ -92,19 +92,33 @@ describe("دورة حياة الشيفت الأساسية", () => {
     const orderRow = await pool.query("SELECT shift_id FROM orders WHERE id=$1", [order.body.orderId]);
     expect(orderRow.rows[0].shift_id).toBe(shiftId);
 
-    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(cashierAToken));
+    // المرحلة 8.6: /preview بقى مقصور على شيفتس.review (مدير فرع/محاسب/أدمن) - الكاشير مابقاش
+    // يشوف الكاش المتوقع خالص (حماية ضد تلاعب: كاشير عارف الرقم المتوقع يقدر يدخل "فعلي" يطابقه)
+    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(managerAToken));
     expect(preview.status).toBe(200);
     expect(preview.body.cashSales).toBe(5000);
     expect(preview.body.expectedCash).toBe(5500); // 500 افتتاحي + 5000 كاش
+
+    const cashierPreview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(cashierAToken));
+    expect(cashierPreview.status).toBe(403);
   });
 
-  test("قفل الشيفت بمبلغ فعلي = المتوقع بالظبط => فرق صفر وحالة CLOSED", async () => {
+  test("قفل الشيفت بمبلغ فعلي = المتوقع بالظبط => فرق صفر وحالة CLOSED (الأرقام المالية مش ظاهرة في رد الكاشير نفسه)", async () => {
     const res = await request(app).post(`/api/shifts/${shiftId}/close`).set(authed(cashierAToken)).send({ actualCash: 5500 });
     expect(res.status).toBe(200);
-    expect(Number(res.body.expected_cash)).toBe(5500);
-    expect(Number(res.body.cash_variance)).toBe(0);
-    expect(res.body.variance_status).toBe("NONE");
     expect(res.body.status).toBe("CLOSED");
+    // المرحلة 8.6: الكاشير مايشوفش أي رقم مالي حساس في رد القفل نفسه - الحماية على مستوى الـresponse
+    expect(res.body.expected_cash).toBeUndefined();
+    expect(res.body.cash_variance).toBeUndefined();
+    expect(res.body.actual_cash).toBeUndefined();
+    expect(res.body.cash_sales).toBeUndefined();
+
+    // الأرقام الحقيقية لسه بتترحّل صح جوه القاعدة - بيتأكد منها هنا عن طريق شوف مدير الفرع (مصرّح له)
+    const managerView = await request(app).get(`/api/shifts/${shiftId}`).set(authed(managerAToken));
+    expect(managerView.status).toBe(200);
+    expect(Number(managerView.body.expected_cash)).toBe(5500);
+    expect(Number(managerView.body.cash_variance)).toBe(0);
+    expect(managerView.body.variance_status).toBe("NONE");
   });
 
   test("مينفعش تقفل نفس الشيفت تاني وهو مقفول بالفعل", async () => {
@@ -168,8 +182,8 @@ describe("المثال الرقمي الكامل من مواصفة المرحل�
     expect(res.status).toBe(201);
   });
 
-  test("المعاينة قبل القفل: متوقع = 2000+5000-200-300 = 6500", async () => {
-    const preview = await request(app).get(`/api/shifts/${shiftMainId}/preview`).set(authed(cashierAToken));
+  test("المعاينة قبل القفل: متوقع = 2000+5000-200-300 = 6500 (مدير الفرع بس)", async () => {
+    const preview = await request(app).get(`/api/shifts/${shiftMainId}/preview`).set(authed(managerAToken));
     expect(preview.body.cashSales).toBe(5000);
     expect(preview.body.cardSales).toBe(3000);
     expect(preview.body.cashRefunds).toBe(200);
@@ -177,13 +191,17 @@ describe("المثال الرقمي الكامل من مواصفة المرحل�
     expect(preview.body.expectedCash).toBe(6500);
   });
 
-  test("القفل بعدد فعلي 6450 => عجز -50، فوق عتبة الاعتماد (20) => PENDING_REVIEW", async () => {
+  test("القفل بعدد فعلي 6450 => عجز -50، فوق عتبة الاعتماد (20) => PENDING_REVIEW (الأرقام تظهر لمدير الفرع بس)", async () => {
     const res = await request(app).post(`/api/shifts/${shiftMainId}/close`).set(authed(cashierAToken)).send({ actualCash: 6450 });
     expect(res.status).toBe(200);
-    expect(Number(res.body.expected_cash)).toBe(6500);
-    expect(Number(res.body.cash_variance)).toBe(-50);
-    expect(res.body.variance_status).toBe("PENDING_REVIEW");
     expect(res.body.status).toBe("PENDING_REVIEW");
+    expect(res.body.expected_cash).toBeUndefined();
+    expect(res.body.cash_variance).toBeUndefined();
+
+    const managerView = await request(app).get(`/api/shifts/${shiftMainId}`).set(authed(managerAToken));
+    expect(Number(managerView.body.expected_cash)).toBe(6500);
+    expect(Number(managerView.body.cash_variance)).toBe(-50);
+    expect(managerView.body.variance_status).toBe("PENDING_REVIEW");
   });
 
   test("الشيفت في حالة انتظار مراجعة مينفعش يتقفل تاني", async () => {
@@ -314,6 +332,132 @@ describe("تزامن (Concurrency)", () => {
     );
     const successes = results.filter((r) => r.status === 200);
     expect(successes.length).toBe(1);
+  });
+});
+
+// المرحلة 8.6: عجز كاش مؤكّد (approve) لازم يتسجل كسلفة حقيقية على الكاشير - مش يختفي كـvariance_status
+// بس. الاختبارات دي بتتأكد من: القيد المحاسبي المتزن، ربط الشيفت بالسلفة، تعامل مختلف مع الزيادة
+// (إيراد آخر مش سلفة)، عدم إنشاء أي حاجة لو "إقرار" بس، وتزامن مراجعتين على نفس الشيفت
+describe("المرحلة 8.6: عجز/زيادة كاش الشيفت - سلفة موظف + قيود محاسبية", () => {
+  let debtBranch, debtManagerToken, debtCashierToken, debtEmployeeId;
+
+  beforeAll(async () => {
+    const b = await pool.query("INSERT INTO branches (name) VALUES ('فرع سلفة-شيفت-جست') RETURNING id");
+    debtBranch = b.rows[0].id;
+    await seedUser({ branchId: debtBranch, name: "مدير-سلفة-شيفت", email: "manager-debt-shift@jest.test", role: "branch_manager" });
+    const cashierId = await seedUser({ branchId: debtBranch, name: "كاشير-سلفة-شيفت", email: "cashier-debt-shift@jest.test", role: "cashier" });
+    debtManagerToken = await login("manager-debt-shift@jest.test");
+    debtCashierToken = await login("cashier-debt-shift@jest.test");
+    const emp = await pool.query(
+      "INSERT INTO employees (name, department, attendance_system, base_salary, restricted_branch_id, user_id) VALUES ('كاشير-سلفة-شيفت','مبيعات','manual',3000,$1,$2) RETURNING id",
+      [debtBranch, cashierId]
+    );
+    debtEmployeeId = emp.rows[0].id;
+  });
+
+  test("عجز مؤكّد (approve) => سلفة حقيقية على الموظف + قيد محاسبي متزن مربوط بالشيفت", async () => {
+    const open = await request(app).post("/api/shifts/open").set(authed(debtCashierToken)).send({ openingCash: 500 });
+    const close = await request(app).post(`/api/shifts/${open.body.id}/close`).set(authed(debtCashierToken)).send({ actualCash: 400 }); // عجز 100
+    expect(close.body.status).toBe("PENDING_REVIEW");
+
+    const review = await request(app).post(`/api/shifts/${open.body.id}/review`).set(authed(debtManagerToken)).send({ decision: "approve" });
+    expect(review.status).toBe(200);
+    expect(review.body.debtCreated).toBeTruthy();
+    expect(Number(review.body.debtCreated.amount)).toBe(100);
+
+    const adjustment = await pool.query(
+      "SELECT * FROM payroll_adjustments WHERE shift_id = $1", [open.body.id]
+    );
+    expect(adjustment.rows.length).toBe(1);
+    expect(adjustment.rows[0].adjustment_type).toBe("advance");
+    expect(adjustment.rows[0].employee_id).toBe(debtEmployeeId);
+    expect(Number(adjustment.rows[0].amount)).toBe(100);
+
+    const journal = await pool.query(
+      "SELECT * FROM journal_entries WHERE source_type = 'shift_variance_debt' AND source_id = $1",
+      [open.body.id]
+    );
+    expect(journal.rows.length).toBe(1);
+    const lines = await pool.query(
+      "SELECT * FROM journal_entry_lines WHERE journal_entry_id = $1", [journal.rows[0].id]
+    );
+    const totalDebit = lines.rows.reduce((s, l) => s + Number(l.debit), 0);
+    const totalCredit = lines.rows.reduce((s, l) => s + Number(l.credit), 0);
+    expect(totalDebit).toBe(totalCredit); // القيد لازم يكون متزن دايمًا
+    expect(totalDebit).toBe(100);
+
+    const receivableAccount = await pool.query("SELECT * FROM accounts WHERE code = $1", [`1160-${debtEmployeeId}`]);
+    expect(receivableAccount.rows.length).toBe(1);
+    expect(receivableAccount.rows[0].account_type).toBe("ASSET");
+  });
+
+  test("زيادة كاش مؤكّدة (approve) => بترحّل كإيراد آخر (4300)، مش سلفة", async () => {
+    const open = await request(app).post("/api/shifts/open").set(authed(debtCashierToken)).send({ openingCash: 500 });
+    const close = await request(app).post(`/api/shifts/${open.body.id}/close`).set(authed(debtCashierToken)).send({ actualCash: 600 }); // زيادة 100
+    expect(close.body.status).toBe("PENDING_REVIEW");
+
+    const review = await request(app).post(`/api/shifts/${open.body.id}/review`).set(authed(debtManagerToken)).send({ decision: "approve" });
+    expect(review.status).toBe(200);
+    expect(review.body.debtCreated).toBeNull();
+
+    const adjustment = await pool.query("SELECT * FROM payroll_adjustments WHERE shift_id = $1", [open.body.id]);
+    expect(adjustment.rows.length).toBe(0); // مفيش سلفة على زيادة خالص
+
+    const journal = await pool.query(
+      "SELECT * FROM journal_entries WHERE source_type = 'shift_variance_surplus' AND source_id = $1",
+      [open.body.id]
+    );
+    expect(journal.rows.length).toBe(1);
+  });
+
+  test("إقرار (acknowledge) على عجز - مفيش سلفة ولا قيد محاسبي خالص", async () => {
+    const open = await request(app).post("/api/shifts/open").set(authed(debtCashierToken)).send({ openingCash: 500 });
+    await request(app).post(`/api/shifts/${open.body.id}/close`).set(authed(debtCashierToken)).send({ actualCash: 450 }); // عجز 50
+
+    const review = await request(app).post(`/api/shifts/${open.body.id}/review`).set(authed(debtManagerToken)).send({ decision: "acknowledge", notes: "خطأ POS معروف" });
+    expect(review.status).toBe(200);
+    expect(review.body.debtCreated).toBeNull();
+
+    const adjustment = await pool.query("SELECT * FROM payroll_adjustments WHERE shift_id = $1", [open.body.id]);
+    expect(adjustment.rows.length).toBe(0);
+    const journal = await pool.query(
+      "SELECT * FROM journal_entries WHERE source_id = $1 AND source_type IN ('shift_variance_debt','shift_variance_surplus')",
+      [open.body.id]
+    );
+    expect(journal.rows.length).toBe(0);
+  });
+
+  test("مراجعتين متزامنتين على نفس الشيفت (approve) - سلفة واحدة بس تتسجل", async () => {
+    const open = await request(app).post("/api/shifts/open").set(authed(debtCashierToken)).send({ openingCash: 500 });
+    await request(app).post(`/api/shifts/${open.body.id}/close`).set(authed(debtCashierToken)).send({ actualCash: 470 }); // عجز 30
+
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => request(app).post(`/api/shifts/${open.body.id}/review`).set(authed(debtManagerToken)).send({ decision: "approve" }))
+    );
+    const successes = results.filter((r) => r.status === 200);
+    expect(successes.length).toBe(1);
+
+    const adjustment = await pool.query("SELECT * FROM payroll_adjustments WHERE shift_id = $1", [open.body.id]);
+    expect(adjustment.rows.length).toBe(1); // مفيش تكرار حتى لو 5 محاولات متزامنة
+  });
+
+  test("عجز مؤكّد لكاشير مالوش ملف موظف مربوط - مراجعة بتنجح، مفيش سلفة، وده بيتسجل في الـaudit", async () => {
+    const orphanCashierId = await seedUser({ branchId: debtBranch, name: "كاشير-من-غير-ملف-موظف", email: "cashier-no-employee@jest.test", role: "cashier" });
+    const orphanToken = await login("cashier-no-employee@jest.test");
+    const open = await request(app).post("/api/shifts/open").set(authed(orphanToken)).send({ openingCash: 500 });
+    await request(app).post(`/api/shifts/${open.body.id}/close`).set(authed(orphanToken)).send({ actualCash: 450 }); // عجز 50
+
+    const review = await request(app).post(`/api/shifts/${open.body.id}/review`).set(authed(debtManagerToken)).send({ decision: "approve" });
+    expect(review.status).toBe(200);
+    expect(review.body.status).toBe("CLOSED");
+    expect(review.body.debtCreated).toBeNull();
+
+    const audit = await pool.query(
+      "SELECT * FROM audit_logs WHERE action = 'SHIFT_VARIANCE_DEBT_SKIPPED_NO_EMPLOYEE' AND entity_id = $1",
+      [open.body.id]
+    );
+    expect(audit.rows.length).toBe(1);
+    void orphanCashierId;
   });
 });
 

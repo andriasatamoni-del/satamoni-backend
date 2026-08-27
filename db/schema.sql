@@ -1495,7 +1495,10 @@ CREATE TABLE payroll_adjustments (
   amount          NUMERIC NOT NULL,
   notes           TEXT,
   created_by      INTEGER REFERENCES users(id),
-  created_at      TIMESTAMPTZ DEFAULT now()
+  created_at      TIMESTAMPTZ DEFAULT now(),
+  -- المرحلة 8.6: ربط مباشر بالشيفت اللي سبب السلفة (عجز كاش) - عشان التتبّع الكامل موظف->شيفت->تاريخ->فرع
+  -- من غير تكرار أرقام الكاش المتوقع/الفعلي/الفرق (موجودين أصلًا على pos_shifts، بيوصلهم بالـjoin)
+  shift_id        INTEGER REFERENCES pos_shifts(id)
 );
 
 -- مبيعات كل قسم في كل فرع شهريًا (لمقارنة تكلفة الرواتب بالمبيعات في لوحة التحكم)

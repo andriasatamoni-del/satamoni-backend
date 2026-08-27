@@ -807,6 +807,11 @@ function changeQty(key, delta) {
   renderCart();
 }
 
+// المرحلة 8.6: كان الباج إن state.selectedPaymentId بيتحط أول مرة كـرقم (من data.paymentMethods)،
+// لكن بعد أول ضغطة كان بيتحط كـel.dataset.id (دايمًا نص/string جوه الـDOM). المقارنة p.id ===
+// state.selectedPaymentId بقت بتقارن رقم بنص (3 === "3" == false) - يعني بعد أول ضغطة، مفيش أي
+// طريقة دفع كانت بتظهر عليها علامة الاختيار خالص، مع إن القيمة الفعلية اللي بتتبعت للباك إند كانت
+// صح (الباج بصري بس، مش وظيفي). الإصلاح: تثبيت النوع (Number) عند كل تحديث للحالة.
 function renderPayments() {
   const wrap = document.getElementById("payRow");
   wrap.innerHTML = state.paymentMethods.map(p =>
@@ -816,7 +821,7 @@ function renderPayments() {
     </div>`
   ).join("");
   wrap.querySelectorAll(".pay-opt").forEach(el => {
-    el.onclick = () => { state.selectedPaymentId = el.dataset.id; renderPayments(); updateSubmitState(); };
+    el.onclick = () => { state.selectedPaymentId = Number(el.dataset.id); renderPayments(); updateSubmitState(); };
   });
 }
 
@@ -984,73 +989,64 @@ function openOpenShiftModal() {
   document.getElementById("shiftModalOverlay").classList.add("show");
 }
 
-async function openCloseShiftModal() {
-  document.getElementById("shiftModalTitle").textContent = "قفل الشيفت";
-  document.getElementById("shiftModalBody").innerHTML = `<div style="text-align:center;color:var(--faint);font-size:13px">جاري حساب الكاش المتوقع...</div>`;
+// المرحلة 8.6: الكاشير مابقاش يشوف الكاش المتوقع ولا أي مقارنة بيه خالص - ده تحقيق أمني/ضد التلاعب
+// (كاشير عارف الرقم المتوقع مقدّمًا يقدر يدخل رقم "فعلي" يطابقه بالظبط سواء كان فيه عجز أو زيادة
+// حقيقية فعلًا). الشاشة الجديدة: عدّ فئات نقدية بس (زي عدّ درج حقيقي) - النظام بيجمع الإجمالي من
+// عدد كل فئة، ومقارنته بالمتوقع بتحصل سيرفر-سايد بس، بعد كده، لمدير الفرع/المحاسب وقت المراجعة
+const CASH_DENOMINATIONS = [200, 100, 50, 20, 10, 5, 1, 0.5, 0.25];
+function openCloseShiftModal() {
+  document.getElementById("shiftModalTitle").textContent = "قفل الشيفت - عدّ الكاش";
   document.getElementById("shiftModalErr").textContent = "";
+  document.getElementById("shiftModalBody").innerHTML = `
+    <div style="font-size:12px;color:var(--faint);margin-bottom:8px">دخّل عدد كل فئة موجودة في الدرج فعليًا</div>
+    ${CASH_DENOMINATIONS.map((d) => `
+      <div class="row" style="align-items:center">
+        <span>${d} ج.م</span>
+        <input type="number" min="0" step="1" value="0" class="denomCount" data-value="${d}" style="width:70px;text-align:center" />
+      </div>`).join("")}
+    <div class="row total"><span>إجمالي الكاش المعدود</span><b id="denomTotal">0.00</b></div>
+    <label>ملاحظات القفل (اختياري)</label>
+    <input id="shiftClosingNotes" placeholder="ملاحظات" />
+  `;
+  const recalcTotal = () => {
+    const total = [...document.querySelectorAll(".denomCount")]
+      .reduce((s, el) => s + Number(el.dataset.value) * (Number(el.value) || 0), 0);
+    document.getElementById("denomTotal").textContent = money(total);
+    return total;
+  };
+  document.querySelectorAll(".denomCount").forEach((el) => el.addEventListener("input", recalcTotal));
+  recalcTotal();
+
   const submitBtn = document.getElementById("shiftModalSubmit");
   submitBtn.textContent = "قفل الشيفت";
-  submitBtn.disabled = true;
-  submitBtn.onclick = null;
+  submitBtn.disabled = false;
+  submitBtn.onclick = async () => {
+    const actualCash = recalcTotal();
+    const counts = [...document.querySelectorAll(".denomCount")]
+      .filter((el) => Number(el.value) > 0)
+      .map((el) => `${el.dataset.value}×${el.value}`)
+      .join("، ");
+    const userNotes = document.getElementById("shiftClosingNotes").value.trim();
+    const closingNotes = [counts ? `عدّ الفئات: ${counts}` : null, userNotes || null].filter(Boolean).join(" - ");
+    submitBtn.disabled = true;
+    try {
+      const closeRes = await fetch(`${API_BASE_URL}/api/shifts/${state.shift.id}/close`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+        body: JSON.stringify({ actualCash, closingNotes: closingNotes || null }),
+      });
+      const closeData = await closeRes.json();
+      if (!closeRes.ok) throw new Error(closeData.error || "تعذر قفل الشيفت");
+      state.shift = null;
+      renderShiftPill();
+      closeShiftModal();
+      alert("تم تسجيل النقدية وقفل الشيفت. لو محتاج مراجعة، مدير الفرع/المحاسب هيتابعها.");
+    } catch (e) {
+      document.getElementById("shiftModalErr").textContent = e.message;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  };
   document.getElementById("shiftModalOverlay").classList.add("show");
-
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/shifts/${state.shift.id}/preview`, { headers: { Authorization: `Bearer ${auth.token}` } });
-    const preview = await res.json();
-    if (!res.ok) throw new Error(preview.error || "تعذر حساب الكاش المتوقع");
-
-    document.getElementById("shiftModalBody").innerHTML = `
-      <div class="row"><span>كاش الافتتاح</span><b>${money(preview.openingCash)}</b></div>
-      <div class="row"><span>مبيعات كاش</span><b>${money(preview.cashSales)}</b></div>
-      <div class="row"><span>مبيعات كارت</span><b>${money(preview.cardSales)}</b></div>
-      <div class="row"><span>مرتجعات كاش</span><b>-${money(preview.cashRefunds)}</b></div>
-      <div class="row"><span>مصروفات كاش</span><b>-${money(preview.cashExpensesTotal)}</b></div>
-      <div class="row"><span>مشتريات كاش</span><b>-${money(preview.cashPurchasesTotal)}</b></div>
-      <div class="row total"><span>الكاش المتوقع في الدرج</span><b>${money(preview.expectedCash)}</b></div>
-      <label>الكاش الفعلي بالدرج (بعد العدّ)</label>
-      <input id="shiftActualCash" type="number" min="0" step="0.01" value="${preview.expectedCash}" />
-      <div id="varianceDisplay"></div>
-      <label>ملاحظات القفل (اختياري)</label>
-      <input id="shiftClosingNotes" placeholder="ملاحظات" />
-    `;
-    const updateVariance = () => {
-      const actual = Number(document.getElementById("shiftActualCash").value || 0);
-      const variance = actual - preview.expectedCash;
-      const el = document.getElementById("varianceDisplay");
-      if (Math.abs(variance) < 0.005) { el.className = "variance-ok"; el.textContent = "✅ الحساب مظبوط"; }
-      else if (variance > 0) { el.className = "variance-bad"; el.textContent = `⚠️ زيادة ${money(variance)}`; }
-      else { el.className = "variance-bad"; el.textContent = `⚠️ عجز ${money(Math.abs(variance))}`; }
-    };
-    document.getElementById("shiftActualCash").addEventListener("input", updateVariance);
-    updateVariance();
-
-    submitBtn.disabled = false;
-    submitBtn.onclick = async () => {
-      const actualCash = Number(document.getElementById("shiftActualCash").value);
-      const closingNotes = document.getElementById("shiftClosingNotes").value.trim();
-      submitBtn.disabled = true;
-      try {
-        const closeRes = await fetch(`${API_BASE_URL}/api/shifts/${state.shift.id}/close`, {
-          method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
-          body: JSON.stringify({ actualCash, closingNotes: closingNotes || null }),
-        });
-        const closeData = await closeRes.json();
-        if (!closeRes.ok) throw new Error(closeData.error || "تعذر قفل الشيفت");
-        state.shift = null;
-        renderShiftPill();
-        closeShiftModal();
-        alert(closeData.variance_status === "PENDING_REVIEW"
-          ? `تم قفل الشيفت — فيه فرق كاش (${money(Number(closeData.cash_variance))}) محتاج مراجعة مدير الفرع.`
-          : "تم قفل الشيفت بنجاح.");
-      } catch (e) {
-        document.getElementById("shiftModalErr").textContent = e.message;
-      } finally {
-        submitBtn.disabled = false;
-      }
-    };
-  } catch (e) {
-    document.getElementById("shiftModalErr").textContent = e.message;
-  }
 }
 
 // ============================================================

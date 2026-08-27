@@ -27,6 +27,20 @@ router.get("/orders", requirePermission("kitchen.view"), async (req, res) => {
                    'name', COALESCE(mi.name, c.name, 'صنف'),
                    'variant', v.label,
                    'quantity', oi.quantity,
+                   'isCombo', oi.combo_id IS NOT NULL,
+                   -- المرحلة 8.6: عرض/كومبو كان بيظهر للمطبخ كسطر واحد مبهم ("عرض العيلة") من غير
+                   -- تفاصيل الأصناف الفعلية اللي المطبخ محتاج يحضّرها. نفس نمط الـjoin اللي المحاسبة/
+                   -- خصم المخزون بيستخدموه أصلًا (combo_items -> menu_item_variants -> menu_items)
+                   -- عشان مفيش تكرار لمنطق تفكيك العرض - نفس مصدر الحقيقة
+                   'components', CASE WHEN oi.combo_id IS NOT NULL THEN (
+                     SELECT json_agg(json_build_object(
+                       'name', cmi.name, 'variant', cv.label, 'quantity', ci.quantity * oi.quantity
+                     ) ORDER BY ci.id)
+                     FROM combo_items ci
+                     JOIN menu_item_variants cv ON cv.id = ci.variant_id
+                     JOIN menu_items cmi ON cmi.id = cv.item_id
+                     WHERE ci.combo_id = oi.combo_id
+                   ) ELSE NULL END,
                    'modifiers', COALESCE((
                      SELECT json_agg(oim.name_at_sale ORDER BY oim.id)
                      FROM order_item_modifiers oim WHERE oim.order_item_id = oi.id

@@ -198,9 +198,14 @@ function renderCard(o) {
   const col = COLUMNS.find(c => c.key === o.kitchen_status);
   const items = (o.items || []).map(it => {
     const mods = (it.modifiers || []).filter(Boolean);
+    // المرحلة 8.6: عرض/كومبو كان بيظهر للمطبخ كسطر واحد مبهم من غير الأصناف الفعلية المطلوب
+    // تحضيرها - components (لو موجودة) بترجع جاهزة من الباك إند (نفس combo_items اللي خصم
+    // المخزون بيستخدمها أصلًا)
+    const components = (it.components || []);
     return `
       <div class="line">
         ${it.name}${it.variant ? ` (${it.variant})` : ""} × ${it.quantity}
+        ${components.length ? `<div class="mods">${components.map(c => `${c.name}${c.variant ? ` (${c.variant})` : ""} × ${c.quantity}`).join("<br/>")}</div>` : ""}
         ${mods.length ? `<div class="mods">${mods.map(m => "+ " + m).join("، ")}</div>` : ""}
       </div>`;
   }).join("") || `<div class="line">—</div>`;

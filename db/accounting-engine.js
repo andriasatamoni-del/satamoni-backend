@@ -176,6 +176,27 @@ async function getOrCreateDriverCustodyAccount(client, driverId) {
   return inserted.rows[0];
 }
 
+// المرحلة 8.6: حساب ذمم موظف - نفس نمط getOrCreateDriverCustodyAccount بالظبط. بيمثّل "مبلغ الموظف
+// مديون بيه للشركة" (عجز كاش شيفت اتأكّد من المدير/المحاسب) - أصل منفصل عن كاش الفرع، بيتقفل فعليًا
+// وقت خصمه من صافي راتب الموظف (payroll_adjustments نوع 'advance'، مربوطة بالفعل بحساب الراتب في
+// services/payroll-engine.js)
+async function getOrCreateEmployeeReceivableAccount(client, employeeId) {
+  const code = `1160-${employeeId}`;
+  const existing = await client.query("SELECT * FROM accounts WHERE code = $1", [code]);
+  if (existing.rows.length > 0) return existing.rows[0];
+
+  const parent = await client.query("SELECT id FROM accounts WHERE code = '1100'");
+  const employee = await client.query("SELECT name FROM employees WHERE id = $1", [employeeId]);
+  const inserted = await client.query(
+    `INSERT INTO accounts (code, name, account_type, parent_account_id, is_system_account)
+     VALUES ($1,$2,'ASSET',$3,TRUE)
+     ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
+     RETURNING *`,
+    [code, `ذمم موظف - ${employee.rows[0]?.name || "موظف " + employeeId}`, parent.rows[0]?.id || null]
+  );
+  return inserted.rows[0];
+}
+
 async function getAccountByCode(client, code) {
   const result = await client.query("SELECT * FROM accounts WHERE code = $1", [code]);
   if (result.rows.length === 0) throw new Error(`الحساب بالكود ${code} مش موجود - شجرة الحسابات الافتراضية ناقصة`);
@@ -184,5 +205,6 @@ async function getAccountByCode(client, code) {
 
 module.exports = {
   postJournalEntry, reverseJournalEntry, ensurePeriodOpen,
-  getOrCreateBranchCashAccount, getOrCreateDriverCustodyAccount, getAccountByCode,
+  getOrCreateBranchCashAccount, getOrCreateDriverCustodyAccount, getOrCreateEmployeeReceivableAccount,
+  getAccountByCode,
 };

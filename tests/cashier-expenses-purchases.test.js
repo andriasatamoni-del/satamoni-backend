@@ -187,7 +187,8 @@ describe("حساب الكاش المتوقع للشيفت بيشمل مصروف�
   });
 
   test("معاينة أولية - مفيش مصروفات/مشتريات لسه، متوقع = 1000", async () => {
-    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(cashierAToken));
+    // المرحلة 8.6: /preview بقى مقصور على شيفتس.review (مدير فرع/محاسب/أدمن) - الكاشير مابقاش يشوفه
+    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(managerAToken));
     expect(preview.body.cashExpensesTotal).toBe(0);
     expect(preview.body.cashPurchasesTotal).toBe(0);
     expect(preview.body.expectedCash).toBe(1000);
@@ -199,7 +200,8 @@ describe("حساب الكاش المتوقع للشيفت بيشمل مصروف�
     const pur = await request(app).post("/api/purchases").set(authed(cashierAToken)).send({ category: "طوارئ", amount: 45 });
     expect(pur.body.status).toBe("PENDING");
 
-    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(cashierAToken));
+    // المرحلة 8.6: /preview بقى مقصور على شيفتس.review (مدير فرع/محاسب/أدمن) - الكاشير مابقاش يشوفه
+    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(managerAToken));
     expect(preview.body.cashExpensesTotal).toBe(80);
     expect(preview.body.cashPurchasesTotal).toBe(45);
     expect(preview.body.expectedCash).toBe(1000 - 80 - 45); // 875 - قبل أي مراجعة من المدير خالص
@@ -212,7 +214,8 @@ describe("حساب الكاش المتوقع للشيفت بيشمل مصروف�
     );
     await request(app).post(`/api/expenses/${pending.rows[0].id}/review`).set(authed(managerAToken));
 
-    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(cashierAToken));
+    // المرحلة 8.6: /preview بقى مقصور على شيفتس.review (مدير فرع/محاسب/أدمن) - الكاشير مابقاش يشوفه
+    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(managerAToken));
     expect(preview.body.cashExpensesTotal).toBe(80);
     expect(preview.body.expectedCash).toBe(1000 - 80 - 45);
   });
@@ -224,7 +227,8 @@ describe("حساب الكاش المتوقع للشيفت بيشمل مصروف�
     );
     await request(app).post(`/api/purchases/${pending.rows[0].id}/reject`).set(authed(managerAToken)).send({ reason: "غير حقيقي" });
 
-    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(cashierAToken));
+    // المرحلة 8.6: /preview بقى مقصور على شيفتس.review (مدير فرع/محاسب/أدمن) - الكاشير مابقاش يشوفه
+    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(managerAToken));
     expect(preview.body.cashPurchasesTotal).toBe(0);
     expect(preview.body.expectedCash).toBe(1000 - 80);
   });
@@ -232,8 +236,10 @@ describe("حساب الكاش المتوقع للشيفت بيشمل مصروف�
   test("قفل الشيفت بالمبلغ المتوقع بالظبط - مفيش فرق كاش", async () => {
     const res = await request(app).post(`/api/shifts/${shiftId}/close`).set(authed(cashierAToken)).send({ actualCash: 920 });
     expect(res.status).toBe(200);
-    expect(Number(res.body.cash_variance)).toBeCloseTo(0, 6);
     expect(res.body.status).toBe("CLOSED");
-    expect(Number(res.body.cash_purchases_total)).toBe(0);
+    // المرحلة 8.6: الأرقام المالية مش ظاهرة في رد الكاشير - بتتأكد من مدير الفرع
+    const managerView = await request(app).get(`/api/shifts/${shiftId}`).set(authed(managerAToken));
+    expect(Number(managerView.body.cash_variance)).toBeCloseTo(0, 6);
+    expect(Number(managerView.body.cash_purchases_total)).toBe(0);
   });
 });

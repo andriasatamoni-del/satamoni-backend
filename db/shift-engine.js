@@ -5,6 +5,24 @@
 // بس، مش عن طريق عدّادات بتتحدّث مع كل طلب (ده بيتجنّب أي سباق تحديث عداد، وبيخلي أي رقم قابل لإعادة
 // الحساب والتدقيق في أي وقت من مصدره الأصلي).
 const { logAudit } = require("./audit");
+const {
+  postJournalEntry, getOrCreateBranchCashAccount, getOrCreateEmployeeReceivableAccount, getAccountByCode,
+} = require("./accounting-engine");
+
+// المرحلة 8.6: الكاشير مايشوفش أي رقم مالي حساس عن شيفته خالص (كاش متوقع/فعلي/فرق/تفاصيل مبيعات) -
+// ده بيتفرض على مستوى الـAPI response نفسه، مش إخفاء واجهة بس (لو حد شاف الـnetwork response خام
+// كان لسه هيلاقي الأرقام). allowlist صريح (مش blocklist) عمدًا - أي عمود جديد يتضاف للجدول مستقبلًا
+// بيتصفّى تلقائيًا لحد ما حد يضيفه هنا صراحة، مش العكس
+const CASHIER_SAFE_SHIFT_FIELDS = [
+  "id", "branch_id", "user_id", "status", "opened_at", "opening_cash", "opening_notes",
+  "closed_at", "closed_by", "closing_notes", "order_count", "void_count", "created_at", "updated_at",
+];
+function sanitizeShiftForCashier(shift) {
+  if (!shift) return shift;
+  const out = {};
+  for (const key of CASHIER_SAFE_SHIFT_FIELDS) out[key] = shift[key];
+  return out;
+}
 
 // حساب أرقام الشيفت المالية لحظيًا من orders/expenses الحقيقية - بيتستخدم في المعاينة (قبل القفل) وفي
 // القفل نفسه (بيتجمّد وقتها). toTs بيبقى وقت القفل الفعلي أو "دلوقتي" لو لسه معاينة/الشيفت شغال
@@ -205,13 +223,89 @@ async function reviewShiftVariance(client, { shift, reviewerId, decision, notes 
     err.code = "SHIFT_NOT_PENDING_REVIEW";
     throw err;
   }
+  const closedShift = result.rows[0];
+  const cashVariance = Number(closedShift.cash_variance);
+
+  // المرحلة 8.6: "موافقة" (approve) يعني المدير/المحاسب أكّد إن الفرق حقيقي ومحتاج إجراء فعلي - ده
+  // بالظبط نقطة القرار اللي المهمة طلبتها ("لو محتاج قرار قابل للتهيئة، اعمل workflow مش تخترع سياسة")؛
+  // approve/acknowledge الموجودين أصلًا هما القرار ده. "إقرار" (acknowledge) يعني اطّلع واقتنع (خطأ POS،
+  // إلخ) من غير ما يحمّل الكاشير أي مسؤولية مالية - مفيش سلفة ولا قيد.
+  // عجز (variance سالب) مؤكّد -> سلفة على الكاشير (payroll_adjustments نوع 'advance'، مربوطة فعليًا
+  // بحساب صافي الراتب في services/payroll-engine.js - الخصم من الراتب هو "التسوية" نفسها، مفيش داعي
+  // لآلية تسوية منفصلة). زيادة مؤكّدة (variance موجب) -> بتترحّل كإيراد آخر (4300)، نفس السياسة
+  // المستخدمة أصلًا لفرق تسليم كاش السائق في db/delivery-engine.js (settleDriverCash) - مش سياسة مخترعة.
+  let debtCreated = null;
+  if (decision === "approve" && cashVariance !== 0) {
+    const employeeRes = await client.query(
+      "SELECT id, name FROM employees WHERE user_id = $1 LIMIT 1",
+      [shift.user_id]
+    );
+    const branchCashAccount = await getOrCreateBranchCashAccount(client, shift.branch_id);
+
+    if (cashVariance < 0) {
+      if (employeeRes.rows.length === 0) {
+        // مفيش ملف موظف مربوط بحساب الكاشير ده - مينفعش نسجّل سلفة من غير موظف حقيقي نربطها بيه.
+        // مش هيقفل الشيفت أو يفشل المراجعة (ده مش ذنب الكاشير)، بس هيتسجل صراحة في الـaudit عشان
+        // متابعة يدوية (لازم حد يربط حساب الكاشير ده بملف موظف قبل أي مراجعة تانية)
+        await logAudit(client, {
+          branchId: shift.branch_id, userId: reviewerId, action: "SHIFT_VARIANCE_DEBT_SKIPPED_NO_EMPLOYEE",
+          entityType: "pos_shift", entityId: shift.id,
+          newValues: { userId: shift.user_id, shortage: Math.abs(cashVariance) },
+        });
+      } else {
+        const employee = employeeRes.rows[0];
+        const receivableAccount = await getOrCreateEmployeeReceivableAccount(client, employee.id);
+        const shortage = Math.round(Math.abs(cashVariance) * 100) / 100;
+        await postJournalEntry(client, {
+          entryDate: new Date().toISOString().slice(0, 10),
+          description: `عجز كاش شيفت #${shift.id} - ${employee.name}`,
+          sourceType: "shift_variance_debt", sourceId: shift.id, branchId: shift.branch_id,
+          lines: [
+            { accountId: receivableAccount.id, debit: shortage, branchId: shift.branch_id },
+            { accountId: branchCashAccount.id, credit: shortage, branchId: shift.branch_id },
+          ],
+          idempotencyKey: `shift-variance-debt-${shift.id}`, userId: reviewerId,
+        });
+        const adjustment = await client.query(
+          `INSERT INTO payroll_adjustments (employee_id, entry_date, adjustment_type, amount, notes, created_by, shift_id)
+           VALUES ($1, CURRENT_DATE, 'advance', $2, $3, $4, $5) RETURNING *`,
+          [employee.id, shortage, `عجز كاش شيفت #${shift.id} بتاريخ ${shift.opened_at}`, reviewerId, shift.id]
+        );
+        debtCreated = adjustment.rows[0];
+        await logAudit(client, {
+          branchId: shift.branch_id, userId: reviewerId, action: "SHIFT_VARIANCE_DEBT_CREATED",
+          entityType: "payroll_adjustment", entityId: debtCreated.id,
+          newValues: { shiftId: shift.id, employeeId: employee.id, amount: shortage },
+        });
+      }
+    } else {
+      const otherRevenue = await getAccountByCode(client, "4300");
+      const surplus = Math.round(cashVariance * 100) / 100;
+      await postJournalEntry(client, {
+        entryDate: new Date().toISOString().slice(0, 10),
+        description: `زيادة كاش شيفت #${shift.id}`,
+        sourceType: "shift_variance_surplus", sourceId: shift.id, branchId: shift.branch_id,
+        lines: [
+          { accountId: branchCashAccount.id, debit: surplus, branchId: shift.branch_id },
+          { accountId: otherRevenue.id, credit: surplus, branchId: shift.branch_id },
+        ],
+        idempotencyKey: `shift-variance-surplus-${shift.id}`, userId: reviewerId,
+      });
+      await logAudit(client, {
+        branchId: shift.branch_id, userId: reviewerId, action: "SHIFT_VARIANCE_SURPLUS_POSTED",
+        entityType: "pos_shift", entityId: shift.id,
+        newValues: { shiftId: shift.id, amount: surplus },
+      });
+    }
+  }
+
   await logAudit(client, {
     branchId: shift.branch_id, userId: reviewerId, action: "SHIFT_VARIANCE_REVIEWED",
     entityType: "pos_shift", entityId: shift.id,
     oldValues: { status: shift.status, varianceStatus: shift.variance_status },
     newValues: { status: "CLOSED", varianceStatus, notes: notes || null },
   });
-  return result.rows[0];
+  return { ...closedShift, debtCreated };
 }
 
 // قفل قسري (أدمن بس) - لحالات استثنائية زي كاشير سايب الشيفت شغال ومش موجود (نسي يقفل، انتهت
@@ -264,4 +358,5 @@ async function forceCloseShift(client, { shift, actualCash, closingNotes, closed
 module.exports = {
   computeShiftFinancials, calcExpectedCash, classifyVariance,
   openShift, previewExpectedCash, closeShift, reviewShiftVariance, forceCloseShift,
+  sanitizeShiftForCashier,
 };

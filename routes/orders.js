@@ -652,8 +652,21 @@ router.get(
         return res.status(403).json({ error: "معندكش صلاحية تشوف طلب فرع تاني" });
       }
 
+      // المرحلة 8.6: combo_components بترجّع الأصناف الفعلية جوه العرض (نفس الـjoin اللي خصم المخزون/
+      // المحاسبة بيستخدموه أصلًا combo_items->menu_item_variants->menu_items) - عشان أي مستهلك للـ
+      // endpoint ده (تذكرة المطبخ، إيصال الكاشير، الطباعة، شاشة التوصيل) يعرض الأصناف الحقيقية بدل
+      // اسم العرض المبهم بس. مصدر واحد للحقيقة، من غير تكرار منطق تفكيك العرض في كل شاشة لوحدها
       const items = await pool.query(
-        `SELECT oi.*, mi.name AS item_name, miv.label AS variant_label, c.name AS combo_name
+        `SELECT oi.*, mi.name AS item_name, miv.label AS variant_label, c.name AS combo_name,
+                CASE WHEN oi.combo_id IS NOT NULL THEN (
+                  SELECT json_agg(json_build_object(
+                    'name', cmi.name, 'variant', cv.label, 'quantity', ci.quantity * oi.quantity
+                  ) ORDER BY ci.id)
+                  FROM combo_items ci
+                  JOIN menu_item_variants cv ON cv.id = ci.variant_id
+                  JOIN menu_items cmi ON cmi.id = cv.item_id
+                  WHERE ci.combo_id = oi.combo_id
+                ) ELSE NULL END AS combo_components
          FROM order_items oi
          LEFT JOIN menu_item_variants miv ON miv.id = oi.variant_id
          LEFT JOIN menu_items mi ON mi.id = miv.item_id

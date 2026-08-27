@@ -319,15 +319,16 @@ describe("محاكاة يوم تشغيل كامل: فتح شيفت -> بيع -> 
     });
     expect(waste.status).toBe(201);
 
-    // 5) قفل الشيفت
-    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(dayCashierToken));
+    // 5) قفل الشيفت - المعاينة بقت مقصورة على مدير الفرع/المحاسب (المرحلة 8.6)
+    const preview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(dayManagerToken));
     expect(preview.status).toBe(200);
     const expectedCash = Number(preview.body.expectedCash);
     const shiftClose = await request(app).post(`/api/shifts/${shiftId}/close`).set(authed(dayCashierToken)).send({
       actualCash: expectedCash,
     });
     expect(shiftClose.status).toBe(200);
-    expect(Number(shiftClose.body.cash_variance)).toBeCloseTo(0, 2);
+    const closedShift = await request(app).get(`/api/shifts/${shiftId}`).set(authed(dayManagerToken));
+    expect(Number(closedShift.body.cash_variance)).toBeCloseTo(0, 2);
 
     // 6) إقفال يوم الفرع - لازم ينجح من غير عمليات معلّقة
     const branchDayClose = await request(app).post(`/api/branch-days/${dayBranchId}/close`).set(authed(dayManagerToken)).send({});

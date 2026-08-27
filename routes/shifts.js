@@ -10,7 +10,16 @@ const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/aut
 const { requirePermission, hasPermission } = require("../middleware/permissions");
 const {
   openShift, previewExpectedCash, closeShift, reviewShiftVariance, forceCloseShift,
+  sanitizeShiftForCashier,
 } = require("../db/shift-engine");
+
+// المرحلة 8.6: تصفية استجابة الشيفت حسب دور اللي طالبها - كاشير مايشوفش أي رقم مالي حساس عن شيفته
+// (كاش متوقع/فعلي/فرق) حتى لو كان صاحب الشيفت نفسه. القرار ده على مستوى الـresponse نفسه، مش إخفاء
+// واجهة (لو حد فتح devtools وشاف الـnetwork response خام كان لسه هيلاقي الأرقام قبل الإصلاح ده)
+function shapeShiftResponse(shift, user) {
+  if (user.role === "cashier") return sanitizeShiftForCashier(shift);
+  return shift;
+}
 
 async function getThresholds(executor) {
   const r = await executor.query(
@@ -55,7 +64,7 @@ router.get("/current", requireAuth, requirePermission("shifts.view_own"), async 
       "SELECT * FROM pos_shifts WHERE user_id = $1 AND status = 'ACTIVE'",
       [req.user.id]
     );
-    res.json(result.rows[0] || null);
+    res.json(result.rows[0] ? shapeShiftResponse(result.rows[0], req.user) : null);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -68,7 +77,7 @@ router.get("/mine", requireAuth, requirePermission("shifts.view_own"), async (re
       "SELECT * FROM pos_shifts WHERE user_id = $1 ORDER BY opened_at DESC LIMIT 100",
       [req.user.id]
     );
-    res.json(result.rows);
+    res.json(result.rows.map((s) => shapeShiftResponse(s, req.user)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -90,10 +99,15 @@ router.get("/", requireAuth, requirePermission("shifts.view_branch"), async (req
   if (req.query.from) { conditions.push(`ps.opened_at >= $${i++}`); values.push(req.query.from); }
   if (req.query.to) { conditions.push(`ps.opened_at <= $${i++}`); values.push(req.query.to); }
   try {
+    // المرحلة 8.6: reviewer_name + linked_debt للمدير/المحاسب - تتبّع كامل موظف->شيفت->سلفة من غير
+    // ما تختفي أي حاجة (payroll_adjustments بيتربط بـshift_id، اتضاف في المرحلة دي)
     const result = await pool.query(
-      `SELECT ps.*, u.name AS cashier_name
+      `SELECT ps.*, u.name AS cashier_name, reviewer.name AS reviewer_name,
+              pa.id AS debt_id, pa.amount AS debt_amount, pa.employee_id AS debt_employee_id
        FROM pos_shifts ps
        JOIN users u ON u.id = ps.user_id
+       LEFT JOIN users reviewer ON reviewer.id = ps.variance_reviewed_by
+       LEFT JOIN payroll_adjustments pa ON pa.shift_id = ps.id AND pa.adjustment_type = 'advance'
        WHERE ${conditions.join(" AND ")}
        ORDER BY ps.opened_at DESC
        LIMIT 200`,
@@ -116,20 +130,23 @@ router.get("/:id", requireAuth, async (req, res) => {
     if (!isOwner && !canViewBranch) {
       return res.status(403).json({ error: "معندكش صلاحية تشوف الشيفت ده" });
     }
-    res.json(shift);
+    res.json(shapeShiftResponse(shift, req.user));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/shifts/:id/preview - معاينة الكاش المتوقع لحظيًا (قبل القفل الفعلي) - صاحب الشيفت بس
-router.get("/:id/preview", requireAuth, async (req, res) => {
+// GET /api/shifts/:id/preview - معاينة الكاش المتوقع لحظيًا (قبل القفل الفعلي) - مدير فرع/محاسب/أدمن بس.
+// المرحلة 8.6: كان الكاشير نفسه بيقدر يعاين الكاش المتوقع قبل القفل - ده بالظبط ثغرة التلاعب اللي
+// طُلب سدّها (كاشير عارف الرقم المتوقع مقدّمًا يقدر يدخل رقم "فعلي" يطابقه بالظبط، سواء كان فيه عجز
+// أو زيادة حقيقية). الشاشة الجديدة بتاعة الكاشير (عدّ فئات) مبقتش محتاجة الـendpoint ده خالص
+router.get("/:id/preview", requireAuth, requirePermission("shifts.review"), async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM pos_shifts WHERE id = $1", [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: "الشيفت مش موجود" });
     const shift = result.rows[0];
-    if (shift.user_id !== req.user.id && req.user.role !== "admin") {
-      return res.status(403).json({ error: "معندكش صلاحية تعاين الشيفت ده" });
+    if (!assertOwnBranch(req.user, shift.branch_id)) {
+      return res.status(403).json({ error: "معندكش صلاحية تعاين شيفت فرع تاني" });
     }
     if (shift.status !== "ACTIVE") {
       return res.status(400).json({ error: "الشيفت ده مش شغال - مفيش حاجة تتعاين" });
@@ -173,7 +190,7 @@ router.post("/:id/close", requireAuth, requirePermission("shifts.close_own"), as
       shift, actualCash: Number(actualCash), closingNotes, closedBy: req.user.id, thresholds,
     });
     await client.query("COMMIT");
-    res.json(closed);
+    res.json(shapeShiftResponse(closed, req.user));
   } catch (err) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });

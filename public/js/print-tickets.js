@@ -46,6 +46,16 @@
     return win;
   }
 
+  // المرحلة 8.6: عرض/كومبو كان بيطبع اسم العرض بس ("عرض العيلة") من غير الأصناف الفعلية اللي المطبخ
+  // محتاج يحضّرها. combo_components (لو موجودة) بترجع من GET /api/orders/:id جاهزة - نفس مصدر
+  // الحقيقة، من غير أي تفكيك للعرض هنا
+  function comboComponentsRows(it) {
+    if (!it.combo_components || !it.combo_components.length) return "";
+    return `<div class="mods">${it.combo_components
+      .map((c) => `${esc(c.name)}${c.variant ? ` (${esc(c.variant)})` : ""} × ${c.quantity}`)
+      .join("<br/>")}</div>`;
+  }
+
   function itemsRows(items) {
     return items.map((it) => {
       const name = it.item_name || it.combo_name || "صنف";
@@ -55,7 +65,7 @@
         .join("، ");
       return `
         <tr>
-          <td>${esc(name)}${variant}${mods ? `<div class="mods">${mods}</div>` : ""}</td>
+          <td>${esc(name)}${variant}${mods ? `<div class="mods">${mods}</div>` : ""}${comboComponentsRows(it)}</td>
           <td>× ${it.quantity}</td>
         </tr>`;
     }).join("");
@@ -70,7 +80,7 @@
         .join("، ");
       return `
         <tr>
-          <td>${esc(name)}${variant} × ${it.quantity}${mods ? `<div class="mods">${mods}</div>` : ""}</td>
+          <td>${esc(name)}${variant} × ${it.quantity}${mods ? `<div class="mods">${mods}</div>` : ""}${comboComponentsRows(it)}</td>
           <td>${money(it.line_total)}</td>
         </tr>`;
     }).join("");

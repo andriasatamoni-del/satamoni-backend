@@ -639,7 +639,7 @@ function renderPayments() {
   const wrap = document.getElementById("payRow");
   wrap.innerHTML = state.paymentMethods.map(p => `<div class="pay-opt ${p.id === state.selectedPaymentId ? "active" : ""}" data-id="${p.id}">
     <input type="radio" name="pay" ${p.id === state.selectedPaymentId ? "checked" : ""} /> ${p.name}</div>`).join("");
-  wrap.querySelectorAll(".pay-opt").forEach(el => { el.onclick = () => { state.selectedPaymentId = el.dataset.id; renderPayments(); updateSubmitState(); }; });
+  wrap.querySelectorAll(".pay-opt").forEach(el => { el.onclick = () => { state.selectedPaymentId = Number(el.dataset.id); renderPayments(); updateSubmitState(); }; });
 }
 
 function currentDeliveryFee() {

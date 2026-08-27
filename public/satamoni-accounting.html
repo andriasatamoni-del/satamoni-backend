@@ -198,7 +198,7 @@
       <div class="err" id="shiftsErr"></div>
     </div>
     <table>
-      <thead><tr><th>#</th><th>الكاشير</th><th>فتح</th><th>قفل</th><th>افتتاحي</th><th>متوقع</th><th>فعلي</th><th>الفرق</th><th>الحالة</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>الكاشير</th><th>فتح</th><th>قفل</th><th>افتتاحي</th><th>متوقع</th><th>فعلي</th><th>الفرق</th><th>الحالة</th><th>راجعها</th><th>السلفة</th><th>ملاحظات</th><th></th></tr></thead>
       <tbody id="shiftsBody"></tbody>
     </table>
   </div>
@@ -986,9 +986,12 @@ async function loadShifts() {
         <td>${s.actual_cash != null ? money(s.actual_cash) : "—"}</td>
         <td class="${s.cash_variance != null && Number(s.cash_variance) < 0 ? "diffneg" : "diffpos"}">${s.cash_variance != null ? money(s.cash_variance) : "—"}</td>
         <td>${shiftStatusLabel(s.status, s.variance_status)}</td>
+        <td>${s.reviewer_name || "—"}</td>
+        <td>${s.debt_id ? `<span class="diffneg">سلفة ${money(s.debt_amount)}</span>` : (s.cash_variance != null && Number(s.cash_variance) > 0 && s.variance_status === "APPROVED" ? `<span class="diffpos">زيادة ${money(s.cash_variance)}</span>` : "—")}</td>
+        <td>${s.variance_review_notes || s.closing_notes || "—"}</td>
         <td>${s.status === "PENDING_REVIEW" ? `<button class="linkbtn" data-review="${s.id}">مراجعة</button>` : ""}</td>
       </tr>
-    `).join("") || `<tr><td colspan="10" style="text-align:center;color:var(--faint)">مفيش شيفتات مطابقة</td></tr>`;
+    `).join("") || `<tr><td colspan="13" style="text-align:center;color:var(--faint)">مفيش شيفتات مطابقة</td></tr>`;
 
     document.querySelectorAll("[data-review]").forEach(btn => {
       btn.onclick = guardedClick(btn, () => reviewShift(btn.dataset.review));
@@ -1002,8 +1005,10 @@ document.getElementById("shiftsStatusFilter").onchange = loadShifts;
 document.getElementById("shiftsRefresh").onclick = loadShifts;
 
 async function reviewShift(shiftId) {
+  // المرحلة 8.6: "approve" دلوقتي بيترتب عليه فعليًا إما سلفة حقيقية على الكاشير (لو عجز - بتتخصم من
+  // صافي راتبه في التشغيلة الجاية) أو ترحيل الزيادة كإيراد آخر - القرار ده مش شكلي، لازم المراجع يفهمه
   const decision = prompt(
-    'اكتب "approve" لو اتخذت إجراء فعلي (تحقيق/تصحيح)، أو "acknowledge" لو تحققت من السبب واقتنعت بيه من غير إجراء إضافي:',
+    'اكتب "approve" لو الفرق ده هيترتب عليه إجراء فعلي (عجز = سلفة حقيقية على الكاشير تتخصم من راتبه، زيادة = إيراد للفرع)، أو "acknowledge" لو تحققت من السبب واقتنعت بيه من غير أي إجراء مالي:',
     "acknowledge"
   );
   if (!decision) return;
@@ -1014,7 +1019,10 @@ async function reviewShift(shiftId) {
   }
   const notes = prompt("ملاحظات المراجعة (اختياري):") || "";
   try {
-    await api(`/api/shifts/${shiftId}/review`, { method: "POST", body: JSON.stringify({ decision: trimmed, notes }) });
+    const result = await api(`/api/shifts/${shiftId}/review`, { method: "POST", body: JSON.stringify({ decision: trimmed, notes }) });
+    if (result.debtCreated) {
+      alert(`تم تسجيل سلفة ${money(result.debtCreated.amount)} على الموظف - هتتخصم من صافي راتبه في تشغيلة الرواتب الجاية.`);
+    }
     await loadShifts();
   } catch (e) {
     alert(e.message);
