@@ -125,6 +125,23 @@ CREATE TABLE menu_item_modifier_variant_prices (
   UNIQUE(modifier_id, variant_id)
 );
 
+-- المرحلة 7O: سجل تاريخ تغيير أسعار المنيو - نفس نمط employee_history بالظبط (field_name عام، old/new،
+-- مين غيّر وامتى). entity_id بيشاور على menu_item_variants.id أو menu_item_modifiers.id حسب entity_type
+-- (من غير FK صريح - زي audit_logs.entity_id بالظبط، لأنه بيشاور على جداول مختلفة حسب النوع).
+CREATE TABLE menu_price_history (
+  id           SERIAL PRIMARY KEY,
+  entity_type  TEXT NOT NULL CHECK (entity_type IN ('variant', 'modifier', 'modifier_variant_price')),
+  entity_id    INTEGER NOT NULL,
+  variant_id   INTEGER REFERENCES menu_item_variants(id) ON DELETE CASCADE,
+  field_name   TEXT NOT NULL,
+  old_price    NUMERIC,
+  new_price    NUMERIC,
+  changed_by   INTEGER REFERENCES users(id),
+  changed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_menu_price_history_entity ON menu_price_history(entity_type, entity_id);
+CREATE INDEX idx_menu_price_history_variant ON menu_price_history(variant_id);
+
 -- ---------------- العروض/الكومبوهات (أكتر من صنف بسعر واحد) ----------------
 CREATE TABLE combos (
   id            SERIAL PRIMARY KEY,

@@ -67,6 +67,14 @@
 
   #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
   #loginOverlay.hidden { display: none; }
+  /* المرحلة 7O: مودال سجل تاريخ الأسعار */
+  #priceHistoryOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 70; }
+  #priceHistoryOverlay.show { display: flex; }
+  #priceHistoryBox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; width: 90%; max-width: 420px; max-height: 70vh; overflow-y: auto; }
+  #priceHistoryBox h3 { margin: 0 0 10px; font-size: 14px; color: var(--gold-bright); }
+  .price-hist-row { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .price-hist-row:last-child { border-bottom: none; }
+  .price-hist-row .who { color: var(--faint); font-size: 11px; }
   #loginBox { width: 320px; text-align: center; }
   #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
@@ -92,6 +100,14 @@
     <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
     <button id="loginBtn">دخول</button>
     <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="priceHistoryOverlay">
+  <div id="priceHistoryBox">
+    <h3 id="priceHistoryTitle">سجل تاريخ السعر</h3>
+    <div id="priceHistoryList"></div>
+    <button type="button" id="priceHistoryCloseBtn" style="margin-top:10px">قفل</button>
   </div>
 </div>
 
@@ -342,8 +358,10 @@ async function loadItems() {
       ${it.variants.map(v => `
         <div class="variant-row">
           <span class="lbl">${v.label}</span><span>${money(v.price)}</span>
+          <button class="linkbtn" data-editprice="${v.id}" data-current="${v.price}">تعديل السعر</button>
           <span style="color:var(--faint)">طلبات: ${v.talabatPrice != null ? money(v.talabatPrice) : "—"}</span>
           <button class="linkbtn" data-edittalabat="${v.id}" data-current="${v.talabatPrice ?? ""}">تعديل سعر طلبات</button>
+          <button class="linkbtn" data-pricehist="${v.id}" data-label="${v.label}">📈 سجل السعر</button>
           <button class="linkbtn" data-recipe="${v.id}" data-varlabel2="${v.label}">كارتة الصنف (الريسبي)</button>
           <button class="linkbtn danger" data-delvariant="${v.id}" data-item="${it.id}">حذف</button>
         </div>
@@ -390,6 +408,19 @@ async function loadItems() {
       loadItems();
     };
   });
+  document.querySelectorAll("[data-editprice]").forEach(btn => {
+    btn.onclick = async () => {
+      const answer = prompt("السعر الأساسي الجديد:", btn.dataset.current);
+      if (answer === null || answer.trim() === "" || isNaN(Number(answer))) return;
+      try {
+        await api(`/api/menu/variants/${btn.dataset.editprice}`, { method: "PATCH", body: JSON.stringify({ price: Number(answer) }) });
+        loadItems();
+      } catch (e) { alert(e.message); }
+    };
+  });
+  document.querySelectorAll("[data-pricehist]").forEach(btn => {
+    btn.onclick = () => openVariantPriceHistory(btn.dataset.pricehist, btn.dataset.label);
+  });
   document.querySelectorAll("[data-addvariant]").forEach(btn => {
     btn.onclick = async () => {
       const itemId = btn.dataset.addvariant;
@@ -430,6 +461,7 @@ async function loadModifiers(itemId, variants = []) {
       <span class="lbl">${m.name}${m.is_active ? "" : " (معطّل)"}</span>
       <span>${Number(m.price_delta) > 0 ? "+" + money(m.price_delta) : "مجاني"} (افتراضي)</span>
       <button class="linkbtn" data-togglemod="${m.id}" data-item2="${itemId}" data-active="${m.is_active}">${m.is_active ? "تعطيل" : "تفعيل"}</button>
+      <button class="linkbtn" data-modpricehist="${m.id}" data-modname="${m.name}">📈</button>
       <button class="linkbtn danger" data-delmod="${m.id}" data-item3="${itemId}">حذف</button>
     </div>
     ${variants.length > 1 ? `<div style="display:flex;gap:12px;flex-wrap:wrap;margin:2px 0 8px 20px;font-size:11px;color:var(--faint)">
@@ -437,7 +469,8 @@ async function loadModifiers(itemId, variants = []) {
         const override = (m.variant_prices || {})[v.id];
         const effective = override != null ? Number(override) : Number(m.price_delta);
         return `<span>${v.label}: ${effective > 0 ? "+" + money(effective) : "مجاني"}${override != null ? " ★" : ""}
-          <button class="linkbtn" data-editvarprice="${m.id}" data-variant="${v.id}" data-current="${effective}">تعديل</button></span>`;
+          <button class="linkbtn" data-editvarprice="${m.id}" data-variant="${v.id}" data-current="${effective}">تعديل</button>
+          <button class="linkbtn" data-modvarpricehist="${m.id}" data-modname2="${m.name}" data-variant2="${v.id}" data-varlabel3="${v.label}">📈</button></span>`;
       }).join("")}
     </div>` : ""}
   `).join("") : `<div style="font-size:11px;color:var(--faint)">لسه مفيش مرفقات للصنف ده</div>`;
@@ -453,6 +486,12 @@ async function loadModifiers(itemId, variants = []) {
       await api(`/api/menu/modifiers/${btn.dataset.delmod}`, { method: "DELETE" });
       loadModifiers(btn.dataset.item3, variants);
     };
+  });
+  wrap.querySelectorAll("[data-modpricehist]").forEach(btn => {
+    btn.onclick = () => openModifierPriceHistory(btn.dataset.modpricehist, btn.dataset.modname);
+  });
+  wrap.querySelectorAll("[data-modvarpricehist]").forEach(btn => {
+    btn.onclick = () => openModifierPriceHistory(btn.dataset.modvarpricehist, `${btn.dataset.modname2} — ${btn.dataset.varlabel3}`, btn.dataset.variant2);
   });
   wrap.querySelectorAll("[data-editvarprice]").forEach(btn => {
     btn.onclick = async () => {
@@ -470,6 +509,41 @@ async function loadModifiers(itemId, variants = []) {
       } catch (e) { alert(e.message); }
     };
   });
+}
+
+// ---------------- المرحلة 7O: سجل تاريخ الأسعار ----------------
+function fmtHistDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("ar-EG") + " " + d.toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" });
+}
+const HIST_FIELD_LABELS = { price: "السعر الأساسي", talabat_price: "سعر طلبات", price_delta: "السعر" };
+function showPriceHistory(title, rows) {
+  document.getElementById("priceHistoryTitle").textContent = title;
+  document.getElementById("priceHistoryList").innerHTML = rows.length ? rows.map(r => `
+    <div class="price-hist-row">
+      <div>
+        <div>${HIST_FIELD_LABELS[r.field_name] || r.field_name}: ${r.old_price != null ? money(r.old_price) : "—"} ← ${r.new_price != null ? money(r.new_price) : "—"}</div>
+        <div class="who">${r.changed_by_name || "غير معروف"} — ${fmtHistDate(r.changed_at)}</div>
+      </div>
+    </div>
+  `).join("") : `<div style="font-size:12px;color:var(--faint)">مفيش تغييرات مسجّلة على السعر ده لسه</div>`;
+  document.getElementById("priceHistoryOverlay").classList.add("show");
+}
+document.getElementById("priceHistoryCloseBtn").onclick = () => {
+  document.getElementById("priceHistoryOverlay").classList.remove("show");
+};
+async function openVariantPriceHistory(variantId, label) {
+  try {
+    const rows = await api(`/api/menu/variants/${variantId}/price-history`);
+    showPriceHistory(`سجل سعر "${label}"`, rows);
+  } catch (e) { alert(e.message); }
+}
+async function openModifierPriceHistory(modId, name, variantId) {
+  try {
+    const qs = variantId ? `?variantId=${variantId}` : "";
+    const rows = await api(`/api/menu/modifiers/${modId}/price-history${qs}`);
+    showPriceHistory(`سجل سعر "${name}"`, rows);
+  } catch (e) { alert(e.message); }
 }
 
 // ---------------- كارتة الصنف (الريسبي) ----------------

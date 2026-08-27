@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
+const { logPriceChange } = require("../db/menu-price-history");
 
 // GET /api/menu - المنيو النشط بس مع الأصناف والأسعار (شكل جاهز للموقع/الكاشير)
 // كل صنف بييجي بمرفقاته المتاحة (modifiers) عشان شاشة البيع تعرضها وقت الإضافة للسلة
@@ -199,6 +200,16 @@ router.patch("/variants/:id", requireAuth, requireRole("admin"), async (req, res
         userId: req.user.id, action: "PRICE_CHANGE", entityType: "menu_variant", entityId: Number(id),
         oldValues: { price: before.rows[0].price }, newValues: { price }, req,
       });
+      await logPriceChange(pool, {
+        entityType: "variant", entityId: Number(id), fieldName: "price",
+        oldPrice: before.rows[0].price, newPrice: price, changedBy: req.user.id,
+      });
+    }
+    if (talabatPrice !== undefined && before.rows[0]) {
+      await logPriceChange(pool, {
+        entityType: "variant", entityId: Number(id), fieldName: "talabat_price",
+        oldPrice: before.rows[0].talabat_price, newPrice: talabatPrice, changedBy: req.user.id,
+      });
     }
     res.json(result.rows[0]);
   } catch (err) {
@@ -270,11 +281,18 @@ router.patch("/modifiers/:id", requireAuth, requireRole("admin"), async (req, re
 
   values.push(id);
   try {
+    const before = await pool.query("SELECT price_delta FROM menu_item_modifiers WHERE id = $1", [id]);
     const result = await pool.query(
       `UPDATE menu_item_modifiers SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`,
       values
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "المرفق مش موجود" });
+    if (priceDelta !== undefined && before.rows[0]) {
+      await logPriceChange(pool, {
+        entityType: "modifier", entityId: Number(id), fieldName: "price_delta",
+        oldPrice: before.rows[0].price_delta, newPrice: priceDelta, changedBy: req.user.id,
+      });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -301,6 +319,10 @@ router.put("/modifiers/:id/variant-prices/:variantId", requireAuth, requireRole(
   const { priceDelta } = req.body;
   if (priceDelta === undefined || priceDelta === null) return res.status(400).json({ error: "لازم تحدد السعر" });
   try {
+    const before = await pool.query(
+      "SELECT price_delta FROM menu_item_modifier_variant_prices WHERE modifier_id = $1 AND variant_id = $2",
+      [req.params.id, req.params.variantId]
+    );
     const result = await pool.query(
       `INSERT INTO menu_item_modifier_variant_prices (modifier_id, variant_id, price_delta)
        VALUES ($1, $2, $3)
@@ -308,6 +330,10 @@ router.put("/modifiers/:id/variant-prices/:variantId", requireAuth, requireRole(
        RETURNING *`,
       [req.params.id, req.params.variantId, priceDelta]
     );
+    await logPriceChange(pool, {
+      entityType: "modifier_variant_price", entityId: Number(req.params.id), variantId: Number(req.params.variantId),
+      fieldName: "price_delta", oldPrice: before.rows[0]?.price_delta ?? null, newPrice: priceDelta, changedBy: req.user.id,
+    });
     res.json(result.rows[0]);
   } catch (err) {
     if (err.code === "23503") return res.status(400).json({ error: "المرفق أو الحجم ده مش موجود" });
@@ -323,6 +349,49 @@ router.delete("/modifiers/:id/variant-prices/:variantId", requireAuth, requireRo
       [req.params.id, req.params.variantId]
     );
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------- المرحلة 7O: سجل تاريخ الأسعار ----------------
+
+// GET /api/menu/variants/:id/price-history - كل تغييرات سعر الحجم (الأساسي وسعر طلبات) بترتيب الأحدث أولًا
+router.get("/variants/:id/price-history", requireAuth, requireRole("admin"), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT h.*, u.name AS changed_by_name FROM menu_price_history h
+       LEFT JOIN users u ON u.id = h.changed_by
+       WHERE h.entity_type = 'variant' AND h.entity_id = $1
+       ORDER BY h.changed_at DESC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/menu/modifiers/:id/price-history - سعر المرفق الافتراضي، أو ?variantId= لسعره المخصوص على حجم معيّن
+router.get("/modifiers/:id/price-history", requireAuth, requireRole("admin"), async (req, res) => {
+  const { variantId } = req.query;
+  try {
+    const result = variantId
+      ? await pool.query(
+          `SELECT h.*, u.name AS changed_by_name FROM menu_price_history h
+           LEFT JOIN users u ON u.id = h.changed_by
+           WHERE h.entity_type = 'modifier_variant_price' AND h.entity_id = $1 AND h.variant_id = $2
+           ORDER BY h.changed_at DESC`,
+          [req.params.id, variantId]
+        )
+      : await pool.query(
+          `SELECT h.*, u.name AS changed_by_name FROM menu_price_history h
+           LEFT JOIN users u ON u.id = h.changed_by
+           WHERE h.entity_type = 'modifier' AND h.entity_id = $1
+           ORDER BY h.changed_at DESC`,
+          [req.params.id]
+        );
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
