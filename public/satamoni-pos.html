@@ -1243,7 +1243,10 @@ let posPhoneLookupTimer = null;
 function applyCustomerLookup(phone, p) {
   document.getElementById("phoneInput").value = phone;
   const statusEl = document.getElementById("customerStatus");
-  if (p.isRegistered) {
+  if (p.isRegistered && p.isBlocked) {
+    statusEl.textContent = `🚫 العميل ده محظور من طلبات الدليفري: ${p.blockReason || "بدون سبب مسجل"}`;
+    statusEl.style.color = "var(--red)";
+  } else if (p.isRegistered) {
     statusEl.textContent = "✅ عميل مسجل من قبل";
     statusEl.style.color = "var(--green)";
     if (p.name && !document.getElementById("nameInput").value.trim()) document.getElementById("nameInput").value = p.name;

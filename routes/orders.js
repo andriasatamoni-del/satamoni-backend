@@ -118,6 +118,18 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       return res.status(403).json({ error: "معندكش صلاحية تسجل طلب على فرع تاني" });
     }
 
+    // المرحلة 7P: عميل محظور مايقدرش يسجّل طلب دليفري جديد (بيتفحص برقمه الأساسي أو التاني) - التيك أواي
+    // والصالة مش متأثرين بالحظر (العميل بيجي بنفسه، الحظر بيمنع تحديد عنوان دليفري له بس)
+    if (orderType === "delivery" && customerPhone) {
+      const blocked = await client.query(
+        "SELECT block_reason FROM customers WHERE (phone = $1 OR phone2 = $1) AND is_blocked = TRUE",
+        [customerPhone]
+      );
+      if (blocked.rows.length > 0) {
+        return res.status(403).json({ error: `العميل ده محظور من طلبات الدليفري: ${blocked.rows[0].block_reason || "بدون سبب مسجل"}` });
+      }
+    }
+
     if (loyaltyPointsRedeemed) {
       if (!Number.isInteger(loyaltyPointsRedeemed) || loyaltyPointsRedeemed < 0) {
         return res.status(400).json({ error: "عدد نقاط الولاء المستخدمة غير صالح" });

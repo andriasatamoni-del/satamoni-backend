@@ -173,6 +173,27 @@
     <button id="profileSaveBtn">حفظ التعديلات</button>
     <div class="err" id="profileErr"></div>
     <div class="ok" id="profileOk"></div>
+
+    <h1 style="font-size:13px;margin:16px 0 6px">حظر العميل</h1>
+    <div id="blockStatus" style="font-size:12px;margin-bottom:8px"></div>
+    <div id="blockFormRow" class="row" style="gap:6px;flex-wrap:wrap">
+      <input id="blockReasonInput" placeholder="سبب الحظر (بلاغ كاذب، عدم دفع متكرر...)" style="flex:1;min-width:200px" />
+      <button id="blockBtn" type="button">🚫 حظر العميل</button>
+    </div>
+    <button id="unblockBtn" type="button" style="display:none">إلغاء الحظر</button>
+    <div class="err" id="blockErr"></div>
+
+    <h1 style="font-size:13px;margin:16px 0 6px">دمج مع عميل مكرر</h1>
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      <input id="mergeSourcePhone" placeholder="رقم العميل التاني (اللي هيتشال)" style="flex:1;min-width:200px" />
+      <button id="mergeBtn" type="button">دمج في العميل ده</button>
+    </div>
+    <div style="font-size:11px;color:var(--faint);margin-top:4px">
+      الدمج بينقل كل طلبات وعناوين العميل التاني لصاحب البروفايل ده، بيجمّع نقاط الولاء، وبيمسح صف العميل التاني نهائيًا.
+    </div>
+    <div class="err" id="mergeErr"></div>
+    <div class="ok" id="mergeOk"></div>
+
     <h1 style="font-size:13px;margin:16px 0 6px">دفتر العناوين</h1>
     <div id="addressBookList"></div>
     <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
@@ -282,7 +303,7 @@ async function loadDirectory(q) {
     const customers = await api(`/api/customers${qs}`);
     body.innerHTML = customers.map(c => `
       <tr class="clickable" data-phone="${c.phone}">
-        <td>${c.name || "بدون اسم"}</td><td>${c.phone}</td>
+        <td>${c.name || "بدون اسم"}${(c.isBlocked ?? c.is_blocked) ? ' <span class="pill" style="background:var(--red);color:#fff">محظور</span>' : ""}</td><td>${c.phone}</td>
         <td>${c.ordersCount ?? c.orders_count ?? 0}</td>
         <td>${money(c.totalSpent ?? c.total_spent)}</td>
         <td><span class="pill">${c.loyaltyPoints ?? c.loyalty_points ?? 0}</span></td>
@@ -307,6 +328,10 @@ async function openProfile(phone) {
   document.getElementById("profileErr").textContent = "";
   document.getElementById("profileOk").textContent = "";
   document.getElementById("addressErr").textContent = "";
+  document.getElementById("blockErr").textContent = "";
+  document.getElementById("mergeErr").textContent = "";
+  document.getElementById("mergeOk").textContent = "";
+  document.getElementById("mergeSourcePhone").value = "";
   document.getElementById("profileTitle").textContent = `بروفايل العميل — ${phone}`;
   document.getElementById("profileOverlay").classList.add("show");
   try {
@@ -322,11 +347,60 @@ async function openProfile(phone) {
     document.getElementById("profileOrdersList").innerHTML = p.recentOrders.map(o => `
       <div>#${o.id} — ${dt(o.created_at)} — ${money(o.total)} — ${o.status}</div>
     `).join("") || `<div>مفيش طلبات مسجّلة</div>`;
+    renderBlockStatus(p.isBlocked, p.blockReason);
   } catch (e) {
     document.getElementById("profileOrdersList").innerHTML = e.message;
   }
   await loadAddressBook(phone);
 }
+
+// ---------------- المرحلة 7P: حظر عميل + دمج عملاء مكررين ----------------
+function renderBlockStatus(isBlocked, blockReason) {
+  document.getElementById("blockStatus").innerHTML = isBlocked
+    ? `<span class="pill" style="background:var(--red);color:#fff">محظور</span> — ${blockReason || "بدون سبب مسجل"}`
+    : `<span style="color:var(--faint)">مش محظور</span>`;
+  document.getElementById("blockFormRow").style.display = isBlocked ? "none" : "flex";
+  document.getElementById("unblockBtn").style.display = isBlocked ? "block" : "none";
+}
+document.getElementById("blockBtn").onclick = async () => {
+  const errBox = document.getElementById("blockErr");
+  errBox.textContent = "";
+  const reason = document.getElementById("blockReasonInput").value.trim();
+  if (!reason) { errBox.textContent = "لازم تكتب سبب الحظر"; return; }
+  try {
+    await api(`/api/customers/${encodeURIComponent(currentProfilePhone)}/block`, {
+      method: "POST", body: JSON.stringify({ reason }),
+    });
+    document.getElementById("blockReasonInput").value = "";
+    openProfile(currentProfilePhone);
+    loadDirectory(document.getElementById("custSearch").value.trim());
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("unblockBtn").onclick = async () => {
+  const errBox = document.getElementById("blockErr");
+  errBox.textContent = "";
+  try {
+    await api(`/api/customers/${encodeURIComponent(currentProfilePhone)}/unblock`, { method: "POST" });
+    openProfile(currentProfilePhone);
+    loadDirectory(document.getElementById("custSearch").value.trim());
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("mergeBtn").onclick = async () => {
+  const errBox = document.getElementById("mergeErr");
+  const okBox = document.getElementById("mergeOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const sourcePhone = document.getElementById("mergeSourcePhone").value.trim();
+  if (!sourcePhone) { errBox.textContent = "لازم تكتب رقم العميل اللي هيتدمج"; return; }
+  if (!confirm(`متأكد إنك عايز تدمج العميل ${sourcePhone} في العميل ده؟ صف العميل ${sourcePhone} هيتشال نهائيًا.`)) return;
+  try {
+    await api("/api/customers/merge", {
+      method: "POST", body: JSON.stringify({ sourcePhone, targetPhone: currentProfilePhone }),
+    });
+    okBox.textContent = "اتدمج بنجاح";
+    openProfile(currentProfilePhone);
+    loadDirectory(document.getElementById("custSearch").value.trim());
+  } catch (e) { errBox.textContent = e.message; }
+};
 
 // ---------------- المرحلة 7M: دفتر عناوين العميل ----------------
 async function loadAddressBook(phone) {

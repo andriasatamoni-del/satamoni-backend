@@ -1204,9 +1204,15 @@ CREATE TABLE customers (
   distinguishing_mark  TEXT,             -- علامة مميزة (بجوار كذا، لون العمارة...) تساعد الطيار يوصل
   notes                TEXT,             -- ملاحظات كول سنتر (شكوى سابقة، تفضيلات، ...)
   loyalty_points       INTEGER DEFAULT 0,
+  -- المرحلة 7P: حظر عميل - منع تسجيل طلبات دليفري جديدة له (عميل مشاكل/بلاغات كاذبة/عدم دفع متكرر)
+  is_blocked           BOOLEAN NOT NULL DEFAULT FALSE,
+  block_reason         TEXT,
+  blocked_by           INTEGER REFERENCES users(id),
+  blocked_at           TIMESTAMPTZ,
   created_at           TIMESTAMPTZ DEFAULT now(),
   updated_at           TIMESTAMPTZ DEFAULT now()
 );
+CREATE INDEX idx_customers_is_blocked ON customers(is_blocked) WHERE is_blocked = TRUE;
 
 -- دفتر عناوين العميل - عنوان واحد أو أكتر (بيت/شغل/...)، بيتراكم أوتوماتيك مع كل طلب دليفري على عنوان
 -- جديد (routes/orders.js). customers.address_details فوق فاضل "آخر عنوان معروف" للـbackward-compat.
