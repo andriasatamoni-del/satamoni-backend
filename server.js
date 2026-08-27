@@ -76,6 +76,7 @@ app.use("/api/production", require("./routes/production"));
 app.use("/api/purchase-requests", require("./routes/purchase-requests"));
 app.use("/api/purchase-orders", require("./routes/purchase-orders"));
 app.use("/api/goods-receipts", require("./routes/goods-receipts"));
+app.use("/api/purchase-returns", require("./routes/purchase-returns"));
 app.use("/api/accounting", require("./routes/accounting"));
 app.use("/api/supplier-payments", require("./routes/supplier-payments"));
 app.use("/api/kds", require("./routes/kds"));

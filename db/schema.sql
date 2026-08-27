@@ -780,6 +780,42 @@ CREATE INDEX idx_goods_receipt_items_grn ON goods_receipt_items(goods_receipt_id
 CREATE INDEX idx_goods_receipt_items_po_item ON goods_receipt_items(purchase_order_item_id);
 CREATE INDEX idx_goods_receipt_items_item ON goods_receipt_items(inventory_item_id);
 
+-- المرحلة 7N: مرتجع مشتريات - معاملة مستقلة عن /goods-receipts/:id/cancel (اللي بيرجّع سند استلام
+-- كامل مفيش منه حاجة اتصرفت). المرتجع ده بيسمح بإرجاع كمية جزئية من صنف/دفعة معينة في أي وقت لاحق.
+CREATE TABLE purchase_returns (
+  id                SERIAL PRIMARY KEY,
+  branch_id         INTEGER NOT NULL REFERENCES branches(id),
+  supplier_id       INTEGER REFERENCES suppliers(id),
+  goods_receipt_id  INTEGER REFERENCES goods_receipts(id),
+  status            TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'POSTED', 'CANCELLED')),
+  reason            TEXT NOT NULL,
+  notes             TEXT,
+  total_value       NUMERIC,
+  created_by        INTEGER REFERENCES users(id),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  posted_by         INTEGER REFERENCES users(id),
+  posted_at         TIMESTAMPTZ,
+  cancelled_by      INTEGER REFERENCES users(id),
+  cancelled_at      TIMESTAMPTZ
+);
+CREATE INDEX idx_purchase_returns_branch ON purchase_returns(branch_id);
+CREATE INDEX idx_purchase_returns_supplier ON purchase_returns(supplier_id);
+CREATE INDEX idx_purchase_returns_status ON purchase_returns(status);
+
+CREATE TABLE purchase_return_items (
+  id                  SERIAL PRIMARY KEY,
+  purchase_return_id  INTEGER NOT NULL REFERENCES purchase_returns(id) ON DELETE CASCADE,
+  inventory_item_id   INTEGER NOT NULL REFERENCES inventory_items(id),
+  -- batch_id: مفيش REFERENCES هنا مباشرة لنفس سبب goods_receipt_items.batch_id فوق - الـFK بيتضاف
+  -- بـALTER TABLE تحت بعد ما inventory_batches يتعرّف
+  batch_id            INTEGER,
+  quantity            NUMERIC NOT NULL CHECK (quantity > 0),
+  unit                TEXT NOT NULL,
+  unit_cost           NUMERIC,
+  line_value          NUMERIC
+);
+CREATE INDEX idx_purchase_return_items_return ON purchase_return_items(purchase_return_id);
+
 -- وصفة تصنيع صنف مصنّع من مكونات خام/مصنّعة تانية (كام وحدة من كل مكوّن داخل عشان تنتج وحدة واحدة من الناتج)
 -- المرحلة 3: زي menu_item_variant_ingredients بالظبط - "جدول قراءة توافقي" (compatibility read model)،
 -- مش مصدر حقيقة. المصدر الوحيد للحقيقة هو recipes/recipe_versions/recipe_ingredients؛ الجدول ده بيتكتب
@@ -890,6 +926,11 @@ CREATE INDEX idx_inventory_batches_item_branch ON inventory_batches(inventory_it
 ALTER TABLE goods_receipt_items ADD CONSTRAINT fk_goods_receipt_items_batch
   FOREIGN KEY (batch_id) REFERENCES inventory_batches(id);
 CREATE INDEX idx_goods_receipt_items_batch ON goods_receipt_items(batch_id);
+
+-- المرحلة 7N: نفس السبب - purchase_return_items.batch_id اتعرّف قبل inventory_batches في الملف
+ALTER TABLE purchase_return_items ADD CONSTRAINT fk_purchase_return_items_batch
+  FOREIGN KEY (batch_id) REFERENCES inventory_batches(id);
+CREATE INDEX idx_purchase_return_items_batch ON purchase_return_items(batch_id);
 
 -- لو الصنف المُحوَّل بين فرعين متتبّع بدفعات، كل جزء من الكمية بيتسجل هنا بهويته الأصلية (رقم الدفعة/
 -- الصلاحية/الإنتاج/التكلفة) - عشان الدفعة تفضل معروفة بنفس هويتها في الفرع المستلم بدل ما تتحول لرصيد
