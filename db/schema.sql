@@ -71,7 +71,10 @@ CREATE TABLE pos_settings (
   -- شاملة الضريبة بالفعل (قرار العميل صراحة) - يعني السعر اللي العميل بيدفعه ثابت من غير تغيير، والضريبة
   -- بتتحسب بطريقة الاستخراج العكسي من الإجمالي (total نفسه ميتغيّرش)، مش بتتضاف فوق. صفر يعني عمليًا
   -- تعطيل الضريبة بدون الحاجة لعلم منفصل (مفيش vat_enabled - القيمة نفسها كفاية)
-  vat_rate NUMERIC NOT NULL DEFAULT 0.14
+  vat_rate NUMERIC NOT NULL DEFAULT 0.14,
+  -- المرحلة 7S: تأكيد الطلب بـSMS للعميل - افتراضيًا معطّل لحد ما بوابة إرسال حقيقية تتظبط
+  -- (SMS_WEBHOOK_URL في متغيرات البيئة - راجع db/sms-provider.js)
+  sms_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -290,6 +293,20 @@ CREATE TABLE order_status_log (
   notes       TEXT,
   changed_at  TIMESTAMPTZ DEFAULT now()
 );
+
+-- المرحلة 7S: سجل محاولات تأكيد الطلب بـSMS/واتساب للعميل - append-only، للمراجعة/التتبع بس
+-- (مفيش تأثير على نجاح/فشل الطلب نفسه - راجع db/order-notifications.js)
+CREATE TABLE order_notifications (
+  id         SERIAL PRIMARY KEY,
+  order_id   INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  channel    TEXT NOT NULL CHECK (channel IN ('sms', 'whatsapp')),
+  phone      TEXT NOT NULL,
+  message    TEXT NOT NULL,
+  status     TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'not_configured')),
+  error      TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_order_notifications_order ON order_notifications(order_id);
 
 CREATE TABLE order_items (
   id                       SERIAL PRIMARY KEY,

@@ -7,6 +7,7 @@ const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
 const { upsertCustomerAddress } = require("../db/customer-addresses");
+const { maybeSendOrderConfirmation } = require("../db/order-notifications");
 
 // طلبات الموقع (source=website) عامة من غير تسجيل دخول.
 // طلبات الكاشير (source=pos) وطلبات طلبات (source=talabat، بتتسجل يدويًا بعد التنفيذ
@@ -553,6 +554,9 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     }
 
     await client.query("COMMIT");
+    // المرحلة 7S: تأكيد الطلب بـSMS للعميل - بعد الـCOMMIT عمدًا (الطلب اتسجل بنجاح بالفعل)، ومفيش أي
+    // تأثير على استجابة الطلب حتى لو فشل الإرسال - راجع db/order-notifications.js
+    await maybeSendOrderConfirmation({ orderId, orderType, customerPhone, total });
     res.status(201).json({ orderId, subtotal, total });
   } catch (err) {
     await client.query("ROLLBACK");
