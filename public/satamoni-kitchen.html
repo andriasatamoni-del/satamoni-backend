@@ -202,6 +202,24 @@
       <div class="ok" id="wasteOk"></div>
     </div>
 
+    <!-- المرحلة 7R: تسجيل هالك جماعي - لحادثة واحدة أثرت على أكتر من صنف (انقطاع كهرباء، تلف تخزين...)
+         بدل ما تتسجل كل صنف لوحده - سبب وتاريخ مشتركين، وكل صنف بكميته الخاصة -->
+    <h1>تسجيل هالك جماعي (أكتر من صنف مرة واحدة)</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="bulkWasteSearch" placeholder="بحث عن صنف..." />
+        <input id="bulkWasteDate" type="date" />
+        <input id="bulkWasteReason" placeholder="السبب المشترك (اختياري)" />
+      </div>
+      <table>
+        <thead><tr><th></th><th>الصنف</th><th>الوحدة</th><th>الكمية</th></tr></thead>
+        <tbody id="bulkWasteBody"></tbody>
+      </table>
+      <div class="row"><button id="bulkWasteSubmit">🗑 تسجيل هالك للأصناف المحددة</button></div>
+      <div class="err" id="bulkWasteErr"></div>
+      <div class="ok" id="bulkWasteOk"></div>
+    </div>
+
     <h1>آخر عمليات الهالك المسجّلة</h1>
     <table><thead><tr><th>التاريخ</th><th>الصنف</th><th>الكمية</th><th>السبب</th><th>سجّله</th></tr></thead><tbody id="wasteBody"></tbody></table>
   </div>
@@ -409,8 +427,72 @@ async function setupWasteTab() {
   }
   document.getElementById("wasteItem").innerHTML = itemOptions();
   document.getElementById("wasteDate").value = new Date().toISOString().slice(0, 10);
+  document.getElementById("bulkWasteDate").value = new Date().toISOString().slice(0, 10);
+  renderBulkWasteTable();
   await loadWasteEntries();
 }
+
+// المرحلة 7R: تسجيل هالك جماعي - جدول كل الأصناف مع checkbox + خانة كمية لكل صنف، بدل تكرار الفورم
+// المفرد فوق لكل صنف لوحده. بيستخدم نفس /api/inventory/waste بالظبط، مرة لكل صنف متحدد
+function renderBulkWasteTable() {
+  const q = document.getElementById("bulkWasteSearch").value.trim();
+  const rows = inventoryItems.filter((i) => !q || i.name.includes(q));
+  document.getElementById("bulkWasteBody").innerHTML = rows.map((i) => `
+    <tr>
+      <td><input type="checkbox" data-bulkwastecheck="${i.id}" /></td>
+      <td>${i.name}</td>
+      <td>${i.unit}</td>
+      <td><input type="number" min="0" step="any" data-bulkwasteqty="${i.id}" style="width:90px" disabled /></td>
+    </tr>
+  `).join("") || `<tr><td colspan="4">مفيش أصناف مطابقة</td></tr>`;
+  document.querySelectorAll("[data-bulkwastecheck]").forEach((cb) => {
+    cb.onchange = () => {
+      document.querySelector(`[data-bulkwasteqty="${cb.dataset.bulkwastecheck}"]`).disabled = !cb.checked;
+    };
+  });
+}
+document.getElementById("bulkWasteSearch").addEventListener("input", renderBulkWasteTable);
+document.getElementById("bulkWasteSubmit").onclick = async () => {
+  const branchId = wasteBranchId();
+  const businessDate = document.getElementById("bulkWasteDate").value;
+  const reason = document.getElementById("bulkWasteReason").value.trim();
+  const errBox = document.getElementById("bulkWasteErr");
+  const okBox = document.getElementById("bulkWasteOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  if (!branchId) { errBox.textContent = "لازم تحدد الفرع"; return; }
+
+  const selected = Array.from(document.querySelectorAll("[data-bulkwastecheck]:checked")).map((cb) => ({
+    inventoryItemId: cb.dataset.bulkwastecheck,
+    quantity: Number(document.querySelector(`[data-bulkwasteqty="${cb.dataset.bulkwastecheck}"]`).value),
+  }));
+  if (selected.length === 0) { errBox.textContent = "لازم تحدد صنف واحد على الأقل"; return; }
+  if (selected.some((s) => !s.quantity || s.quantity <= 0)) { errBox.textContent = "كل صنف محدد لازم كمية أكبر من صفر"; return; }
+
+  const btn = document.getElementById("bulkWasteSubmit");
+  btn.disabled = true;
+  let succeeded = 0;
+  const failures = [];
+  for (const item of selected) {
+    try {
+      await api("/api/inventory/waste", {
+        method: "POST",
+        body: JSON.stringify({ branchId, inventoryItemId: item.inventoryItemId, quantity: item.quantity, reason: reason || null, businessDate }),
+      });
+      succeeded++;
+    } catch (e) {
+      const name = inventoryItems.find((i) => String(i.id) === String(item.inventoryItemId))?.name || item.inventoryItemId;
+      failures.push(`${name}: ${e.message}`);
+    }
+  }
+  btn.disabled = false;
+  if (failures.length === 0) {
+    okBox.textContent = `اتسجّل هالك لـ${succeeded} صنف`;
+    renderBulkWasteTable();
+  } else {
+    errBox.textContent = `اتسجّل ${succeeded} صنف بنجاح، وفشل: ${failures.join(" | ")}`;
+  }
+  await loadWasteEntries();
+};
 async function loadWasteEntries() {
   const branchId = wasteBranchId();
   const body = document.getElementById("wasteBody");

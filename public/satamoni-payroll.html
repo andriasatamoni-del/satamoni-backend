@@ -159,9 +159,16 @@
       </div>
 
       <h1>الموظفين الحاليين</h1>
+      <!-- المرحلة 7R: تفعيل/تعطيل جماعي - مفيد وقت إجازة موسمية/إنهاء تعاقد دفعة موظفين مع بعض -->
+      <div id="bulkEmpBar" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <label class="chk"><input type="checkbox" id="selectAllEmployees" /> تحديد الكل</label>
+        <button type="button" id="bulkActivateEmpBtn">✅ تفعيل المحدد</button>
+        <button type="button" id="bulkDeactivateEmpBtn">🚫 تعطيل المحدد</button>
+        <span id="bulkEmpStatus" style="font-size:11px;color:var(--faint)"></span>
+      </div>
       <div class="tablewrap">
         <table>
-          <thead><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الوظيفة</th><th>نظام الحضور</th><th>الراتب</th><th>الحالة</th><th>أكواد البصمة</th><th></th></tr></thead>
+          <thead><tr><th></th><th>الكود</th><th>الاسم</th><th>القسم</th><th>الوظيفة</th><th>نظام الحضور</th><th>الراتب</th><th>الحالة</th><th>أكواد البصمة</th><th></th></tr></thead>
           <tbody id="employeesBody"></tbody>
         </table>
       </div>
@@ -634,6 +641,7 @@ async function loadEmployees() {
   const attLabels = { fingerprint_auto: "بصمة تلقائي", manual: "يدوي", none: "بدون تتبع" };
   document.getElementById("employeesBody").innerHTML = employeesCache.map(emp => `
     <tr data-emprow="${emp.id}">
+      <td><input type="checkbox" data-empcheck="${emp.id}" /></td>
       <td>${emp.employee_code || "—"}</td>
       <td>${emp.name}</td><td>${emp.department}</td><td>${emp.job_title || "—"}</td>
       <td>${attLabels[emp.attendance_system] || emp.attendance_system}</td>
@@ -647,7 +655,7 @@ async function loadEmployees() {
         ${canSeeHrProfile() ? `<button class="linkbtn" data-openprofile="${emp.id}">الملف الوظيفي</button>` : ""}
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="9">لسه مفيش موظفين</td></tr>`;
+  `).join("") || `<tr><td colspan="10">لسه مفيش موظفين</td></tr>`;
 
   document.querySelectorAll("[data-toggleemp]").forEach(btn => {
     btn.onclick = async () => {
@@ -656,6 +664,11 @@ async function loadEmployees() {
       loadEmployees();
     };
   });
+  // المرحلة 7R: checkboxes بتتعاد كل مرة الموظفين يتحمّلوا تاني - "تحديد الكل" لازم يتربط تاني كل مرة كمان
+  document.getElementById("selectAllEmployees").checked = false;
+  document.getElementById("selectAllEmployees").onchange = (e) => {
+    document.querySelectorAll("[data-empcheck]").forEach(cb => { cb.checked = e.target.checked; });
+  };
   document.querySelectorAll("[data-openprofile]").forEach(btn => {
     btn.onclick = () => {
       const emp = employeesCache.find(x => String(x.id) === btn.dataset.openprofile);
@@ -685,6 +698,26 @@ async function loadEmployees() {
   });
   populateAdjEmployeeSelect();
 }
+
+// المرحلة 7R: تفعيل/تعطيل جماعي - بيستخدم نفس PATCH /api/payroll/employees/:id {isActive} بالظبط،
+// مرة لكل موظف متحدد، بدل ما كل موظف يتعطّل لوحده وقت إجازة موسمية/إنهاء تعاقد دفعة موظفين مع بعض
+async function bulkSetEmployeesActive(isActive) {
+  const ids = Array.from(document.querySelectorAll("[data-empcheck]:checked")).map(cb => cb.dataset.empcheck);
+  const statusBox = document.getElementById("bulkEmpStatus");
+  if (ids.length === 0) { statusBox.textContent = "لازم تحدد موظف واحد على الأقل"; return; }
+  statusBox.textContent = "...جاري التنفيذ";
+  let succeeded = 0;
+  for (const id of ids) {
+    try {
+      await api(`/api/payroll/employees/${id}`, { method: "PATCH", body: JSON.stringify({ isActive }) });
+      succeeded++;
+    } catch (e) { /* نكمل الباقي حتى لو موظف فشل - العدد النهائي بيوضّح */ }
+  }
+  statusBox.textContent = `${isActive ? "اتفعّل" : "اتعطّل"} ${succeeded} من ${ids.length} موظف`;
+  await loadEmployees();
+}
+document.getElementById("bulkActivateEmpBtn").onclick = () => bulkSetEmployeesActive(true);
+document.getElementById("bulkDeactivateEmpBtn").onclick = () => bulkSetEmployeesActive(false);
 
 document.getElementById("empSubmit").onclick = async () => {
   const errBox = document.getElementById("empErr");

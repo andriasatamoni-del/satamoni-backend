@@ -155,6 +155,13 @@
     </div>
 
     <h1>الأصناف الحالية</h1>
+    <!-- المرحلة 7R: تفعيل/تعطيل جماعي - بدل ما كل صنف يتعطّل لوحده وقت نقص مكوّن مشترك بين أصناف كتير -->
+    <div id="bulkItemsBar" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <label class="chk"><input type="checkbox" id="selectAllItems" /> تحديد الكل</label>
+      <button type="button" id="bulkActivateBtn">✅ تفعيل المحدد</button>
+      <button type="button" id="bulkDeactivateBtn">🚫 تعطيل المحدد</button>
+      <span id="bulkItemsStatus" style="font-size:11px;color:var(--faint)"></span>
+    </div>
     <div id="itemsList"></div>
   </div>
 
@@ -352,7 +359,10 @@ async function loadItems() {
   document.getElementById("itemsList").innerHTML = items.length ? items.map(it => `
     <div class="item-card ${it.is_active ? "" : "inactive"}" data-id="${it.id}">
       <div class="head">
-        <div><div class="name">${it.name}</div><div class="cat">${it.category}${it.is_best ? " · الأكثر طلبًا" : ""}</div></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" data-itemcheck="${it.id}" />
+          <div><div class="name">${it.name}</div><div class="cat">${it.category}${it.is_best ? " · الأكثر طلبًا" : ""}</div></div>
+        </div>
         <button class="linkbtn ${it.is_active ? "danger" : ""}" data-toggle="${it.id}" data-active="${it.is_active}">${it.is_active ? "تعطيل" : "تفعيل"}</button>
       </div>
       ${it.variants.map(v => `
@@ -393,6 +403,11 @@ async function loadItems() {
       loadItems();
     };
   });
+  // المرحلة 7R: checkboxes بتتعاد كل مرة الأصناف تتحمّل تاني - "تحديد الكل" لازم يتربط تاني كل مرة كمان
+  document.getElementById("selectAllItems").checked = false;
+  document.getElementById("selectAllItems").onchange = (e) => {
+    document.querySelectorAll("[data-itemcheck]").forEach(cb => { cb.checked = e.target.checked; });
+  };
   document.querySelectorAll("[data-delvariant]").forEach(btn => {
     btn.onclick = async () => {
       await api(`/api/menu/variants/${btn.dataset.delvariant}`, { method: "DELETE" });
@@ -449,6 +464,26 @@ async function loadItems() {
     btn.onclick = () => toggleRecipe(btn.dataset.recipe, btn.dataset.varlabel2);
   });
 }
+
+// المرحلة 7R: تفعيل/تعطيل جماعي - بيستخدم نفس PATCH /api/menu/items/:id {isActive} بالظبط، مرة لكل
+// صنف متحدد، بدل ما كل صنف يتعطّل لوحده وقت نقص مكوّن مشترك بين أصناف كتير
+async function bulkSetActive(isActive) {
+  const ids = Array.from(document.querySelectorAll("[data-itemcheck]:checked")).map(cb => cb.dataset.itemcheck);
+  const statusBox = document.getElementById("bulkItemsStatus");
+  if (ids.length === 0) { statusBox.textContent = "لازم تحدد صنف واحد على الأقل"; return; }
+  statusBox.textContent = "...جاري التنفيذ";
+  let succeeded = 0;
+  for (const id of ids) {
+    try {
+      await api(`/api/menu/items/${id}`, { method: "PATCH", body: JSON.stringify({ isActive }) });
+      succeeded++;
+    } catch (e) { /* نكمل الباقي حتى لو صنف فشل - العدد النهائي بيوضّح */ }
+  }
+  statusBox.textContent = `${isActive ? "اتفعّل" : "اتعطّل"} ${succeeded} من ${ids.length} صنف`;
+  await loadItems();
+}
+document.getElementById("bulkActivateBtn").onclick = () => bulkSetActive(true);
+document.getElementById("bulkDeactivateBtn").onclick = () => bulkSetActive(false);
 
 // ---------------- مرفقات الصنف ----------------
 // كل مرفق ليه سعر افتراضي، وممكن كمان سعر مخصوص لأي حجم من أحجام الصنف (★ يعني السعر ده مخصوص مش افتراضي)
