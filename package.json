@@ -15,7 +15,8 @@
     "import-kitchen-data": "node db/import-central-kitchen-data.js",
     "import-payroll-data": "node db/import-payroll-data.js",
     "import-delivery-areas": "node db/import-delivery-areas.js",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -26,6 +27,7 @@
     "pg": "^8.11.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "jest": "^30.4.2",
     "nodemon": "^3.1.0",
     "supertest": "^7.2.2"
