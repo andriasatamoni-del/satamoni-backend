@@ -157,6 +157,7 @@ const auth = {
 };
 if (auth.user && auth.user.role === "cashier") location.replace("satamoni-pos.html");
 if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
+if (auth.user && auth.user.role === "employee") location.replace("satamoni-employee-self.html");
 
 let branches = [];
 

@@ -37,7 +37,9 @@ CREATE TABLE users (
   password_hash TEXT NOT NULL,
   -- المرحلة 7F: 'driver' بيدوّل السائق يسجّل دخول فعلي (بدل ما يكون اسم نص حر في orders.driver_name) -
   -- صلاحياته مقفولة جدًا (middleware/permissions.js): طلباته المُسندة له بس، من غير أي وصول لمحاسبة/مخزون/فروع تانية
-  role          TEXT NOT NULL CHECK (role IN ('admin', 'branch_manager', 'accountant', 'cashier', 'callcenter', 'driver')),
+  -- المرحلة 7T: 'employee' نفس الفلسفة بالظبط - دخول ذاتي للموظف (employees.user_id تحت)، يشوف بس
+  -- قسائم راتبه وطلبات إجازته
+  role          TEXT NOT NULL CHECK (role IN ('admin', 'branch_manager', 'accountant', 'cashier', 'callcenter', 'driver', 'employee')),
   is_active     BOOLEAN DEFAULT TRUE,
   pin_hash      TEXT, -- PIN قصير (4-6 أرقام) لمدير الفرع/الأدمن بس - لموافقة الخصومات الكبيرة واسترجاع الطلبات
                        -- من غير ما يسجلوا خروج ودخول تاني على جهاز الكاشير
@@ -1311,6 +1313,8 @@ INSERT INTO late_deduction_tiers (from_minute, to_minute, deduction_fraction) VA
 
 CREATE TABLE employees (
   id                     SERIAL PRIMARY KEY,
+  -- المرحلة 7T: ربط اختياري بحساب دخول ذاتي (role='employee') - زي drivers.user_id بالظبط، مش كل موظف لازم يبقى له حساب
+  user_id                INTEGER UNIQUE REFERENCES users(id),
   name                   TEXT NOT NULL,
   department             TEXT NOT NULL, -- بيتزا/فطير/تشغيل الفرع/الإدارة/حسابات/كول سنتر/المطبخ المركزي
   job_title              TEXT,
@@ -1423,6 +1427,27 @@ CREATE INDEX idx_employee_leaves_employee ON employee_leaves(employee_id);
 CREATE INDEX idx_employee_leaves_branch ON employee_leaves(branch_id);
 CREATE INDEX idx_employee_leaves_dates ON employee_leaves(start_date, end_date);
 CREATE INDEX idx_employee_leaves_type ON employee_leaves(leave_type);
+
+-- المرحلة 7T: طلب إجازة ذاتي من الموظف نفسه (لسه معلّق مراجعة) - منفصل عن employee_leaves عمدًا (ده
+-- سجل رسمي معتمد بالفعل). لما مدير الفرع/الأدمن يوافق، بيتسجل صف حقيقي في employee_leaves ويترابط هنا
+-- عن طريق resulting_leave_id - الطلب نفسه بيفضل موجود للمراجعة التاريخية (append-only، رفض/إلغاء مش حذف)
+CREATE TABLE employee_leave_requests (
+  id                 SERIAL PRIMARY KEY,
+  employee_id        INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  leave_type         TEXT NOT NULL CHECK (leave_type IN ('annual', 'sick', 'unpaid', 'casual')),
+  start_date         DATE NOT NULL,
+  end_date           DATE NOT NULL CHECK (end_date >= start_date),
+  days               INTEGER NOT NULL CHECK (days > 0),
+  reason             TEXT,
+  status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+  reviewed_by        INTEGER REFERENCES users(id),
+  reviewed_at        TIMESTAMPTZ,
+  review_notes       TEXT,
+  resulting_leave_id INTEGER REFERENCES employee_leaves(id),
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_employee_leave_requests_employee ON employee_leave_requests(employee_id);
+CREATE INDEX idx_employee_leave_requests_status ON employee_leave_requests(status);
 
 -- كود بصمة الموظف عند كل فرع (موظف ممكن يكون ليه كود في أكتر من فرع لو بيتنقل زي الطيار)
 CREATE TABLE employee_fingerprint_codes (

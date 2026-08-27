@@ -79,6 +79,12 @@ const ROLE_PERMISSIONS = {
   driver: [
     "deliveries.view_own", "deliveries.update_own", "driver_settlements.view_own",
   ],
+  // المرحلة 7T: نفس فلسفة driver بالظبط - أضيق دور، بياناته الخاصة بس (مقفولة كمان على مستوى الكود
+  // بمطابقة employees.user_id مع req.user.id في routes/employee-self.js). مفيش أي وصول لبيانات موظفين
+  // تانيين أو أي جزء تاني من النظام - قسائم راتبه وطلبات إجازته بس
+  employee: [
+    "payslips.view_own", "leave_requests.manage_own",
+  ],
 };
 
 function hasPermission(role, permission) {

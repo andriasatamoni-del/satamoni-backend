@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>ساتاموني — بوابة الموظف</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; position: sticky; top: 0; z-index: 10; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 16px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #tabs { display: flex; gap: 6px; padding: 12px 14px 0; }
+  .tabbtn { flex: 1; text-align: center; padding: 10px 0; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 800; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; padding: 14px; }
+  .panel.active { display: block; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .card .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .card .title { font-weight: 800; color: var(--gold-bright); font-size: 16px; }
+  .card .field { font-size: 13px; color: var(--faint); margin-bottom: 4px; }
+  .card .field b { color: var(--ink); font-weight: 700; }
+  .pill { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 800; white-space: nowrap; }
+  .pill.pending { background: rgba(203,161,53,.2); color: var(--gold-bright); }
+  .pill.approved { background: rgba(63,163,77,.2); color: var(--green); }
+  .pill.rejected, .pill.cancelled { background: rgba(194,42,36,.2); color: #F08A83; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 120px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 10px; font-size: 13px; font-family: inherit; }
+  .formbox button { background: var(--red); color: #fff; border: none; border-radius: 8px; padding: 10px 16px; font-weight: 800; cursor: pointer; font-size: 13px; }
+
+  .actionBtn { padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: #F08A83; font-weight: 700; cursor: pointer; font-size: 12px; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .empty { text-align: center; color: var(--faint); padding: 40px 20px; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 300px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; font-size: 20px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 14px; font-size: 15px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 14px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 16px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+  #profileBar { padding: 14px 14px 0; font-size: 13px; color: var(--faint); }
+  #profileBar b { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">👤 بوابة الموظف</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>👤 تسجيل دخول الموظف</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="mainWrap" style="display:none">
+  <div id="profileBar"></div>
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="payslips">قسائم راتبي</div>
+    <div class="tabbtn" data-tab="leaves">طلبات إجازتي</div>
+  </div>
+
+  <div class="panel active" id="panel-payslips">
+    <div id="payslipsList"></div>
+  </div>
+
+  <div class="panel" id="panel-leaves">
+    <div class="formbox">
+      <div class="row">
+        <select id="leaveType">
+          <option value="annual">سنوية</option>
+          <option value="sick">مرضية</option>
+          <option value="unpaid">بدون أجر</option>
+          <option value="casual">عارضة</option>
+        </select>
+        <input id="leaveStart" type="date" /><input id="leaveEnd" type="date" />
+      </div>
+      <div class="row"><input id="leaveReason" placeholder="السبب (اختياري)" /><button id="leaveSubmitBtn">تقديم طلب إجازة</button></div>
+      <div class="err" id="leaveSubmitErr"></div>
+    </div>
+    <div id="leaveRequestsList"></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">الشاشة دي للموظفين اللي عندهم حساب دخول ذاتي بس.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const LEAVE_TYPE_LABELS = { annual: "سنوية", sick: "مرضية", unpaid: "بدون أجر", casual: "عارضة" };
+const REQ_STATUS_LABELS = { pending: "معلّق مراجعة", approved: "متوافق عليه", rejected: "مرفوض", cancelled: "ملغى" };
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = user.name;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    if (data.user.role !== "employee") {
+      errBox.textContent = "الشاشة دي لحسابات الدخول الذاتي للموظفين بس";
+      return;
+    }
+    setSession(data.token, data.user);
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    if (btn.dataset.tab === "payslips") loadPayslips();
+    if (btn.dataset.tab === "leaves") loadLeaveRequests();
+  };
+});
+
+async function boot() {
+  document.getElementById("mainWrap").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  try {
+    const profile = await api("/api/employee-self/profile");
+    document.getElementById("profileBar").innerHTML =
+      `<b>${profile.name}</b> — ${profile.department}${profile.jobTitle ? " / " + profile.jobTitle : ""} (${profile.employeeCode || "—"})`;
+  } catch (e) { /* بروفايل بس معلوماتي - لو فشل مفيش داعي يوقف باقي الشاشة */ }
+  await loadPayslips();
+}
+
+async function loadPayslips() {
+  const wrap = document.getElementById("payslipsList");
+  wrap.innerHTML = "";
+  try {
+    const payslips = await api("/api/employee-self/payslips");
+    if (payslips.length === 0) { wrap.innerHTML = `<div class="empty">مفيش قسائم راتب معتمدة لسه</div>`; return; }
+    const monthNames = ["", "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+    payslips.forEach(p => {
+      const remaining = Number(p.net_pay) - Number(p.paid_amount);
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div class="top"><span class="title">${monthNames[p.month]} ${p.year}</span></div>
+        <div class="field">الراتب الإجمالي: <b>${money(p.gross_pay)}</b></div>
+        <div class="field">السلف: <b>${money(p.advances)}</b> — الجزاءات: <b>${money(p.penalties)}</b> — المكافآت: <b>${money(p.bonuses)}</b></div>
+        <div class="field">صافي الراتب: <b>${money(p.net_pay)}</b></div>
+        <div class="field">المدفوع: <b>${money(p.paid_amount)}</b> — المتبقي: <b>${money(remaining)}</b></div>
+      `;
+      wrap.appendChild(card);
+    });
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty">${e.message}</div>`;
+  }
+}
+
+document.getElementById("leaveSubmitBtn").onclick = async () => {
+  const errBox = document.getElementById("leaveSubmitErr");
+  errBox.textContent = "";
+  try {
+    await api("/api/employee-self/leave-requests", {
+      method: "POST",
+      body: JSON.stringify({
+        leaveType: document.getElementById("leaveType").value,
+        startDate: document.getElementById("leaveStart").value,
+        endDate: document.getElementById("leaveEnd").value,
+        reason: document.getElementById("leaveReason").value.trim() || null,
+      }),
+    });
+    document.getElementById("leaveStart").value = "";
+    document.getElementById("leaveEnd").value = "";
+    document.getElementById("leaveReason").value = "";
+    await loadLeaveRequests();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+async function loadLeaveRequests() {
+  const wrap = document.getElementById("leaveRequestsList");
+  wrap.innerHTML = "";
+  try {
+    const requests = await api("/api/employee-self/leave-requests");
+    if (requests.length === 0) { wrap.innerHTML = `<div class="empty">مفيش طلبات إجازة لسه</div>`; return; }
+    requests.forEach(r => {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div class="top">
+          <span class="title">${LEAVE_TYPE_LABELS[r.leave_type] || r.leave_type}</span>
+          <span class="pill ${r.status}">${REQ_STATUS_LABELS[r.status] || r.status}</span>
+        </div>
+        <div class="field">من <b>${r.start_date.slice(0, 10)}</b> إلى <b>${r.end_date.slice(0, 10)}</b> (${r.days} يوم)</div>
+        ${r.reason ? `<div class="field">السبب: <b>${r.reason}</b></div>` : ""}
+        ${r.review_notes ? `<div class="field">ملاحظات المراجعة: <b>${r.review_notes}</b></div>` : ""}
+        <div class="err" data-err></div>
+      `;
+      if (r.status === "pending") {
+        const btn = document.createElement("button");
+        btn.className = "actionBtn";
+        btn.textContent = "إلغاء الطلب";
+        btn.style.marginTop = "8px";
+        btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            await api(`/api/employee-self/leave-requests/${r.id}/cancel`, { method: "POST" });
+            await loadLeaveRequests();
+          } catch (e) { card.querySelector("[data-err]").textContent = e.message; btn.disabled = false; }
+        };
+        card.appendChild(btn);
+      }
+      wrap.appendChild(card);
+    });
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty">${e.message}</div>`;
+  }
+}
+
+if (auth.token && auth.user) {
+  if (auth.user.role !== "employee") {
+    document.getElementById("accessDenied").style.display = "block";
+  } else {
+    document.getElementById("userName").textContent = auth.user.name;
+    hideLogin();
+    boot();
+  }
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

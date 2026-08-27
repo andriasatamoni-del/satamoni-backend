@@ -31,36 +31,56 @@ router.get("/", requireRole("admin", "branch_manager"), async (req, res) => {
   }
 });
 
-// POST /api/users - إنشاء موظف جديد (أدمن بس)
+// POST /api/users - إنشاء موظف جديد (أدمن بس) - role='employee' لازم employeeId (بيربط حساب الدخول
+// الذاتي الجديد بملف HR موجود بالفعل في employees، زي ما اتحدد في المرحلة 7T)
 router.post("/", requireRole("admin"), async (req, res) => {
-  const { name, email, password, role, branchId } = req.body;
-  const validRoles = ["admin", "branch_manager", "accountant", "cashier", "callcenter", "driver"];
-  const branchFreeRoles = ["admin", "accountant", "callcenter"];
+  const { name, email, password, role, branchId, employeeId } = req.body;
+  const validRoles = ["admin", "branch_manager", "accountant", "cashier", "callcenter", "driver", "employee"];
+  const branchFreeRoles = ["admin", "accountant", "callcenter", "employee"];
   if (!name || !email || !password || !validRoles.includes(role)) {
     return res.status(400).json({ error: "بيانات ناقصة أو الدور غير معروف" });
+  }
+  if (role === "employee" && !employeeId) {
+    return res.status(400).json({ error: "لازم تحدد ملف الموظف (HR) عشان تربطه بحساب الدخول الذاتي" });
   }
   if (!branchFreeRoles.includes(role) && !branchId) {
     return res.status(400).json({ error: "لازم تحدد الفرع لدور المدير/الكاشير" });
   }
+  const client = await pool.connect();
   try {
+    await client.query("BEGIN");
     const passwordHash = await bcrypt.hash(password, 10);
-    const result = await pool.query(
+    const result = await client.query(
       `INSERT INTO users (name, email, password_hash, role, branch_id)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, name, email, role, branch_id, is_active, created_at`,
       [name, email, passwordHash, role, branchId || null]
     );
-    await logAudit(pool, {
+    if (role === "employee") {
+      const linked = await client.query(
+        "UPDATE employees SET user_id = $1 WHERE id = $2 AND user_id IS NULL RETURNING id",
+        [result.rows[0].id, employeeId]
+      );
+      if (linked.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "ملف الموظف ده مش موجود أو عنده حساب دخول ذاتي بالفعل" });
+      }
+    }
+    await logAudit(client, {
       branchId: branchId || null, userId: req.user.id, action: "USER_CREATED",
       entityType: "user", entityId: result.rows[0].id,
-      newValues: { name, email, role, branchId: branchId || null }, req,
+      newValues: { name, email, role, branchId: branchId || null, employeeId: role === "employee" ? employeeId : undefined }, req,
     });
+    await client.query("COMMIT");
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
     if (err.code === "23505") {
       return res.status(409).json({ error: "البريد الإلكتروني ده مستخدم بالفعل" });
     }
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

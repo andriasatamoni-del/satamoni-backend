@@ -140,7 +140,7 @@ router.get("/attendance", requireAuth, canManageStaff, async (req, res) => {
 const HR_EMPLOYEE_COLUMNS = `
   e.id, e.employee_code, e.name, e.department, e.job_title, e.attendance_system, e.hire_date,
   e.status, e.is_active, e.phone, e.notes, e.restricted_branch_id, e.termination_date, e.termination_reason,
-  e.created_at, b.name AS branch_name
+  e.created_at, b.name AS branch_name, e.user_id
 `;
 
 // لو مدير فرع، لازم الموظف مربوط بفرعه بالظبط (restricted_branch_id) - موظف من غير فرع محدد (NULL) أو
@@ -412,6 +412,106 @@ router.get("/leaves", requireAuth, canManageStaff, async (req, res) => {
       [employeeId || null, branchId || null, leaveType || null, from || null, to || null, status || null]
     );
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------- طلبات الإجازة الذاتية (7T) ----------------
+// الموظف بيقدّم الطلب بنفسه (routes/employee-self.js) - هنا مراجعته: موافقة (بتحوّله لسجل رسمي حقيقي
+// في employee_leaves، نفس منطق POST /leaves بالظبط) أو رفض. نفس نطاق الصلاحية والفرع اللي على /leaves
+
+// GET /api/hr/leave-requests?employeeId=&branchId=&status=
+router.get("/leave-requests", requireAuth, canManageStaff, async (req, res) => {
+  let { employeeId, branchId, status } = req.query;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `SELECT r.*, e.name AS employee_name, e.employee_code, e.department, b.name AS branch_name,
+              reviewer.name AS reviewed_by_name
+       FROM employee_leave_requests r
+       JOIN employees e ON e.id = r.employee_id
+       LEFT JOIN branches b ON b.id = e.restricted_branch_id
+       LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+       WHERE ($1::int IS NULL OR r.employee_id = $1)
+         AND ($2::int IS NULL OR e.restricted_branch_id = $2)
+         AND ($3::text IS NULL OR r.status = $3)
+       ORDER BY r.created_at DESC`,
+      [employeeId || null, branchId || null, status || null]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/hr/leave-requests/:id/approve - {reviewNotes?} - بيتحول لسجل رسمي في employee_leaves
+router.post("/leave-requests/:id/approve", requireAuth, canManageStaff, async (req, res) => {
+  const { id } = req.params;
+  const { reviewNotes } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const reqRow = await client.query("SELECT * FROM employee_leave_requests WHERE id = $1 FOR UPDATE", [id]);
+    if (reqRow.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "طلب الإجازة مش موجود" }); }
+    const request = reqRow.rows[0];
+    if (request.status !== "pending") { await client.query("ROLLBACK"); return res.status(400).json({ error: "الطلب ده اتراجع بالفعل" }); }
+
+    const employee = await loadEmployeeOr404(res, request.employee_id);
+    if (!employee) { await client.query("ROLLBACK"); return; }
+    if (!canAccessEmployee(req, employee)) { await client.query("ROLLBACK"); return res.status(403).json({ error: "معندكش صلاحية تراجع طلب موظف فرع تاني" }); }
+
+    const leave = await client.query(
+      `INSERT INTO employee_leaves (employee_id, leave_type, start_date, end_date, days, notes, branch_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [request.employee_id, request.leave_type, request.start_date, request.end_date, request.days,
+       request.reason, employee.restricted_branch_id || null, req.user.id]
+    );
+    const updated = await client.query(
+      `UPDATE employee_leave_requests
+       SET status = 'approved', reviewed_by = $1, reviewed_at = now(), review_notes = $2, resulting_leave_id = $3
+       WHERE id = $4 RETURNING *`,
+      [req.user.id, reviewNotes || null, leave.rows[0].id, id]
+    );
+    await logAudit(client, {
+      branchId: employee.restricted_branch_id, userId: req.user.id, action: "EMPLOYEE_LEAVE_REQUEST_APPROVED",
+      entityType: "employee_leave_request", entityId: Number(id), newValues: updated.rows[0], req,
+    });
+    await client.query("COMMIT");
+    res.json(updated.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/hr/leave-requests/:id/reject - {reason}
+router.post("/leave-requests/:id/reject", requireAuth, canManageStaff, async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  if (!reason) return res.status(400).json({ error: "لازم سبب الرفض" });
+  try {
+    const reqRow = await pool.query("SELECT * FROM employee_leave_requests WHERE id = $1", [id]);
+    if (reqRow.rows.length === 0) return res.status(404).json({ error: "طلب الإجازة مش موجود" });
+    const request = reqRow.rows[0];
+    if (request.status !== "pending") return res.status(400).json({ error: "الطلب ده اتراجع بالفعل" });
+
+    const employee = await loadEmployeeOr404(res, request.employee_id);
+    if (!employee) return;
+    if (!canAccessEmployee(req, employee)) return res.status(403).json({ error: "معندكش صلاحية تراجع طلب موظف فرع تاني" });
+
+    const updated = await pool.query(
+      `UPDATE employee_leave_requests SET status = 'rejected', reviewed_by = $1, reviewed_at = now(), review_notes = $2
+       WHERE id = $3 RETURNING *`,
+      [req.user.id, reason, id]
+    );
+    await logAudit(pool, {
+      branchId: employee.restricted_branch_id, userId: req.user.id, action: "EMPLOYEE_LEAVE_REQUEST_REJECTED",
+      entityType: "employee_leave_request", entityId: Number(id), metadata: { reason }, req,
+    });
+    res.json(updated.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
