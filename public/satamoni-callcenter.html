@@ -380,7 +380,16 @@ const state = {
   loyaltyRedeemValueEgp: 0.1,
   loyaltyPointsRedeemed: 0, // نقاط ولاء العميل الحالي اللي هتُستخدم كخصم على الطلب ده
   customerLoyaltyPoints: 0, // رصيد نقاط العميل الحالي (من آخر بحث/تحميل بروفايل)
+  // المرحلة 8H: نفس منطق satamoni-pos.html بالظبط - مفتاح idempotency للطلب الحالي، عشان دبل-كليك
+  // أو إعادة محاولة بعد error مؤقت ما يسجّلش نفس الطلب مرتين
+  orderAttemptKey: null,
 };
+function getOrderAttemptKey() {
+  if (!state.orderAttemptKey) {
+    state.orderAttemptKey = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+  }
+  return state.orderAttemptKey;
+}
 
 function menuForGroup() {
   return state.menu.filter(m => (m.menuGroup || "regular") === state.menuGroup);
@@ -797,6 +806,7 @@ document.getElementById("submitBtn").onclick = async () => {
       discountApprovedBy: state.discountApproval ? state.discountApproval.approverId : null,
       loyaltyPointsRedeemed: state.loyaltyPointsRedeemed || 0,
       items: Object.values(state.cart).map(v => ({ itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty, modifiers: v.modifiers || [] })),
+      idempotencyKey: getOrderAttemptKey(),
     };
     const result = await api("/api/orders", { method: "POST", body: JSON.stringify(payload) });
     document.getElementById("confirmOrderId").textContent = `#${result.orderId}`;
@@ -812,6 +822,7 @@ document.getElementById("submitBtn").onclick = async () => {
 document.getElementById("newOrderBtn").onclick = () => {
   state.cart = {};
   state.discountApproval = null;
+  state.orderAttemptKey = null;
   state.loyaltyPointsRedeemed = 0;
   state.customerLoyaltyPoints = 0;
   document.getElementById("tableInput").value = "";

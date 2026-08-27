@@ -453,7 +453,20 @@ const state = {
   discountApproval: null, // { approverId, approverName } - لما الخصم فوق الحد المسموح
   shift: null, // المرحلة 7E: الشيفت النشط الحالي للكاشير (أو null لو مفيش)
   requireShiftForPosSales: false,
+  // المرحلة 8H: مفتاح idempotency للطلب الحالي - الباك إند أصلًا بيدعم ديدوب كامل بيه (اتأكد ب
+  // اختبارات جست)، بس مفيش أي شاشة كانت بتبعته خالص. من غير المفتاح ده، لو الكاشير دبل-كليك بسرعة
+  // كبيرة (زرار الموبايل بيبعت touchstart+click مرتين أحيانًا) أو ضغط تاني بعد error مؤقت، ممكن يتسجل
+  // نفس الطلب مرتين فعليًا (فاتورتين، خصم مخزون مرتين، قيد محاسبي مرتين). المفتاح بيتولد مرة واحدة
+  // بس لأول محاولة إرسال، وبيتبعت في كل إعادة محاولة لنفس السلة - وبيتصفّر بس لما تتقفل السلة (طلب
+  // جديد بعد نجاح، أو زرار "طلب جديد")
+  orderAttemptKey: null,
 };
+function getOrderAttemptKey() {
+  if (!state.orderAttemptKey) {
+    state.orderAttemptKey = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+  }
+  return state.orderAttemptKey;
+}
 
 function priceFor(variant) {
   return state.channel === "talabat" ? Number(variant.talabatPrice) : Number(variant.price);
@@ -1385,6 +1398,7 @@ document.getElementById("submitBtn").onclick = async () => {
         ? { comboId: v.comboId, unitPrice: v.price, quantity: v.qty }
         : { itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty, modifiers: v.modifiers || [] }
       ),
+      idempotencyKey: getOrderAttemptKey(),
     };
     const res = await fetch(`${API_BASE_URL}/api/orders`, {
       method: "POST",
@@ -1413,6 +1427,7 @@ document.getElementById("submitBtn").onclick = async () => {
 document.getElementById("newOrderBtn").onclick = () => {
   state.cart = {};
   state.discountApproval = null;
+  state.orderAttemptKey = null;
   document.getElementById("tableInput").value = "";
   document.getElementById("phoneInput").value = "";
   document.getElementById("nameInput").value = "";
