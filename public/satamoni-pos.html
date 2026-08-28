@@ -1520,6 +1520,23 @@ document.getElementById("submitBtn").onclick = async () => {
     if (!res.ok) throw new Error(result.error || "submit failed");
     document.getElementById("confirmOrderId").textContent = `#${result.orderId}`;
     document.getElementById("confirmOverlay").classList.add("show");
+
+    // طباعة تلقائية فورًا بمجرد تسجيل الطلب - من غير ما الكاشير يحتاج يدوس زرار "إيصال" بعد كده.
+    // بتستخدم نفس الدالة اللي زرار "🧾 إيصال" اليدوي في قايمة الطلبات الجارية بيستخدمها بالظبط (نفس
+    // مصدر البيانات ونفس شكل الإيصال) - فرق بسيط إن هنا معندناش صف order كامل لسه (الطلب لسه في نفس
+    // اللحظة اتسجل)، فبنبني كائن مبسّط بـid بس (printCashierReceipt بيجيب التفاصيل الكاملة بنفسه من
+    // /api/orders/:id على أي حال، مش محتاج غير الـid)
+    try {
+      const pm = state.paymentMethods.find(p => p.id === state.selectedPaymentId);
+      SatamoniPrint.printCashierReceipt({ id: result.orderId, order_type: payload.orderType }, ordersApi, {
+        orderTypeLabel: orderTypeLabels2[payload.orderType],
+        paymentMethodLabel: pm?.name,
+      });
+    } catch (printErr) {
+      // فشل الطباعة لوحده (برنتر مش متصل، نافذة منبثقة اتمنعت...) مايوقفش تأكيد الطلب - الطلب اتسجل
+      // فعليًا بالفعل، الكاشير لسه يقدر يطبع يدوي من قايمة الطلبات الجارية لو الطباعة التلقائية فشلت
+      console.error("تعذرت الطباعة التلقائية:", printErr);
+    }
   } catch (e) {
     errBox.textContent = e.message === "submit failed" || !e.message
       ? "تعذر إرسال الطلب. تأكد من الاتصال وحاول تاني."
