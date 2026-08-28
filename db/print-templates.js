@@ -26,15 +26,19 @@ function fmtDate(d) {
 
 // إطار الصفحة المشترك - 80mm عرض ورق حراري، RTL، خط واضح لماكينة حرارية (مفيش صور/تدرجات، أبيض/أسود بس)
 function page(title, bodyHtml, { paperWidthMm = 80 } = {}) {
-  // معظم طابعات 80mm الحرارية عرض الطباعة الفعلي عندها أقل من عرض الورق الفعلي (عادة ~72mm مش 80mm
-  // كاملة - هامش ميقدرش رأس الطباعة يوصله على كل جانب). محتوى بعرض 80mm كامل بيتقطع من الجنب فعليًا
-  // (اتأكد على XP-D200N). هامش 4mm كل جانب هنا (بدل 3mm) بيسيب مساحة محتوى آمنة أضيق من عرض الورق الحقيقي.
+  // معظم طابعات 80mm الحرارية عرض الطباعة الفعلي عندها أقل من عرض الورق الفعلي، وممكن كمان منطقة
+  // الطباعة نفسها متبقاش متمركزة بالظبط في نص عرض الرول (اتأكد فعليًا على XP-D200N: محتوى بعرض 80mm
+  // كامل طلع منزّح لجنب واحد بهامش فاضي في التاني، مش بس مقطوع من الحافة). الحل الأضمن: نخلي المحتوى
+  // نفسه أضيق بوضوح من عرض الصفحة المُعلَن (فرق contentWidthMm)، ونخليه في النص أفقيًا (margin: 0 auto)
+  // بدل ما يكون ملزوق بحافة الصفحة - كده حتى لو منطقة الطباعة الحقيقية مش متمركزة/أضيق من المتوقع،
+  // المحتوى لسه جواها ومش بيتقطع/يتزحلق لحافة واحدة بس
+  const contentWidthMm = Math.max(50, paperWidthMm - 12);
   return `<!DOCTYPE html>
 <html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>${esc(title)}</title>
 <style>
   @page { size: ${paperWidthMm}mm auto; margin: 0; }
   * { box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; width: ${paperWidthMm}mm; margin: 0; padding: 3mm 4mm; color: #000; }
+  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; width: ${contentWidthMm}mm; margin: 0 auto; padding: 3mm 0; color: #000; }
   h1 { font-size: 15px; margin: 0 0 2mm; text-align: center; }
   h2 { font-size: 13px; margin: 0 0 1mm; }
   .center { text-align: center; }
