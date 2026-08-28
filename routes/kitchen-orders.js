@@ -340,6 +340,121 @@ router.post("/:id/start-preparing", requireAuth, requireRole("admin", "branch_ma
   }
 });
 
+// GET /api/kitchen-orders/:id/picking - Procurement v2 STEP F: مقارنة المطلوب بالمتاح فعليًا في السنتر
+// كيتشن لحظة القراءة - معاينة بس، من غير أي تسجيل. بيحسب fullness لكل صنف (لسه ماتقررش quantity_to_prepare
+// خالص) عشان السنتر كيتشن يقدر يقرر قبل ما يلتزم بأي رقم في POST تحت
+router.get("/:id/picking", requireAuth, requireRole("admin", "branch_manager"), async (req, res) => {
+  if (!isCentralKitchenActor(req.user)) return res.status(403).json({ error: "التجهيز للسنتر كيتشن أو الأدمن بس" });
+  const { ckBranchId } = req.query;
+  const sourceBranchId = req.user.role === "admin" ? ckBranchId : req.user.branchId;
+  if (!sourceBranchId) return res.status(400).json({ error: "لازم تحدد فرع السنتر كيتشن (ckBranchId) للأدمن" });
+  try {
+    const order = await pool.query("SELECT * FROM kitchen_orders WHERE id = $1", [req.params.id]);
+    if (order.rows.length === 0) return res.status(404).json({ error: "الطلبية مش موجودة" });
+    const items = await pool.query(
+      `SELECT koi.*, ii.name, ii.unit, COALESCE(bis.quantity, 0) AS available
+       FROM kitchen_order_items koi
+       JOIN inventory_items ii ON ii.id = koi.inventory_item_id
+       LEFT JOIN branch_inventory_stock bis ON bis.inventory_item_id = koi.inventory_item_id AND bis.branch_id = $2
+       WHERE koi.kitchen_order_id = $1`,
+      [req.params.id, sourceBranchId]
+    );
+    res.json({
+      order: order.rows[0],
+      items: items.rows.map((it) => ({
+        ...it,
+        shortfall: Math.max(0, Number(it.quantity_requested) - Number(it.available)),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/kitchen-orders/:id/picking - Procurement v2 STEP F: السنتر كيتشن بيلتزم فعليًا بكمية لكل صنف
+// (quantity_to_prepare) - ممكن تقل عن المطلوب لو فيه نقص، بس **لازم تتسجل صراحة** (مفيش عجز مخفي أبدًا:
+// fulfillment_status بيتحدد تلقائي FULL/PARTIAL/UNFULFILLED من الالتزام نفسه). أول مرة تتنادى من APPROVED
+// بتنقل الطلبية PREPARING تلقائي (نفس أثر /start-preparing) - تكرارها بعد كده (لسه PREPARING) بيحدّث
+// الالتزام بس من غير ما يعيد النقلة
+// {items: [{inventoryItemId, quantityToPrepare}], ckBranchId?}
+router.post("/:id/picking", requireAuth, requireRole("admin", "branch_manager"), async (req, res) => {
+  if (!isCentralKitchenActor(req.user)) return res.status(403).json({ error: "التجهيز للسنتر كيتشن أو الأدمن بس" });
+  const { items, ckBranchId } = req.body;
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "لازم صنف واحد على الأقل" });
+  const sourceBranchId = req.user.role === "admin" ? ckBranchId : req.user.branchId;
+  if (!sourceBranchId) return res.status(400).json({ error: "لازم تحدد فرع السنتر كيتشن (ckBranchId) للأدمن" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM kitchen_orders WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلبية مش موجودة" }); }
+    if (!["APPROVED", "PREPARING"].includes(existing.rows[0].status)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "التجهيز متاح بس من حالة APPROVED أو PREPARING" });
+    }
+
+    const orderItems = await client.query("SELECT * FROM kitchen_order_items WHERE kitchen_order_id = $1", [req.params.id]);
+    const orderItemsById = new Map(orderItems.rows.map((r) => [r.inventory_item_id, r]));
+
+    for (const it of items) {
+      const orderItem = orderItemsById.get(Number(it.inventoryItemId));
+      if (!orderItem) throw Object.assign(new Error(`الصنف #${it.inventoryItemId} مش جزء من الطلبية دي`), { code: "PICKING_VALIDATION" });
+      const requested = Number(orderItem.quantity_requested);
+      const quantityToPrepare = Number(it.quantityToPrepare);
+      if (Number.isNaN(quantityToPrepare) || quantityToPrepare < 0) {
+        throw Object.assign(new Error(`كمية التجهيز لازم تكون رقم صحيح صفر أو أكبر (صنف #${it.inventoryItemId})`), { code: "PICKING_VALIDATION" });
+      }
+      if (quantityToPrepare > requested + 0.0000001) {
+        throw Object.assign(new Error(`كمية التجهيز مينفعش تتخطى المطلوب (صنف #${it.inventoryItemId})`), { code: "PICKING_VALIDATION" });
+      }
+      const stockRes = await client.query(
+        "SELECT quantity FROM branch_inventory_stock WHERE branch_id = $1 AND inventory_item_id = $2",
+        [sourceBranchId, it.inventoryItemId]
+      );
+      const available = stockRes.rows.length ? Number(stockRes.rows[0].quantity) : 0;
+      const fulfillmentStatus = quantityToPrepare <= 0
+        ? "UNFULFILLED"
+        : quantityToPrepare >= requested - 0.0000001
+          ? "FULL"
+          : "PARTIAL";
+      await client.query(
+        `UPDATE kitchen_order_items SET quantity_available = $1, quantity_to_prepare = $2, fulfillment_status = $3
+         WHERE id = $4`,
+        [available, quantityToPrepare, fulfillmentStatus, orderItem.id]
+      );
+    }
+
+    let updatedOrder;
+    if (existing.rows[0].status === "APPROVED") {
+      updatedOrder = await client.query(
+        `UPDATE kitchen_orders SET status = 'PREPARING', preparing_started_by = $1, preparing_started_at = now() WHERE id = $2 RETURNING *`,
+        [req.user.id, req.params.id]
+      );
+    } else {
+      updatedOrder = await client.query("SELECT * FROM kitchen_orders WHERE id = $1", [req.params.id]);
+    }
+
+    await logAudit(client, {
+      branchId: existing.rows[0].branch_id, userId: req.user.id, action: "KITCHEN_ORDER_PICKED",
+      entityType: "kitchen_order", entityId: Number(req.params.id), metadata: { sourceBranchId, items }, req,
+    });
+    await client.query("COMMIT");
+    const finalItems = await pool.query(
+      `SELECT koi.*, ii.name, ii.unit FROM kitchen_order_items koi JOIN inventory_items ii ON ii.id = koi.inventory_item_id
+       WHERE koi.kitchen_order_id = $1`,
+      [req.params.id]
+    );
+    res.json({ order: updatedOrder.rows[0], items: finalItems.rows });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (err.code === "PICKING_VALIDATION") return res.status(400).json({ error: err.message });
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/kitchen-orders/:id/ready - PREPARING → READY - جاهزة للتحويل (kitchen-transfers.js /request)
 router.post("/:id/ready", requireAuth, requireRole("admin", "branch_manager"), async (req, res) => {
   if (!isCentralKitchenActor(req.user)) return res.status(403).json({ error: "التجهيز للسنتر كيتشن أو الأدمن بس" });
