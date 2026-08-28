@@ -2768,4 +2768,183 @@ router.get("/accounting-reconciliation", requireAuth, requireRole("admin", "acco
   }
 });
 
+// ============================================================
+// Procurement v2 STEP K: تقارير جديدة فوق الميزات المبنية في STEP D-J - نفس نمط resolveDateRange/
+// canSeeReports/branch scoping المستخدم في كل تقرير سابق في الملف ده بالظبط
+// ============================================================
+
+// GET /api/reports/requisition-fulfillment?from=&to=&branchId= - أداء تنفيذ طلبيات الفروع (دورة الحياة
+// الجديدة من STEP D/F بس - الطلبيات القديمة pending/fulfilled مالهاش fulfillment_status فمستبعدة هنا)
+router.get("/requisition-fulfillment", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const ordersRes = await pool.query(
+      `SELECT ko.id, ko.branch_id, b.name AS branch_name, ko.status, ko.business_date, ko.required_date,
+              ko.is_auto_suggested, ko.submitted_at, ko.approved_at, ko.received_at
+       FROM kitchen_orders ko JOIN branches b ON b.id = ko.branch_id
+       WHERE ko.status IN ('DRAFT','SUBMITTED','APPROVED','REJECTED','PREPARING','READY','DISPATCHED','IN_TRANSIT','RECEIVED')
+         AND ko.business_date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR ko.branch_id = $3)
+       ORDER BY ko.business_date DESC, ko.id DESC`,
+      [range.from, range.to, branchId]
+    );
+    const orderIds = ordersRes.rows.map((o) => o.id);
+    const itemStatsRes = orderIds.length
+      ? await pool.query(
+          `SELECT kitchen_order_id, fulfillment_status, COUNT(*)::int AS n,
+                  COALESCE(SUM(quantity_requested),0) AS requested, COALESCE(SUM(quantity_to_prepare),0) AS to_prepare
+           FROM kitchen_order_items WHERE kitchen_order_id = ANY($1) GROUP BY kitchen_order_id, fulfillment_status`,
+          [orderIds]
+        )
+      : { rows: [] };
+
+    const statsByOrder = new Map();
+    for (const row of itemStatsRes.rows) {
+      if (!statsByOrder.has(row.kitchen_order_id)) statsByOrder.set(row.kitchen_order_id, {});
+      statsByOrder.get(row.kitchen_order_id)[row.fulfillment_status] = {
+        count: row.n, requested: Number(row.requested), toPrepare: Number(row.to_prepare),
+      };
+    }
+    const orders = ordersRes.rows.map((o) => ({ ...o, itemFulfillment: statsByOrder.get(o.id) || {} }));
+
+    const summary = { FULL: 0, PARTIAL: 0, UNFULFILLED: 0, PENDING: 0 };
+    for (const stats of statsByOrder.values()) {
+      for (const key of Object.keys(summary)) summary[key] += stats[key]?.count || 0;
+    }
+
+    res.json({ from: range.from, to: range.to, branchId, summary, orders });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/transfer-discrepancies?from=&to=&branchId= - فروقات استلام التحويلات (STEP G) مجمّعة
+// بنوعها وحالتها، مع إجمالي قيمة التصحيح المرحّلة فعليًا (5300) - مش تقدير، من القيود الحقيقية
+router.get("/transfer-discrepancies", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const byTypeRes = await pool.query(
+      `SELECT td.discrepancy_type, td.status, COUNT(*)::int AS n, COALESCE(SUM(td.quantity),0) AS total_quantity
+       FROM transfer_discrepancies td
+       JOIN kitchen_transfers kt ON kt.id = td.kitchen_transfer_id
+       WHERE td.reported_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR kt.to_branch_id = $3)
+       GROUP BY td.discrepancy_type, td.status ORDER BY td.discrepancy_type, td.status`,
+      [range.from, range.to, branchId]
+    );
+    const valueRes = await pool.query(
+      `SELECT COALESCE(SUM(jel.debit), 0) AS total_write_off_value
+       FROM transfer_discrepancies td
+       JOIN kitchen_transfers kt ON kt.id = td.kitchen_transfer_id
+       JOIN journal_entries je ON je.id = td.adjustment_journal_entry_id AND je.status = 'POSTED'
+       JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+       JOIN accounts a ON a.id = jel.account_id AND a.code = '5300'
+       WHERE td.reported_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR kt.to_branch_id = $3)`,
+      [range.from, range.to, branchId]
+    );
+    res.json({
+      from: range.from, to: range.to, branchId,
+      byTypeAndStatus: byTypeRes.rows.map((r) => ({ ...r, total_quantity: Number(r.total_quantity) })),
+      totalWriteOffValue: Number(valueRes.rows[0].total_write_off_value),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/manufacturing-variance?from=&to=&branchId= - فرق الإنتاج (Yield Variance، ناتج مقابل
+// مخطط) وفرق الاستهلاك الفعلي (STEP H) لكل أمر تصنيع مكتمل في المدى - ظاهر بالكامل، مفيش إخفاء تلقائي
+router.get("/manufacturing-variance", requireAuth, canSeeReports, requirePermission("production.view"), async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+
+  try {
+    const ordersRes = await pool.query(
+      `SELECT po.id, po.branch_id, b.name AS branch_name, po.production_date, po.planned_quantity, po.actual_quantity,
+              po.variance_reason, po.parent_production_order_id,
+              CASE WHEN po.planned_quantity > 0 THEN ((po.actual_quantity - po.planned_quantity) / po.planned_quantity) * 100 ELSE NULL END AS output_variance_percent
+       FROM production_orders po JOIN branches b ON b.id = po.branch_id
+       WHERE po.status = 'COMPLETED' AND po.production_date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR po.branch_id = $3)
+       ORDER BY po.production_date DESC, po.id DESC`,
+      [range.from, range.to, branchId]
+    );
+    const orderIds = ordersRes.rows.map((o) => o.id);
+    const inputVarianceRes = orderIds.length
+      ? await pool.query(
+          `SELECT production_order_id, COALESCE(SUM(planned_quantity),0) AS planned, COALESCE(SUM(quantity),0) AS actual,
+                  COALESCE(SUM(variance_quantity),0) AS variance
+           FROM production_order_batches WHERE production_order_id = ANY($1) AND role = 'input'
+           GROUP BY production_order_id`,
+          [orderIds]
+        )
+      : { rows: [] };
+    const inputVarianceByOrder = new Map(inputVarianceRes.rows.map((r) => [r.production_order_id, {
+      planned: Number(r.planned), actual: Number(r.actual), variance: Number(r.variance),
+    }]));
+
+    const orders = ordersRes.rows.map((o) => ({
+      ...o,
+      output_variance_percent: o.output_variance_percent != null ? Number(o.output_variance_percent) : null,
+      inputVariance: inputVarianceByOrder.get(o.id) || { planned: 0, actual: 0, variance: 0 },
+    }));
+
+    res.json({ from: range.from, to: range.to, branchId, orders });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/supplier-invoice-variance?from=&to=&supplierId= - فواتير الموردين وفروقها عن قيمة
+// الاستلام المرحّلة (STEP B) - مين المورد اللي فروقه بيتكرر، إجمالي الفرق (موجب/سالب) في المدى
+router.get("/supplier-invoice-variance", requireAuth, canSeeReports, requirePermission("purchasing.view"), async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const supplierId = req.query.supplierId ? Number(req.query.supplierId) : null;
+
+  try {
+    const invoicesRes = await pool.query(
+      `SELECT si.id, si.supplier_id, s.name AS supplier_name, si.branch_id, b.name AS branch_name,
+              si.supplier_invoice_number, si.invoice_date, si.subtotal, si.total, si.matched_total,
+              si.variance_amount, si.status
+       FROM supplier_invoices si
+       JOIN suppliers s ON s.id = si.supplier_id
+       JOIN branches b ON b.id = si.branch_id
+       WHERE si.invoice_date BETWEEN $1 AND $2 AND si.status <> 'CANCELLED'
+         AND ($3::int IS NULL OR si.supplier_id = $3)
+       ORDER BY si.invoice_date DESC, si.id DESC`,
+      [range.from, range.to, supplierId]
+    );
+    const bySupplierRes = await pool.query(
+      `SELECT si.supplier_id, s.name AS supplier_name, COUNT(*)::int AS invoice_count,
+              COALESCE(SUM(si.total),0) AS total_invoiced, COALESCE(SUM(si.variance_amount),0) AS total_variance
+       FROM supplier_invoices si JOIN suppliers s ON s.id = si.supplier_id
+       WHERE si.invoice_date BETWEEN $1 AND $2 AND si.status <> 'CANCELLED'
+         AND ($3::int IS NULL OR si.supplier_id = $3)
+       GROUP BY si.supplier_id, s.name ORDER BY total_variance DESC`,
+      [range.from, range.to, supplierId]
+    );
+    res.json({
+      from: range.from, to: range.to, supplierId,
+      invoices: invoicesRes.rows.map((r) => ({
+        ...r, subtotal: Number(r.subtotal), total: Number(r.total), matched_total: Number(r.matched_total), variance_amount: Number(r.variance_amount),
+      })),
+      bySupplier: bySupplierRes.rows.map((r) => ({
+        ...r, total_invoiced: Number(r.total_invoiced), total_variance: Number(r.total_variance),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
