@@ -480,4 +480,155 @@ router.post("/:id/receive", requireAuth, stockManagers, async (req, res) => {
   }
 });
 
+// ================= Procurement v2 STEP G: فروقات الاستلام (Transfer Discrepancies) =================
+// بعد ما التحويل يتستلم (received/partially_received)، السجل الأصلي (kitchen_transfer_items.quantity_received)
+// بيفضل ثابت للأبد - أي فرق يتكتشف بعدين (نقص/تلف/صنف غلط/كمية غلط/منتهي/تاني) بيتسجل هنا كسطر مستقل
+// بنوعه، وأي تصحيح فعلي للمخزون/المحاسبة بيعدّي من هنا بس (POST .../resolve) - مش UPDATE مباشر على
+// كمية الاستلام التاريخية أبدًا
+const DISCREPANCY_TYPE_TO_MOVEMENT = {
+  SHORTAGE: "ADJUSTMENT", WRONG_ITEM: "ADJUSTMENT", WRONG_QUANTITY: "ADJUSTMENT", OTHER: "ADJUSTMENT",
+  DAMAGED: "WASTE", EXPIRED: "EXPIRY",
+};
+
+// POST /api/kitchen-transfers/:id/discrepancies - الفرع المستلم (أو الأدمن) بيسجّل فرق/أكتر - التحويل
+// لازم يكون received أو partially_received بالفعل (بعد الاستلام بس، مش قبله)
+// {items: [{kitchenTransferItemId, inventoryItemId, discrepancyType, quantity, unit?, notes?, evidenceUrls?}]}
+router.post("/:id/discrepancies", requireAuth, stockManagers, async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "لازم فرق واحد على الأقل" });
+  try {
+    const existing = await pool.query("SELECT * FROM kitchen_transfers WHERE id = $1", [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: "التحويل مش موجود" });
+    const t = existing.rows[0];
+    if (!["received", "partially_received"].includes(t.status)) {
+      return res.status(400).json({ error: "تسجيل الفروقات متاح بس بعد استلام التحويل" });
+    }
+    if (!assertOwnBranch(req.user, t.to_branch_id)) {
+      return res.status(403).json({ error: "معندكش صلاحية تسجل فروقات على استلام فرع تاني" });
+    }
+    const inserted = [];
+    for (const it of items) {
+      if (!DISCREPANCY_TYPE_TO_MOVEMENT[it.discrepancyType]) {
+        return res.status(400).json({ error: `نوع فرق غير معروف: ${it.discrepancyType}` });
+      }
+      if (!it.quantity || Number(it.quantity) <= 0) {
+        return res.status(400).json({ error: "كمية الفرق لازم تكون أكبر من صفر" });
+      }
+      const row = await pool.query(
+        `INSERT INTO transfer_discrepancies
+          (kitchen_transfer_id, kitchen_transfer_item_id, inventory_item_id, discrepancy_type, quantity, unit,
+           notes, evidence_urls, reported_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [t.id, it.kitchenTransferItemId || null, it.inventoryItemId, it.discrepancyType, it.quantity,
+         it.unit || null, it.notes || null, it.evidenceUrls || null, req.user.id]
+      );
+      inserted.push(row.rows[0]);
+    }
+    await logAudit(pool, {
+      branchId: t.to_branch_id, userId: req.user.id, action: "TRANSFER_DISCREPANCY_REPORTED",
+      entityType: "kitchen_transfer", entityId: t.id, metadata: { count: inserted.length }, req,
+    });
+    res.status(201).json(inserted);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// GET /api/kitchen-transfers/:id/discrepancies - الفرعين المعنيين (مصدر/وجهة) أو الأدمن
+router.get("/:id/discrepancies", requireAuth, stockManagers, async (req, res) => {
+  try {
+    const existing = await pool.query("SELECT from_branch_id, to_branch_id FROM kitchen_transfers WHERE id = $1", [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: "التحويل مش موجود" });
+    const t = existing.rows[0];
+    if (!assertOwnBranch(req.user, t.to_branch_id) && !assertOwnBranch(req.user, t.from_branch_id)) {
+      return res.status(403).json({ error: "معندكش صلاحية تشوف فروقات التحويل ده" });
+    }
+    const result = await pool.query(
+      `SELECT td.*, ii.name AS item_name
+       FROM transfer_discrepancies td JOIN inventory_items ii ON ii.id = td.inventory_item_id
+       WHERE td.kitchen_transfer_id = $1 ORDER BY td.id`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/kitchen-transfers/:id/discrepancies/:discrepancyId/resolve - مراجعة الفرق - {action: 'ACKNOWLEDGE'
+// | 'RESOLVE' | 'REJECT', resolutionNotes?, postAdjustment?} - RESOLVE بس (postAdjustment !== false) هي
+// اللحظة اللي بتصحح المخزون فعليًا: حركة سالبة بالكمية المتنازع عليها (كانت اتسجلت زيادة وقت /receive)
+// + قيد هالك/تسوية (5300/1400) بنفس تكلفة الحركة الحقيقية - آمنة التكرار (idempotencyKey)
+router.post("/:id/discrepancies/:discrepancyId/resolve", requireAuth, requireRole("admin", "branch_manager", "accountant"), async (req, res) => {
+  const { action, resolutionNotes, postAdjustment } = req.body;
+  if (!["ACKNOWLEDGE", "RESOLVE", "REJECT"].includes(action)) {
+    return res.status(400).json({ error: "action لازم يكون ACKNOWLEDGE أو RESOLVE أو REJECT" });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const discRes = await client.query(
+      "SELECT * FROM transfer_discrepancies WHERE id = $1 AND kitchen_transfer_id = $2 FOR UPDATE",
+      [req.params.discrepancyId, req.params.id]
+    );
+    if (discRes.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الفرق مش موجود" }); }
+    const disc = discRes.rows[0];
+    if (disc.status !== "OPEN" && disc.status !== "ACKNOWLEDGED") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "الفرق ده اتراجع بالفعل (RESOLVED أو REJECTED)" });
+    }
+    const transferRes = await client.query("SELECT to_branch_id, business_date FROM kitchen_transfers WHERE id = $1", [req.params.id]);
+    const toBranchId = transferRes.rows[0].to_branch_id;
+    if (req.user.role === "branch_manager" && !assertOwnBranch(req.user, toBranchId)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية تراجع فروقات فرع تاني" });
+    }
+
+    let journalEntryId = null;
+    if (action === "RESOLVE" && postAdjustment !== false) {
+      const { movement, duplicate } = await postInventoryMovement(client, {
+        branchId: toBranchId, inventoryItemId: disc.inventory_item_id, quantity: -Number(disc.quantity),
+        movementType: DISCREPANCY_TYPE_TO_MOVEMENT[disc.discrepancy_type],
+        reason: disc.discrepancy_type, referenceType: "discrepancy", referenceId: disc.id,
+        notes: disc.notes, businessDate: transferRes.rows[0].business_date, userId: req.user.id,
+        idempotencyKey: `discrepancy-adjustment-${disc.id}`, negativeStockOverrideApproved: true,
+      });
+      if (!duplicate && movement.total_cost != null && Number(movement.total_cost) > 0) {
+        const wasteAccount = await getAccountByCode(client, "5300");
+        const inventoryAccount = await getAccountByCode(client, "1400");
+        const je = await postJournalEntry(client, {
+          entryDate: new Date().toISOString().slice(0, 10),
+          description: `فرق استلام #${disc.id} (${disc.discrepancy_type}) - تحويل #${req.params.id}`,
+          sourceType: "transfer_discrepancy", sourceId: disc.id, branchId: toBranchId,
+          lines: [
+            { accountId: wasteAccount.id, debit: Number(movement.total_cost) },
+            { accountId: inventoryAccount.id, credit: Number(movement.total_cost) },
+          ],
+          idempotencyKey: `discrepancy-adjustment-${disc.id}`, userId: req.user.id,
+        });
+        journalEntryId = je.entry.id;
+      }
+    }
+
+    const newStatus = action === "RESOLVE" ? "RESOLVED" : action === "REJECT" ? "REJECTED" : "ACKNOWLEDGED";
+    const updated = await client.query(
+      `UPDATE transfer_discrepancies SET status = $1, resolution_notes = $2, adjustment_journal_entry_id = COALESCE($3, adjustment_journal_entry_id),
+              resolved_by = $4, resolved_at = now()
+       WHERE id = $5 RETURNING *`,
+      [newStatus, resolutionNotes || null, journalEntryId, req.user.id, disc.id]
+    );
+    await logAudit(client, {
+      branchId: toBranchId, userId: req.user.id, action: "TRANSFER_DISCREPANCY_" + newStatus,
+      entityType: "transfer_discrepancy", entityId: disc.id, metadata: { journalEntryId }, req,
+    });
+    await client.query("COMMIT");
+    res.json(updated.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;
