@@ -18,6 +18,16 @@ class ApiClient {
     const res = await axios.post(`${this.baseUrl}/api/auth/login`, { email: this.email, password: this.password });
     this.token = res.data.token;
     console.log(`[auth] تسجيل دخول ناجح - ${res.data.user.name} (${res.data.user.role})`);
+    // لو BRANCH_ID مش متحدد في .env، نستنتجه من حساب الدخول نفسه (لو مدير فرع - حسابه مربوط بفرع واحد
+    // بس أصلًا). ده بيوفّر على المستخدم إنه يدوّر على رقم الفرع يدوي - أسهل بكتير من فتح أدوات المطور.
+    // حساب أدمن (branchId=null) لازم BRANCH_ID يتحدد صراحة في .env، مفيش فرع واحد يُستنتج منه
+    if (!this.branchId) {
+      if (!res.data.user.branchId) {
+        throw new Error("الحساب ده (أدمن) مش مربوط بفرع واحد بس - لازم تحدد BRANCH_ID صراحة في ملف .env");
+      }
+      this.branchId = res.data.user.branchId;
+      console.log(`[auth] الفرع اتحدد أوتوماتيك من الحساب: ${this.branchId}`);
+    }
   }
 
   async request(method, path, data) {

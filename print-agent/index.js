@@ -15,7 +15,10 @@ const config = {
   pollIntervalMs: (Number(process.env.POLL_INTERVAL_SECONDS) || 5) * 1000,
 };
 
-for (const key of ["baseUrl", "email", "password", "branchId"]) {
+// BRANCH_ID اختياري عمدًا - لو الحساب (AGENT_EMAIL) مدير فرع، الفرع بيتحدد أوتوماتيك من الحساب نفسه
+// وقت تسجيل الدخول (راجع ApiClient.login) - أسهل بكتير من ما تدوّر على رقم الفرع يدوي. لازم تحدده
+// صراحة هنا بس لو الحساب أدمن (مربوط بكل الفروع، مفيش فرع واحد يتحدد منه أوتوماتيك)
+for (const key of ["baseUrl", "email", "password"]) {
   if (!config[key]) {
     console.error(`[إعدادات] ناقص ${key} - راجع ملف .env (انسخ .env.example وابدأ منه)`);
     process.exit(1);
@@ -54,8 +57,9 @@ async function pollOnce() {
 }
 
 async function mainLoop() {
-  console.log(`[agent] بدء التشغيل - فرع ${config.branchId} - ${config.baseUrl}`);
+  console.log(`[agent] بدء التشغيل - ${config.baseUrl}`);
   await api.login();
+  console.log(`[agent] بيسحب أوامر الطباعة لفرع رقم ${api.branchId}`);
   while (!stopping) {
     try {
       await pollOnce();
