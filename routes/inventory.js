@@ -6,6 +6,7 @@ const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { convertQuantity } = require("../db/unit-conversion");
 const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
+const { traceBackward, traceForward } = require("../db/batch-traceability");
 
 const WASTE_REASONS = ["EXPIRED", "DAMAGED", "BURNED", "PREPARATION_WASTE", "OVERPRODUCTION", "QUALITY_ISSUE", "CUSTOMER_RETURN", "UNKNOWN"];
 
@@ -616,6 +617,25 @@ router.get("/batches", requireAuth, staffRoles, async (req, res) => {
       values
     );
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/inventory/batches/:id/trace - Procurement v2 STEP I: التتبّع الكامل للدفعة (Batch/Lot
+// Traceability) بالاتجاهين - للخلف (مورد → GRN → دفعة خام → تصنيع/تعبئة → تحويلات لحد ما توصل للفرع ده)
+// وللأمام (مستوى واحد: استهلاك في تصنيع/تعبئة تانية، تحويل لفرع تاني، بيع، هالك/تسوية) - مفيد لو فيه
+// مشكلة جودة/سحب دفعة ولازم تعرف "منين جاية" و"راحت فين بالظبط"
+router.get("/batches/:id/trace", requireAuth, staffRoles, async (req, res) => {
+  try {
+    const batchCheck = await pool.query("SELECT branch_id FROM inventory_batches WHERE id = $1", [req.params.id]);
+    if (batchCheck.rows.length === 0) return res.status(404).json({ error: "الدفعة مش موجودة" });
+    if ((req.user.role === "branch_manager" || req.user.role === "cashier") && !assertOwnBranch(req.user, batchCheck.rows[0].branch_id)) {
+      return res.status(403).json({ error: "معندكش صلاحية تتبّع دفعة فرع تاني" });
+    }
+    const backward = await traceBackward(pool, Number(req.params.id));
+    const forward = await traceForward(pool, Number(req.params.id));
+    res.json({ backward, forward });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
