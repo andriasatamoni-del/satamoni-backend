@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
+const { generateSuggestedRequisition } = require("../db/requisition-suggestion");
 
 // GET /api/kitchen-orders?branchId=&status= - طلبيات الفروع للسنتر كيتشن
 // مدير الفرع/الكاشير يشوفوا طلبيات فرعهم بس، الأدمن يشوف كل حاجة (قايمة تنفيذ السنتر كيتشن)
@@ -362,6 +363,27 @@ router.post("/:id/ready", requireAuth, requireRole("admin", "branch_manager"), a
     res.status(400).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+// GET /api/kitchen-orders/suggested?branchId=&targetDate=&lookbackWeeks= - Procurement v2 STEP E:
+// معاينة بس (مفيش أي تسجيل) لاقتراح الطلبية اليومية - واعي بيوم الأسبوع بتاع targetDate ومبني على متوسط
+// الاستهلاك الفعلي في نفس يوم الأسبوع ده آخر lookbackWeeks أسبوع (افتراضي 8). مدير الفرع بعد كده بيستخدم
+// النتيجة كـitems في POST / (status:'DRAFT') ويعدّل أي كمية قبل التقديم - الـendpoint ده مايُنشئش أي حاجة
+router.get("/suggested", requireAuth, requireRole("admin", "branch_manager", "cashier"), async (req, res) => {
+  let { branchId, targetDate, lookbackWeeks } = req.query;
+  if (!assertOwnBranch(req.user, branchId) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "معندكش صلاحية تشوف اقتراح فرع تاني" });
+  }
+  if (!branchId) return res.status(400).json({ error: "لازم فرع" });
+  if (!targetDate) targetDate = new Date().toISOString().slice(0, 10);
+  try {
+    const suggestions = await generateSuggestedRequisition(pool, {
+      branchId, targetDate, lookbackWeeks: lookbackWeeks ? Number(lookbackWeeks) : 8,
+    });
+    res.json({ branchId: Number(branchId), targetDate, suggestions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
