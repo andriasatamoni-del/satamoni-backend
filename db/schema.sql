@@ -1981,3 +1981,219 @@ CREATE TABLE print_jobs (
 );
 CREATE INDEX idx_print_jobs_branch_status ON print_jobs(branch_id, status);
 CREATE INDEX idx_print_jobs_order ON print_jobs(order_id);
+
+-- ============================================================
+-- Procurement v2: فاتورة المورد (Supplier Invoice) + ترقية طلبيات الفروع (kitchen_orders) لدورة حياة
+-- كاملة + تتبّع فروقات الاستلام (transfer_discrepancies) + دفعات أب/ابن للتصنيع متعدد المراحل + التعبئة
+-- (Packaging) + ترقيم دفعات نظامي فريد. تفاصيل قرارات المنتج/العمل النهائية موثّقة في محادثة التنفيذ -
+-- المبدأ الأهم اللي يحكم كل جدول هنا: مفيش أي جدول جديد بيكرر أو يبايباس db/inventory-ledger.js أو
+-- db/accounting-engine.js - كل حركة مخزون فعلية لسه بتعدّي من postInventoryMovement، وكل قيد محاسبي لسه
+-- بيعدّي من postJournalEntry، بالضبط زي أي كود سابق في المشروع
+-- ============================================================
+
+-- فاتورة المورد الفعلية (المستند اللي المورد بعته) - منفصلة عن GRN عمدًا (GRN = "استلمنا كذا فعليًا"،
+-- الفاتورة = "المورد طالبنا بكذا"). الفاتورة **مبتعملش قيد AP جديد خالص** - الـAP (دائن 2100) اتسجل
+-- بالفعل وقت POST الـGRN؛ الفاتورة هنا بتتقارن (تُطابق) بقيمة سطور الـGRN المرتبطة بيها، ولو فيه فرق
+-- (سعر/كمية مختلفة عن الـGRN) بيتسجل variance_amount وقيد تصحيحي واحد بس (variance_journal_entry_id)
+-- بالفرق - مش قيد AP كامل تاني (كان هيبقى تكرار مضاعف للمديونية)
+CREATE TABLE supplier_invoices (
+  id                         SERIAL PRIMARY KEY,
+  supplier_id                INTEGER NOT NULL REFERENCES suppliers(id),
+  branch_id                  INTEGER NOT NULL REFERENCES branches(id),
+  purchase_order_id          INTEGER REFERENCES purchase_orders(id),
+  supplier_invoice_number    TEXT NOT NULL, -- رقم فاتورة المورد نفسه (مش رقمنا الداخلي) - لازم فريد لكل مورد لمنع إدخال نفس الفاتورة مرتين
+  invoice_date               DATE NOT NULL DEFAULT CURRENT_DATE,
+  due_date                   DATE,
+  currency                   TEXT NOT NULL DEFAULT 'EGP',
+  subtotal                   NUMERIC NOT NULL DEFAULT 0,
+  tax                        NUMERIC NOT NULL DEFAULT 0,
+  total                      NUMERIC NOT NULL DEFAULT 0,
+  matched_total               NUMERIC NOT NULL DEFAULT 0, -- مجموع قيمة سطور الـGRN المرتبطة وقت المطابقة (snapshot)
+  variance_amount              NUMERIC NOT NULL DEFAULT 0, -- total - matched_total (موجب = فاتورة المورد أعلى من قيمة الاستلام المرحّلة)
+  variance_journal_entry_id     INTEGER REFERENCES journal_entries(id),
+  status                        TEXT NOT NULL DEFAULT 'DRAFT'
+                                CHECK (status IN ('DRAFT', 'MATCHED', 'VARIANCE_PENDING', 'APPROVED', 'PAID', 'PARTIALLY_PAID', 'CANCELLED')),
+  notes                         TEXT,
+  created_by                    INTEGER REFERENCES users(id),
+  approved_by                    INTEGER REFERENCES users(id),
+  approved_at                     TIMESTAMPTZ,
+  cancelled_by                    INTEGER REFERENCES users(id),
+  cancelled_at                     TIMESTAMPTZ,
+  idempotency_key                  TEXT,
+  created_at                        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at                        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(supplier_id, supplier_invoice_number)
+);
+CREATE UNIQUE INDEX idx_supplier_invoices_idempotency_key ON supplier_invoices(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_supplier_invoices_supplier ON supplier_invoices(supplier_id);
+CREATE INDEX idx_supplier_invoices_branch ON supplier_invoices(branch_id);
+CREATE INDEX idx_supplier_invoices_po ON supplier_invoices(purchase_order_id);
+CREATE INDEX idx_supplier_invoices_status ON supplier_invoices(status);
+
+-- بنود الفاتورة - كل سطر بيتربط (لو ممكن) بسطر GRN حقيقي اتصرف عليه (goods_receipt_item_id) عشان
+-- المطابقة الثلاثية (PO/GRN/Invoice) تبقى دقيقة على مستوى الصنف مش إجمالي الفاتورة بس. grn_unit_price
+-- نسخة (snapshot) من سعر الـGRN وقت المطابقة، للمقارنة - مش بيتغيّر لو سعر GRN اتعدّل بعد كده
+CREATE TABLE supplier_invoice_lines (
+  id                     SERIAL PRIMARY KEY,
+  supplier_invoice_id    INTEGER NOT NULL REFERENCES supplier_invoices(id) ON DELETE CASCADE,
+  goods_receipt_item_id  INTEGER REFERENCES goods_receipt_items(id),
+  inventory_item_id      INTEGER NOT NULL REFERENCES inventory_items(id),
+  invoiced_quantity      NUMERIC NOT NULL,
+  unit                   TEXT,
+  unit_price             NUMERIC NOT NULL,
+  line_total             NUMERIC NOT NULL,
+  grn_unit_price         NUMERIC,
+  variance_amount        NUMERIC NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_supplier_invoice_lines_invoice ON supplier_invoice_lines(supplier_invoice_id);
+CREATE INDEX idx_supplier_invoice_lines_grn_item ON supplier_invoice_lines(goods_receipt_item_id);
+CREATE INDEX idx_supplier_invoice_lines_item ON supplier_invoice_lines(inventory_item_id);
+
+-- سداد المورد بقى ممكن يتربط بفاتورة مورد محددة (تخصيص السداد على فاتورة بعينها) - اختياري (NULL =
+-- سداد على الحساب العام للمورد زي ما كان شغال قبل كده بالضبط، مفيش كسر لتوافق رجعي)
+ALTER TABLE supplier_payments ADD COLUMN supplier_invoice_id INTEGER REFERENCES supplier_invoices(id);
+CREATE INDEX idx_supplier_payments_invoice ON supplier_payments(supplier_invoice_id);
+
+-- ترقية kitchen_orders من "طلبية بسيطة" لدورة حياة طلبية (Requisition) كاملة - نفس الجدول اتمدّ مش
+-- اتستبدل (kitchen_transfers.kitchen_order_id بيربط عليه بالفعل). القيم القديمة lowercase
+-- (pending/fulfilled/cancelled) فضلت صالحة لتوافق البيانات التاريخية، والـworkflow الجديد كله UPPERCASE
+-- عشان يتميّز بصريًا عن الحالة القديمة البسيطة
+ALTER TABLE kitchen_orders DROP CONSTRAINT kitchen_orders_status_check;
+ALTER TABLE kitchen_orders ADD CONSTRAINT kitchen_orders_status_check CHECK (status IN (
+  'pending', 'fulfilled', 'cancelled',
+  'DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'PREPARING', 'READY', 'DISPATCHED', 'IN_TRANSIT', 'RECEIVED'
+));
+ALTER TABLE kitchen_orders ADD COLUMN required_date DATE; -- التاريخ المطلوب توصيل الطلبية بيه (مختلف عن business_date = تاريخ الإنشاء)
+ALTER TABLE kitchen_orders ADD COLUMN is_auto_suggested BOOLEAN NOT NULL DEFAULT FALSE; -- اتولدت من محرك الاقتراح اليومي المبني على الاستهلاك، مش مُدخلة يدوي بالكامل
+ALTER TABLE kitchen_orders ADD COLUMN submitted_by INTEGER REFERENCES users(id);
+ALTER TABLE kitchen_orders ADD COLUMN submitted_at TIMESTAMPTZ;
+ALTER TABLE kitchen_orders ADD COLUMN approved_by INTEGER REFERENCES users(id);
+ALTER TABLE kitchen_orders ADD COLUMN approved_at TIMESTAMPTZ;
+ALTER TABLE kitchen_orders ADD COLUMN rejected_by INTEGER REFERENCES users(id);
+ALTER TABLE kitchen_orders ADD COLUMN rejected_at TIMESTAMPTZ;
+ALTER TABLE kitchen_orders ADD COLUMN rejection_reason TEXT;
+ALTER TABLE kitchen_orders ADD COLUMN preparing_started_by INTEGER REFERENCES users(id);
+ALTER TABLE kitchen_orders ADD COLUMN preparing_started_at TIMESTAMPTZ;
+ALTER TABLE kitchen_orders ADD COLUMN ready_by INTEGER REFERENCES users(id);
+ALTER TABLE kitchen_orders ADD COLUMN ready_at TIMESTAMPTZ;
+ALTER TABLE kitchen_orders ADD COLUMN dispatched_by INTEGER REFERENCES users(id);
+ALTER TABLE kitchen_orders ADD COLUMN dispatched_at TIMESTAMPTZ;
+ALTER TABLE kitchen_orders ADD COLUMN received_by INTEGER REFERENCES users(id);
+ALTER TABLE kitchen_orders ADD COLUMN received_at TIMESTAMPTZ;
+ALTER TABLE kitchen_orders ADD COLUMN cancelled_by INTEGER REFERENCES users(id);
+ALTER TABLE kitchen_orders ADD COLUMN cancelled_at TIMESTAMPTZ;
+ALTER TABLE kitchen_orders ADD COLUMN cancellation_reason TEXT;
+
+-- بند الطلبية: تتبّع صريح لـ"المطلوب" مقابل "المتاح" مقابل "اللي هيتجهّز فعليًا" - مفيش عجز مخفي أبدًا،
+-- fulfillment_status بيوضّح فوري لو فيه نقص (PARTIAL/UNFULFILLED) بدل ما يتقفل باستلام كمية أقل بصمت
+ALTER TABLE kitchen_order_items ADD COLUMN quantity_suggested NUMERIC; -- اقتراح محرك الاستهلاك اليومي قبل أي تعديل يدوي من مدير الفرع
+ALTER TABLE kitchen_order_items ADD COLUMN quantity_available NUMERIC; -- المتاح فعليًا في السنتر كيتشن وقت التجهيز (STEP F)
+ALTER TABLE kitchen_order_items ADD COLUMN quantity_to_prepare NUMERIC; -- اللي السنتر كيتشن التزم يجهزه فعليًا (ممكن يقل عن المطلوب)
+ALTER TABLE kitchen_order_items ADD COLUMN quantity_dispatched NUMERIC; -- اللي فعلًا خرج وقت الإصدار (dispatch)
+ALTER TABLE kitchen_order_items ADD COLUMN fulfillment_status TEXT NOT NULL DEFAULT 'PENDING'
+  CHECK (fulfillment_status IN ('PENDING', 'FULL', 'PARTIAL', 'UNFULFILLED'));
+ALTER TABLE kitchen_order_items ADD COLUMN shortage_notes TEXT;
+
+-- فروقات الاستلام بالفرع (Branch Receiving) - كل فرق بيتسجل كسطر مستقل بنوعه (مش رقم إجمالي واحد زي
+-- التسوية القديمة على 5300 بس) عشان يبان "إيه بالظبط اللي حصل" لكل صنف. بعد الاستلام، السجل الأصلي
+-- (kitchen_transfer_items) بيبقى ثابت غير قابل للتعديل المباشر - أي تصحيح لازم يعدّي من هنا (سطر فرق جديد
+-- + status انتقالي) مش UPDATE مباشر على كمية الاستلام التاريخية
+CREATE TABLE transfer_discrepancies (
+  id                           SERIAL PRIMARY KEY,
+  kitchen_transfer_id          INTEGER NOT NULL REFERENCES kitchen_transfers(id),
+  kitchen_transfer_item_id     INTEGER REFERENCES kitchen_transfer_items(id),
+  inventory_item_id            INTEGER NOT NULL REFERENCES inventory_items(id),
+  discrepancy_type             TEXT NOT NULL CHECK (discrepancy_type IN
+                                ('SHORTAGE', 'DAMAGED', 'WRONG_ITEM', 'WRONG_QUANTITY', 'EXPIRED', 'OTHER')),
+  quantity                     NUMERIC NOT NULL,
+  unit                         TEXT,
+  notes                        TEXT,
+  evidence_urls                TEXT[], -- روابط صور/مرفقات خارجية (اختياري) - مفيش نظام رفع ملفات ثنائي في النظام لسه
+  status                       TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'REJECTED')),
+  resolution_notes             TEXT,
+  adjustment_journal_entry_id  INTEGER REFERENCES journal_entries(id),
+  reported_by                  INTEGER REFERENCES users(id),
+  reported_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_by                  INTEGER REFERENCES users(id),
+  resolved_at                  TIMESTAMPTZ
+);
+CREATE INDEX idx_transfer_discrepancies_transfer ON transfer_discrepancies(kitchen_transfer_id);
+CREATE INDEX idx_transfer_discrepancies_status ON transfer_discrepancies(status);
+
+-- تصنيع متعدد المراحل: خام → نصف مصنّع → مصنّع نهائي. parent_production_order_id بيربط أمر تصنيع
+-- بالأمر اللي "استهلك" الناتج بتاعه كمكوّن (مرحلة تالية) - تكملة لـinventory_batches.parent_batch_id تحت
+-- (الاتنين مع بعض بيديو تتبّع كامل: على مستوى الأمر وعلى مستوى الدفعة الفعلية)
+ALTER TABLE production_orders ADD COLUMN parent_production_order_id INTEGER REFERENCES production_orders(id);
+CREATE INDEX idx_production_orders_parent ON production_orders(parent_production_order_id);
+
+-- الفرق بين "المخطط" (نظري من الوصفة) و"الفعلي" (اللي فعلًا اتستهلك) على مستوى كل دفعة إدخال - الكمية
+-- الفعلية لسه في العمود quantity الموجود؛ planned_quantity هنا بيسمح نعرض الفرق (Yield/Variance) من غير
+-- إخفاء تلقائي، زي ما اتحدد صراحة
+ALTER TABLE production_order_batches ADD COLUMN planned_quantity NUMERIC;
+ALTER TABLE production_order_batches ADD COLUMN variance_quantity NUMERIC;
+ALTER TABLE production_order_batches ADD COLUMN variance_reason TEXT;
+
+-- بادئة ترقيم الدفعات الخاصة بالصنف (لو محدد) - تُستخدم في توليد رقم الدفعة النظامي الفريد
+-- (زي "SAU-20260828-001") عبر batch_number_counters تحت. لو NULL، مولّد رقم الدفعة بيستخدم بادئة افتراضية عامة
+ALTER TABLE inventory_items ADD COLUMN batch_prefix TEXT;
+CREATE UNIQUE INDEX idx_inventory_items_batch_prefix ON inventory_items(batch_prefix) WHERE batch_prefix IS NOT NULL;
+
+-- علاقة أب/ابن بين الدفعات - دفعة نصف مصنّعة (أب) استُهلكت لإنتاج دفعة مصنّعة/معبأة (ابن)، فتقدر تتبّع
+-- للخلف (من الناتج النهائي لمصدره الخام) وللأمام (من المادة الخام لكل منتج نهائي طلعت فيه) بالكامل
+ALTER TABLE inventory_batches ADD COLUMN parent_batch_id INTEGER REFERENCES inventory_batches(id);
+CREATE INDEX idx_inventory_batches_parent ON inventory_batches(parent_batch_id);
+
+-- عدّاد ترقيم الدفعات النظامي - رقم الدفعة = بادئة-تاريخ(YYYYMMDD)-تسلسل (مثال SAU-20260828-001). التسلسل
+-- بيتصفّر لكل بادئة كل يوم (UNIQUE(prefix, counter_date) + زيادة atomic بـUPSERT في كود STEP H، مش هنا)
+CREATE TABLE batch_number_counters (
+  id             SERIAL PRIMARY KEY,
+  prefix         TEXT NOT NULL,
+  counter_date   DATE NOT NULL,
+  last_sequence  INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(prefix, counter_date)
+);
+
+-- أمر تعبئة (Packaging) - مرحلة منفصلة عن أمر التصنيع نفسه: بياخد دفعة (سائبة/نصف مصنّعة) وينتج منها
+-- عدد وحدات معبأة قابلة للبيع/التحويل. نفس شكل production_orders/production_order_batches بالظبط
+-- (input/output roles) عشان يتربط بنفس محرك الليدجر ونفس منطق التتبّع من غير ما نخترع شكل تاني
+CREATE TABLE packaging_orders (
+  id                      SERIAL PRIMARY KEY,
+  branch_id               INTEGER NOT NULL REFERENCES branches(id),
+  input_item_id           INTEGER NOT NULL REFERENCES inventory_items(id),
+  input_batch_id          INTEGER REFERENCES inventory_batches(id),
+  output_item_id          INTEGER NOT NULL REFERENCES inventory_items(id),
+  status                  TEXT NOT NULL DEFAULT 'DRAFT'
+                          CHECK (status IN ('DRAFT', 'APPROVED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+  planned_input_quantity  NUMERIC NOT NULL,
+  actual_input_quantity   NUMERIC,
+  planned_output_quantity NUMERIC NOT NULL,
+  actual_output_quantity  NUMERIC,
+  packaging_date          DATE NOT NULL DEFAULT CURRENT_DATE,
+  batch_number            TEXT,
+  expiry_date             DATE,
+  variance_reason         TEXT,
+  notes                   TEXT,
+  operator_id             INTEGER REFERENCES users(id),
+  approved_by             INTEGER REFERENCES users(id),
+  completed_by            INTEGER REFERENCES users(id),
+  cancelled_by            INTEGER REFERENCES users(id),
+  approved_at             TIMESTAMPTZ,
+  started_at              TIMESTAMPTZ,
+  completed_at            TIMESTAMPTZ,
+  cancelled_at            TIMESTAMPTZ,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_packaging_orders_branch ON packaging_orders(branch_id);
+CREATE INDEX idx_packaging_orders_status ON packaging_orders(status);
+
+CREATE TABLE packaging_order_batches (
+  id                  SERIAL PRIMARY KEY,
+  packaging_order_id  INTEGER NOT NULL REFERENCES packaging_orders(id) ON DELETE CASCADE,
+  role                TEXT NOT NULL CHECK (role IN ('input', 'output')),
+  inventory_item_id   INTEGER NOT NULL REFERENCES inventory_items(id),
+  batch_id            INTEGER REFERENCES inventory_batches(id),
+  quantity            NUMERIC NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_packaging_order_batches_order ON packaging_order_batches(packaging_order_id);
+CREATE INDEX idx_packaging_order_batches_batch ON packaging_order_batches(batch_id);
