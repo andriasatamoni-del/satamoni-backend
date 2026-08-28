@@ -124,7 +124,7 @@
     <h1>الطابعات المسجّلة</h1>
     <p class="hint">"اختبار طباعة" بينشئ أمر طباعة حقيقي جوه نفس الطابور اللي الطباعة الفعلية بتمر منه (نفس مسار الإنتاج بالظبط) - راجع تبويب "طابور الطباعة" لمتابعته.</p>
     <div class="tablewrap"><table>
-      <thead><tr><th>الاسم</th><th>النوع</th><th>الاتصال</th><th>الهدف</th><th>مفعّلة</th><th>افتراضية للنوع</th><th></th></tr></thead>
+      <thead><tr><th>الاسم</th><th>النوع</th><th>الاتصال</th><th>الهدف</th><th>عرض الطباعة (mm)</th><th>مفعّلة</th><th>افتراضية للنوع</th><th></th></tr></thead>
       <tbody id="printersBody"></tbody>
     </table></div>
   </div>
@@ -287,7 +287,7 @@ async function loadPrinters() {
   const branchId = currentBranchId();
   if (!branchId) return;
   const body = document.getElementById("printersBody");
-  body.innerHTML = `<tr><td colspan="7">...جاري التحميل</td></tr>`;
+  body.innerHTML = `<tr><td colspan="8">...جاري التحميل</td></tr>`;
   try {
     const printers = await api(`/api/printers?branchId=${branchId}`);
     body.innerHTML = printers.map((p) => `
@@ -296,6 +296,7 @@ async function loadPrinters() {
         <td>${PRINTER_TYPE_LABELS[p.printer_type] || p.printer_type}</td>
         <td>${p.connection_type}</td>
         <td>${p.connection_type === "USB" ? (p.os_printer_name || "—") : `${p.ip_address || "—"}:${p.port || "—"}`}</td>
+        <td><input type="number" data-id="${p.id}" class="inlineSelect pWidthInput" style="width:60px" value="${p.paper_width_mm}" min="30" max="120" /></td>
         <td><input type="checkbox" data-id="${p.id}" class="pEnabledCk" ${p.is_enabled ? "checked" : ""} /></td>
         <td><input type="checkbox" data-id="${p.id}" class="pDefaultCk" ${p.is_default_for_type ? "checked" : ""} /></td>
         <td>
@@ -303,8 +304,16 @@ async function loadPrinters() {
           <button class="smallbtn danger deletePrinterBtn" data-id="${p.id}">حذف</button>
         </td>
       </tr>
-    `).join("") || `<tr><td colspan="7">لسه مفيش طابعات مسجّلة لهذا الفرع</td></tr>`;
+    `).join("") || `<tr><td colspan="8">لسه مفيش طابعات مسجّلة لهذا الفرع</td></tr>`;
 
+    body.querySelectorAll(".pWidthInput").forEach((inp) => {
+      inp.onchange = async () => {
+        const val = Number(inp.value);
+        if (!val || val < 30 || val > 120) { alert("عرض غير منطقي"); loadPrinters(); return; }
+        try { await api(`/api/printers/${inp.dataset.id}`, { method: "PATCH", body: JSON.stringify({ paperWidthMm: val }) }); }
+        catch (e) { alert(e.message); loadPrinters(); }
+      };
+    });
     body.querySelectorAll(".pEnabledCk").forEach((ck) => {
       ck.onchange = async () => {
         try { await api(`/api/printers/${ck.dataset.id}`, { method: "PATCH", body: JSON.stringify({ isEnabled: ck.checked }) }); }
@@ -342,7 +351,7 @@ async function loadPrinters() {
       printers.map((p) => `<option value="${p.id}">${p.name} (${PRINTER_TYPE_LABELS[p.printer_type] || p.printer_type})</option>`).join("");
     if (current) sSel.value = current;
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="7">${e.message}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8">${e.message}</td></tr>`;
   }
 }
 
