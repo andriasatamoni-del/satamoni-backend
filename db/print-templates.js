@@ -26,24 +26,31 @@ function fmtDate(d) {
 
 // إطار الصفحة المشترك - 80mm عرض ورق حراري، RTL، خط واضح لماكينة حرارية (مفيش صور/تدرجات، أبيض/أسود بس)
 function page(title, bodyHtml, { paperWidthMm = 80 } = {}) {
+  // معظم طابعات 80mm الحرارية عرض الطباعة الفعلي عندها أقل من عرض الورق الفعلي (عادة ~72mm مش 80mm
+  // كاملة - هامش ميقدرش رأس الطباعة يوصله على كل جانب). محتوى بعرض 80mm كامل بيتقطع من الجنب فعليًا
+  // (اتأكد على XP-D200N). هامش 4mm كل جانب هنا (بدل 3mm) بيسيب مساحة محتوى آمنة أضيق من عرض الورق الحقيقي.
   return `<!DOCTYPE html>
 <html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>${esc(title)}</title>
 <style>
   @page { size: ${paperWidthMm}mm auto; margin: 0; }
   * { box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; width: ${paperWidthMm}mm; margin: 0; padding: 3mm 3mm; color: #000; }
-  h1 { font-size: 16px; margin: 0 0 2mm; text-align: center; }
-  h2 { font-size: 14px; margin: 0 0 1mm; }
+  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; width: ${paperWidthMm}mm; margin: 0; padding: 3mm 4mm; color: #000; }
+  h1 { font-size: 15px; margin: 0 0 2mm; text-align: center; }
+  h2 { font-size: 13px; margin: 0 0 1mm; }
   .center { text-align: center; }
-  .meta { font-size: 11px; color: #000; margin-bottom: 1mm; }
+  .meta { font-size: 10px; color: #000; margin-bottom: 1mm; word-wrap: break-word; overflow-wrap: break-word; }
   .sep { border-top: 1px dashed #000; margin: 2mm 0; }
-  table { width: 100%; border-collapse: collapse; }
-  td, th { padding: 1mm 0; font-size: 13px; text-align: right; vertical-align: top; }
-  .mods { font-size: 11px; color: #000; padding-right: 2mm; }
+  /* table-layout: fixed + word-wrap - من غير كده اسم صنف طويل من غير مسافات بيوسّع الجدول أعرض من
+     عرض الصفحة نفسه، وأي حاجة زايدة بتتقطع فعليًا عند حافة الطابعة بدل ما تلف سطر جديد */
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  td, th { padding: 1mm 0; font-size: 12px; text-align: right; vertical-align: top; word-wrap: break-word; overflow-wrap: break-word; }
+  td.qty, th.qty { width: 16mm; white-space: nowrap; }
+  td.price, th.price { width: 18mm; white-space: nowrap; }
+  .mods { font-size: 10px; color: #000; padding-right: 2mm; word-wrap: break-word; overflow-wrap: break-word; }
   .totals td { border-bottom: none; font-size: 13px; }
+  .totals td.val { width: 20mm; white-space: nowrap; }
   .totals tr.grand td { font-weight: bold; font-size: 15px; border-top: 1px solid #000; padding-top: 1mm; }
   .bold { font-weight: bold; }
-  .qty { white-space: nowrap; }
 </style></head><body>${bodyHtml}</body></html>`;
 }
 
@@ -82,7 +89,7 @@ function itemsTableWithPrice(items) {
       .join("، ");
     return `<tr>
         <td>${esc(name)}${variant} × ${it.quantity}${mods ? `<div class="mods">${mods}</div>` : ""}${comboComponentsRows(it)}</td>
-        <td>${money(it.line_total)}</td>
+        <td class="price">${money(it.line_total)}</td>
       </tr>`;
   }).join("");
   return `<table>${rows}</table>`;
@@ -90,12 +97,12 @@ function itemsTableWithPrice(items) {
 
 function totalsBlock(order) {
   const rows = [];
-  rows.push(`<tr><td>الإجمالي الفرعي</td><td>${money(order.subtotal)}</td></tr>`);
-  if (Number(order.delivery_fee) > 0) rows.push(`<tr><td>رسوم التوصيل</td><td>${money(order.delivery_fee)}</td></tr>`);
-  if (Number(order.discount) > 0) rows.push(`<tr><td>الخصم</td><td>-${money(order.discount)}</td></tr>`);
-  if (Number(order.loyalty_redeem_value) > 0) rows.push(`<tr><td>نقاط ولاء مستخدمة</td><td>-${money(order.loyalty_redeem_value)}</td></tr>`);
-  if (Number(order.vat_amount) > 0) rows.push(`<tr><td>منها ضريبة قيمة مضافة</td><td>${money(order.vat_amount)}</td></tr>`);
-  rows.push(`<tr class="grand"><td>الإجمالي</td><td>${money(order.total)}</td></tr>`);
+  rows.push(`<tr><td>الإجمالي الفرعي</td><td class="val">${money(order.subtotal)}</td></tr>`);
+  if (Number(order.delivery_fee) > 0) rows.push(`<tr><td>رسوم التوصيل</td><td class="val">${money(order.delivery_fee)}</td></tr>`);
+  if (Number(order.discount) > 0) rows.push(`<tr><td>الخصم</td><td class="val">-${money(order.discount)}</td></tr>`);
+  if (Number(order.loyalty_redeem_value) > 0) rows.push(`<tr><td>نقاط ولاء مستخدمة</td><td class="val">-${money(order.loyalty_redeem_value)}</td></tr>`);
+  if (Number(order.vat_amount) > 0) rows.push(`<tr><td>منها ضريبة قيمة مضافة</td><td class="val">${money(order.vat_amount)}</td></tr>`);
+  rows.push(`<tr class="grand"><td>الإجمالي</td><td class="val">${money(order.total)}</td></tr>`);
   return `<table class="totals">${rows.join("")}</table>`;
 }
 
