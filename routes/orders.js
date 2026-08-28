@@ -224,6 +224,16 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       inventoryOverrideApprover = overrideApprover.rows[0];
     }
 
+    // المرحلة 8.7: paymentMethodId وهمي (مش موجود في payment_methods) كان بيوصل لحد INSERT ويرمي خطأ
+    // FK خام (23503) كـ500 بدل رسالة واضحة - اتكشف بهجوم عدائي حي على /api/orders. نفس نمط التحقق من
+    // discountApprovedBy/inventoryOverrideApprovedBy فوق بالظبط: نتأكد هنا قبل أي حاجة تانية
+    if (paymentMethodId) {
+      const pm = await client.query("SELECT id FROM payment_methods WHERE id = $1", [paymentMethodId]);
+      if (pm.rows.length === 0) {
+        return res.status(400).json({ error: "طريقة الدفع غير موجودة" });
+      }
+    }
+
     await client.query("BEGIN");
 
     // خصم نقاط الولاء - قيمته بالجنيه بتتجمّد هنا وقت الاستخدام (نقاط × السعر الحالي)، منفصل عن discount
@@ -1333,6 +1343,16 @@ router.put(
       const finalDeliveryAreaId = deliveryAreaId !== undefined ? deliveryAreaId : order.delivery_area_id;
       const finalPaymentMethodId = paymentMethodId !== undefined ? paymentMethodId : order.payment_method_id;
       const finalTableNumber = tableNumber !== undefined ? tableNumber : order.table_number;
+
+      // المرحلة 8.7: نفس التحقق من POST / - paymentMethodId وهمي كان بيوصل لـUPDATE ويرمي خطأ FK خام
+      // (23503) كـ500 بدل 400 واضح
+      if (finalPaymentMethodId) {
+        const pm = await client.query("SELECT id FROM payment_methods WHERE id = $1", [finalPaymentMethodId]);
+        if (pm.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: "طريقة الدفع غير موجودة" });
+        }
+      }
 
       // إعادة حساب خصم نقاط الولاء على رصيد العميل الحالي - بعد ما رجّعنا صافي أثر الطلب القديم فوق،
       // الرصيد ده بقى معبّر عن الحقيقة (مش شايل رصيد الطلب اللي بنعدّله ده تحديدًا)
