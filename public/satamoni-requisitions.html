@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — طلبيات الفرع</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 980px; margin: 0 auto; padding: 20px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+  h2 { font-size: 14px; color: var(--faint); margin: 18px 0 8px; }
+
+  #tabs { display: flex; gap: 6px; margin: 16px 0; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 130px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; font-family: inherit; }
+  .formbox label.field-label { flex: 0; white-space: nowrap; font-size: 12px; color: var(--faint); }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .formbox button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+  .formbox button:disabled { opacity: .5; cursor: not-allowed; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+  .hint { color: var(--faint); font-size: 12px; margin-bottom: 8px; }
+
+  .pickrow { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .pickrow select { flex: 2; }
+  .pickrow input { flex: 1; }
+  .pickrow button { flex: 0; padding: 8px 10px; border: 1px solid var(--line); background: transparent; color: #F08A83; border-radius: 6px; cursor: pointer; }
+  .addrow-link { background: none; border: 1px dashed var(--line); color: var(--gold-bright); cursor: pointer; font-size: 12px; padding: 8px; border-radius: 6px; width: 100%; margin-bottom: 8px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; margin-left: 10px; }
+  .linkbtn.danger { color: #F08A83; }
+
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .badge.pending, .badge.DRAFT { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .badge.SUBMITTED { background: rgba(203,161,53,.25); color: var(--gold-bright); }
+  .badge.APPROVED, .badge.PREPARING, .badge.READY { background: rgba(63,163,77,.12); color: var(--green); }
+  .badge.IN_TRANSIT { background: rgba(63,163,77,.22); color: var(--green); }
+  .badge.RECEIVED, .badge.fulfilled { background: rgba(63,163,77,.15); color: var(--green); }
+  .badge.REJECTED, .badge.cancelled { background: rgba(194,42,36,.15); color: #F08A83; }
+
+  .expandbox { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 6px; }
+  .pager { display: flex; align-items: center; gap: 10px; justify-content: center; margin: 12px 0; font-size: 12px; color: var(--faint); }
+  .pager button { padding: 6px 14px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .pager button:disabled { opacity: .4; cursor: not-allowed; }
+
+  #bootStatus { max-width: 980px; margin: 20px auto; padding: 0 16px; }
+  #bootStatus .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; text-align: center; }
+  #bootStatus .box.error { border-color: var(--red); }
+  #bootStatus button { margin-top: 10px; padding: 8px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">📦 ساتاموني — طلبيات الفرع</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>📦 تسجيل الدخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="suggest">اقتراح طلبية</div>
+    <div class="tabbtn" data-tab="orders">طلبياتي</div>
+    <div class="tabbtn" data-tab="receiving">الاستلام</div>
+    <div class="tabbtn" data-tab="stock">المخزون</div>
+  </div>
+
+  <!-- اقتراح طلبية جديدة -->
+  <div class="panel active" id="panel-suggest">
+    <h1>اقتراح الطلبية</h1>
+    <div class="formbox">
+      <div class="hint">الاقتراح مبني على متوسط استهلاك نفس يوم الأسبوع، وبيتخصم منه أي كمية لسه في طريقها ليك (طلبيات معتمدة لسه ماوصلتش + تحويلات في الطريق فعليًا) - عشان مايتكررش طلب حاجة جاية أصلًا.</div>
+      <div class="row">
+        <label class="field-label">تاريخ الطلبية:</label>
+        <input id="suggestDate" type="date" />
+        <label class="field-label">تاريخ التزويد الجاي (اختياري):</label>
+        <input id="suggestNextReplenishment" type="date" />
+        <button id="suggestCalcBtn">احسب الاقتراح</button>
+      </div>
+      <div class="err" id="suggestErr"></div>
+    </div>
+
+    <div id="suggestResultBox" style="display:none">
+      <h2>الأصناف المقترحة (عدّل أي كمية قبل الحفظ)</h2>
+      <table>
+        <thead><tr><th>الصنف</th><th>الرصيد الحالي</th><th>متوسط الاستهلاك</th><th>في الطريق/معلّق</th><th>الكمية المقترحة</th></tr></thead>
+        <tbody id="suggestBody"></tbody>
+      </table>
+
+      <h2 style="margin-top:16px">أصناف إضافية (يدوي)</h2>
+      <div id="manualRows"></div>
+      <button class="addrow-link" id="addManualRow">+ صنف يدوي</button>
+
+      <div class="formbox" style="margin-top:12px">
+        <div class="row"><textarea id="suggestNotes" placeholder="ملاحظات (اختياري)" rows="2"></textarea></div>
+        <button id="suggestSaveDraft">حفظ كمسودة</button>
+        <div class="err" id="suggestSaveErr"></div>
+        <div class="ok" id="suggestSaveOk"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- طلبياتي -->
+  <div class="panel" id="panel-orders">
+    <h1>طلبياتي</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الحالة:</label>
+        <select id="ordersStatusFilter">
+          <option value="">الكل</option>
+          <option value="DRAFT">مسودة</option>
+          <option value="SUBMITTED">مُقدَّمة</option>
+          <option value="APPROVED">معتمدة</option>
+          <option value="REJECTED">مرفوضة</option>
+          <option value="PREPARING">بيتجهّز</option>
+          <option value="READY">جاهزة للتحويل</option>
+          <option value="IN_TRANSIT">في الطريق</option>
+          <option value="RECEIVED">اتستلمت</option>
+          <option value="cancelled">ملغية</option>
+        </select>
+        <label class="field-label">من:</label>
+        <input id="ordersFrom" type="date" />
+        <label class="field-label">إلى:</label>
+        <input id="ordersTo" type="date" />
+        <button id="ordersFilterBtn">فلترة</button>
+      </div>
+    </div>
+
+    <table><thead><tr><th>التاريخ</th><th>الأصناف</th><th>الحالة</th><th></th></tr></thead><tbody id="myOrdersBody"></tbody></table>
+    <div class="pager">
+      <button id="ordersPrevBtn">◀ السابق</button>
+      <span id="ordersPageInfo"></span>
+      <button id="ordersNextBtn">التالي ▶</button>
+    </div>
+
+    <div id="orderEditBox" style="display:none">
+      <h2>تعديل الطلبية #<span id="editOrderId"></span> (مسودة)</h2>
+      <div class="formbox">
+        <div id="editRows"></div>
+        <button class="addrow-link" id="addEditRow">+ صنف</button>
+        <button id="editSaveBtn">حفظ التعديلات</button>
+        <button class="secondary" id="editCancelBtn">إلغاء التعديل</button>
+        <div class="err" id="editErr"></div>
+        <div class="ok" id="editOk"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- الاستلام -->
+  <div class="panel" id="panel-receiving">
+    <h1>تحويلات في الطريق ليك</h1>
+    <div id="inTransitList"></div>
+
+    <h1 style="margin-top:28px">استلامات حديثة (للإبلاغ عن فرق)</h1>
+    <div id="recentReceivedList"></div>
+  </div>
+
+  <!-- المخزون -->
+  <div class="panel" id="panel-stock">
+    <h1>مخزون الفرع</h1>
+    <table><thead><tr><th>الصنف</th><th>الرصيد</th></tr></thead><tbody id="stockBody"></tbody></table>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
+<div id="bootStatus" style="display:none"></div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "cashier"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+if (auth.user && auth.user.role === "cashier" && !location.search.includes("stay")) { /* الكاشير مسموحله يستخدم الصفحة دي كمان - مفيش تحويل تلقائي */ }
+if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
+
+const STATUS_LABELS = {
+  pending: "معلّقة (نظام قديم)", fulfilled: "اتنفذت (نظام قديم)", cancelled: "ملغية",
+  DRAFT: "مسودة", SUBMITTED: "مُقدَّمة", APPROVED: "معتمدة", REJECTED: "مرفوضة",
+  PREPARING: "بيتجهّز", READY: "جاهزة للتحويل", DISPATCHED: "اتصدرت", IN_TRANSIT: "في الطريق", RECEIVED: "اتستلمت",
+};
+const DISCREPANCY_TYPE_LABELS = {
+  SHORTAGE: "نقص", DAMAGED: "تلف", WRONG_ITEM: "صنف غلط", WRONG_QUANTITY: "كمية غلط", EXPIRED: "منتهي الصلاحية", OTHER: "سبب تاني",
+};
+
+let inventoryItems = [];
+let ordersPage = 1;
+const ORDERS_PAGE_SIZE = 10;
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    if (!allowedRoles.includes(data.user.role)) {
+      setSession(data.token, data.user);
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    setSession(data.token, data.user);
+    hideLogin();
+    bootSafely();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+async function bootSafely() {
+  const statusBox = document.getElementById("bootStatus");
+  const mainBox = document.getElementById("main");
+  statusBox.style.display = "block";
+  mainBox.style.display = "none";
+  statusBox.innerHTML = `<div class="box">جاري تحميل البيانات...</div>`;
+  try {
+    await boot();
+    statusBox.style.display = "none";
+  } catch (e) {
+    mainBox.style.display = "none";
+    const isNetworkFailure = e instanceof TypeError;
+    const message = isNetworkFailure
+      ? "تعذّر الاتصال بالسيرفر - تأكد من الإنترنت أو حاول تاني بعد شوية"
+      : `حصل خطأ أثناء تحميل البيانات: ${e.message}`;
+    statusBox.innerHTML = `
+      <div class="box error">
+        <div>${message}</div>
+        <button id="bootRetryBtn">إعادة المحاولة</button>
+      </div>`;
+    document.getElementById("bootRetryBtn").onclick = bootSafely;
+    console.error("boot() failed:", e);
+  }
+}
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    if (btn.dataset.tab === "receiving") loadReceivingTab();
+    if (btn.dataset.tab === "stock") loadStockTab();
+  };
+});
+
+function itemOptions() {
+  return inventoryItems.map(i => `<option value="${i.id}">${i.name} (${i.unit})</option>`).join("");
+}
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  if (!auth.user.branchId) {
+    document.getElementById("bootStatus").style.display = "block";
+    document.getElementById("bootStatus").innerHTML = `<div class="box">الصفحة دي لمستخدمين تابعين لفرع - حسابك مش مربوط بفرع.</div>`;
+    document.getElementById("main").style.display = "none";
+    return;
+  }
+
+  inventoryItems = await api("/api/inventory/items");
+  document.getElementById("suggestDate").value = new Date().toISOString().slice(0, 10);
+  addManualRow();
+
+  await loadMyOrders();
+}
+
+// ---------------- اقتراح الطلبية ----------------
+let lastSuggestions = [];
+
+document.getElementById("suggestCalcBtn").onclick = async () => {
+  const errBox = document.getElementById("suggestErr");
+  errBox.textContent = "";
+  const targetDate = document.getElementById("suggestDate").value;
+  const nextReplenishmentDate = document.getElementById("suggestNextReplenishment").value;
+  if (!targetDate) { errBox.textContent = "لازم تحدد تاريخ الطلبية"; return; }
+  try {
+    const qs = new URLSearchParams({ branchId: auth.user.branchId, targetDate });
+    if (nextReplenishmentDate) qs.set("nextReplenishmentDate", nextReplenishmentDate);
+    const res = await api(`/api/kitchen-orders/suggested?${qs.toString()}`);
+    lastSuggestions = res.suggestions;
+    document.getElementById("suggestResultBox").style.display = "block";
+    document.getElementById("suggestBody").innerHTML = lastSuggestions.map(s => `
+      <tr data-suggestrow="${s.inventoryItemId}">
+        <td>${s.name}</td>
+        <td>${Number(s.currentStock).toFixed(2)} ${s.unit}</td>
+        <td>${Number(s.avgWeekdayConsumption).toFixed(2)}</td>
+        <td>${(Number(s.pendingPipelineQuantity || 0) + Number(s.inTransitQuantity || 0)).toFixed(2)}</td>
+        <td><input type="number" min="0" step="any" class="suggest-qty" data-item="${s.inventoryItemId}" value="${Number(s.suggestedQuantity).toFixed(2)}" style="width:100px" /></td>
+      </tr>
+    `).join("") || `<tr><td colspan="5">مفيش أصناف ليها حدود مخزون مضبوطة (min/max/reorder point) في الفرع ده</td></tr>`;
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+function addManualRow() {
+  const wrap = document.getElementById("manualRows");
+  const row = document.createElement("div");
+  row.className = "pickrow";
+  row.innerHTML = `
+    <select class="manual-item">${itemOptions()}</select>
+    <input class="manual-qty" type="number" min="0" step="any" placeholder="الكمية" />
+    <button type="button" class="manual-remove">×</button>
+  `;
+  row.querySelector(".manual-remove").onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+document.getElementById("addManualRow").onclick = addManualRow;
+
+document.getElementById("suggestSaveDraft").onclick = async () => {
+  const errBox = document.getElementById("suggestSaveErr");
+  const okBox = document.getElementById("suggestSaveOk");
+  errBox.textContent = ""; okBox.textContent = "";
+
+  const items = [];
+  document.querySelectorAll(".suggest-qty").forEach(inp => {
+    const qty = Number(inp.value);
+    if (qty > 0) items.push({ inventoryItemId: Number(inp.dataset.item), quantityRequested: qty, quantitySuggested: qty });
+  });
+  document.querySelectorAll("#manualRows .pickrow").forEach(row => {
+    const qty = Number(row.querySelector(".manual-qty").value);
+    const itemId = Number(row.querySelector(".manual-item").value);
+    if (qty > 0 && !items.some(it => it.inventoryItemId === itemId)) {
+      items.push({ inventoryItemId: itemId, quantityRequested: qty });
+    }
+  });
+  if (items.length === 0) { errBox.textContent = "لازم كمية أكبر من صفر لصنف واحد على الأقل"; return; }
+
+  try {
+    const created = await api("/api/kitchen-orders", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId: auth.user.branchId, status: "DRAFT", isAutoSuggested: lastSuggestions.length > 0,
+        items, notes: document.getElementById("suggestNotes").value.trim() || null,
+      }),
+    });
+    okBox.textContent = `اتحفظت الطلبية #${created.id} كمسودة - راجعها وقدّمها من تاب "طلبياتي"`;
+    document.getElementById("suggestResultBox").style.display = "none";
+    document.getElementById("suggestNotes").value = "";
+    document.getElementById("manualRows").innerHTML = "";
+    addManualRow();
+    await loadMyOrders();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- طلبياتي ----------------
+document.getElementById("ordersFilterBtn").onclick = () => { ordersPage = 1; loadMyOrders(); };
+document.getElementById("ordersPrevBtn").onclick = () => { if (ordersPage > 1) { ordersPage--; loadMyOrders(); } };
+document.getElementById("ordersNextBtn").onclick = () => { ordersPage++; loadMyOrders(); };
+
+async function loadMyOrders() {
+  const status = document.getElementById("ordersStatusFilter").value;
+  const from = document.getElementById("ordersFrom").value;
+  const to = document.getElementById("ordersTo").value;
+  const qs = new URLSearchParams({ branchId: auth.user.branchId, page: ordersPage, limit: ORDERS_PAGE_SIZE });
+  if (status) qs.set("status", status);
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+
+  const res = await api(`/api/kitchen-orders?${qs.toString()}`);
+  const orders = res.data;
+  document.getElementById("myOrdersBody").innerHTML = orders.map(o => {
+    const canEdit = o.status === "DRAFT";
+    const canSubmit = o.status === "DRAFT";
+    const canCancel = ["DRAFT", "SUBMITTED", "APPROVED", "pending"].includes(o.status);
+    return `
+    <tr>
+      <td>${String(o.business_date).slice(0, 10)}</td>
+      <td>${o.items.map(it => `${it.name} × ${it.quantity_requested}`).join("، ")}</td>
+      <td><span class="badge ${o.status}">${STATUS_LABELS[o.status] || o.status}</span></td>
+      <td>
+        ${canEdit ? `<button class="linkbtn" data-edit="${o.id}">تعديل</button>` : ""}
+        ${canSubmit ? `<button class="linkbtn" data-submit="${o.id}">تقديم</button>` : ""}
+        ${canCancel ? `<button class="linkbtn danger" data-cancel="${o.id}" data-legacy="${o.status === "pending"}">إلغاء</button>` : ""}
+      </td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="4">مفيش طلبيات مطابقة</td></tr>`;
+
+  document.getElementById("ordersPageInfo").textContent = `صفحة ${res.page} من ${res.totalPages} (إجمالي ${res.total})`;
+  document.getElementById("ordersPrevBtn").disabled = res.page <= 1;
+  document.getElementById("ordersNextBtn").disabled = res.page >= res.totalPages;
+
+  document.querySelectorAll("[data-submit]").forEach(btn => {
+    btn.onclick = async () => {
+      try { await api(`/api/kitchen-orders/${btn.dataset.submit}/submit`, { method: "POST" }); await loadMyOrders(); }
+      catch (e) { alert(e.message); }
+    };
+  });
+  document.querySelectorAll("[data-cancel]").forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm("متأكد إنك عايز تلغي الطلبية دي؟")) return;
+      try {
+        if (btn.dataset.legacy === "true") {
+          await api(`/api/kitchen-orders/${btn.dataset.cancel}`, { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) });
+        } else {
+          await api(`/api/kitchen-orders/${btn.dataset.cancel}/cancel`, { method: "POST", body: JSON.stringify({ reason: "اتلغت من الفرع" }) });
+        }
+        await loadMyOrders();
+      } catch (e) { alert(e.message); }
+    };
+  });
+  document.querySelectorAll("[data-edit]").forEach(btn => {
+    btn.onclick = () => openEditOrder(orders.find(o => o.id === Number(btn.dataset.edit)));
+  });
+}
+
+function openEditOrder(order) {
+  document.getElementById("orderEditBox").style.display = "block";
+  document.getElementById("editOrderId").textContent = order.id;
+  document.getElementById("editErr").textContent = "";
+  document.getElementById("editOk").textContent = "";
+  const wrap = document.getElementById("editRows");
+  wrap.innerHTML = "";
+  order.items.forEach(it => addEditRow(it.inventory_item_id, it.quantity_requested));
+  if (order.items.length === 0) addEditRow();
+  document.getElementById("orderEditBox").dataset.orderid = order.id;
+  document.getElementById("orderEditBox").scrollIntoView({ behavior: "smooth" });
+}
+function addEditRow(itemId, qty) {
+  const wrap = document.getElementById("editRows");
+  const row = document.createElement("div");
+  row.className = "pickrow";
+  row.innerHTML = `
+    <select class="edit-item">${itemOptions()}</select>
+    <input class="edit-qty" type="number" min="0" step="any" placeholder="الكمية" value="${qty || ""}" />
+    <button type="button" class="edit-remove">×</button>
+  `;
+  if (itemId) row.querySelector(".edit-item").value = itemId;
+  row.querySelector(".edit-remove").onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+document.getElementById("addEditRow").onclick = () => addEditRow();
+document.getElementById("editCancelBtn").onclick = () => { document.getElementById("orderEditBox").style.display = "none"; };
+document.getElementById("editSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("editErr");
+  const okBox = document.getElementById("editOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const orderId = document.getElementById("orderEditBox").dataset.orderid;
+  const items = [...document.querySelectorAll("#editRows .pickrow")].map(row => ({
+    inventoryItemId: Number(row.querySelector(".edit-item").value),
+    quantityRequested: Number(row.querySelector(".edit-qty").value),
+  })).filter(it => it.quantityRequested > 0);
+  if (items.length === 0) { errBox.textContent = "لازم صنف بكمية أكبر من صفر على الأقل"; return; }
+  try {
+    await api(`/api/kitchen-orders/${orderId}/items`, { method: "PATCH", body: JSON.stringify({ items }) });
+    okBox.textContent = "اتحفظت التعديلات";
+    await loadMyOrders();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- الاستلام ----------------
+async function loadReceivingTab() {
+  const transfers = await api(`/api/kitchen-transfers?branchId=${auth.user.branchId}`);
+  const inTransit = transfers.filter(t => t.status === "in_transit");
+  const recentReceived = transfers.filter(t => ["received", "partially_received"].includes(t.status)).slice(0, 10);
+
+  const inTransitBox = document.getElementById("inTransitList");
+  inTransitBox.innerHTML = inTransit.length ? inTransit.map(t => `
+    <div class="formbox" data-transfer="${t.id}">
+      <div><b>تحويل #${t.id}</b> — ${String(t.business_date).slice(0, 10)}</div>
+      <div style="font-size:12px;color:var(--faint);margin:6px 0">${t.items.map(it => `${it.name}: ${it.quantity} ${it.unit}`).join("، ")}</div>
+      <div class="hint">الكميات هنا هي المطلوبة أصلًا - عدّها فعليًا وقت الاستلام ودخّل الكمية الحقيقية اللي وصلتك.</div>
+      <button class="linkbtn" data-startreceive="${t.id}">استلام</button>
+      <div class="expandbox" style="display:none" data-receivebox="${t.id}"></div>
+    </div>
+  `).join("") : `<div style="color:var(--faint);font-size:13px">مفيش تحويلات في الطريق دلوقتي</div>`;
+
+  document.querySelectorAll("[data-startreceive]").forEach(btn => {
+    btn.onclick = () => {
+      const transferId = btn.dataset.startreceive;
+      const transfer = inTransit.find(t => t.id === Number(transferId));
+      const box = document.querySelector(`[data-receivebox="${transferId}"]`);
+      box.style.display = "block";
+      box.innerHTML = transfer.items.map(it => `
+        <div class="pickrow">
+          <span style="flex:2">${it.name} (${it.unit})</span>
+          <input class="receive-qty" type="number" min="0" step="any" value="${it.quantity}" data-item="${it.inventory_item_id}" />
+        </div>
+      `).join("") + `<button data-confirmreceive="${transferId}">تأكيد الاستلام</button><div class="err" data-receiveerr="${transferId}"></div>`;
+
+      box.querySelector(`[data-confirmreceive="${transferId}"]`).onclick = async () => {
+        const errBox = box.querySelector(`[data-receiveerr="${transferId}"]`);
+        errBox.textContent = "";
+        const items = [...box.querySelectorAll(".receive-qty")].map(inp => ({
+          inventoryItemId: Number(inp.dataset.item), quantityReceived: Number(inp.value),
+        }));
+        try {
+          await api(`/api/kitchen-transfers/${transferId}/receive`, { method: "POST", body: JSON.stringify({ items }) });
+          await loadReceivingTab();
+        } catch (e) { errBox.textContent = e.message; }
+      };
+    };
+  });
+
+  const recentBox = document.getElementById("recentReceivedList");
+  recentBox.innerHTML = recentReceived.length ? recentReceived.map(t => `
+    <div class="formbox" data-recvtransfer="${t.id}">
+      <div><b>تحويل #${t.id}</b> — ${String(t.business_date).slice(0, 10)} — <span class="badge ${t.status === "received" ? "RECEIVED" : "IN_TRANSIT"}">${t.status === "received" ? "اتستلم كامل" : "اتستلم جزئي"}</span></div>
+      <div style="font-size:12px;color:var(--faint);margin:6px 0">${t.items.map(it => `${it.name}`).join("، ")}</div>
+      <button class="linkbtn" data-startdiscrepancy="${t.id}">الإبلاغ عن فرق</button>
+      <button class="linkbtn" data-viewdiscrepancies="${t.id}">عرض الفروقات المسجّلة</button>
+      <div class="expandbox" style="display:none" data-discrepancybox="${t.id}"></div>
+      <div class="expandbox" style="display:none" data-discrepancylistbox="${t.id}"></div>
+    </div>
+  `).join("") : `<div style="color:var(--faint);font-size:13px">مفيش استلامات حديثة</div>`;
+
+  document.querySelectorAll("[data-startdiscrepancy]").forEach(btn => {
+    btn.onclick = () => {
+      const transferId = btn.dataset.startdiscrepancy;
+      const transfer = recentReceived.find(t => t.id === Number(transferId));
+      const box = document.querySelector(`[data-discrepancybox="${transferId}"]`);
+      box.style.display = box.style.display === "none" ? "block" : "none";
+      if (box.style.display === "none") return;
+      const itemOpts = transfer.items.map(it => `<option value="${it.inventory_item_id}">${it.name}</option>`).join("");
+      box.innerHTML = `
+        <div class="pickrow">
+          <select class="disc-item">${itemOpts}</select>
+          <select class="disc-type">
+            ${Object.entries(DISCREPANCY_TYPE_LABELS).map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}
+          </select>
+          <input class="disc-qty" type="number" min="0" step="any" placeholder="الكمية" />
+        </div>
+        <div class="row"><input class="disc-notes" placeholder="ملاحظات (اختياري)" /></div>
+        <button data-confirmdiscrepancy="${transferId}">تسجيل الفرق</button>
+        <div class="err" data-discrepancyerr="${transferId}"></div>
+        <div class="ok" data-discrepancyok="${transferId}"></div>
+      `;
+      box.querySelector(`[data-confirmdiscrepancy="${transferId}"]`).onclick = async () => {
+        const errBox = box.querySelector(`[data-discrepancyerr="${transferId}"]`);
+        const okBox = box.querySelector(`[data-discrepancyok="${transferId}"]`);
+        errBox.textContent = ""; okBox.textContent = "";
+        const inventoryItemId = Number(box.querySelector(".disc-item").value);
+        const discrepancyType = box.querySelector(".disc-type").value;
+        const quantity = Number(box.querySelector(".disc-qty").value);
+        const notes = box.querySelector(".disc-notes").value.trim();
+        if (!quantity || quantity <= 0) { errBox.textContent = "لازم كمية أكبر من صفر"; return; }
+        try {
+          await api(`/api/kitchen-transfers/${transferId}/discrepancies`, {
+            method: "POST",
+            body: JSON.stringify({ items: [{ inventoryItemId, discrepancyType, quantity, notes: notes || null }] }),
+          });
+          okBox.textContent = "اتسجّل الفرق - محتاج مراجعة قبل ما يترحّل فعليًا";
+        } catch (e) { errBox.textContent = e.message; }
+      };
+    };
+  });
+
+  document.querySelectorAll("[data-viewdiscrepancies]").forEach(btn => {
+    btn.onclick = async () => {
+      const transferId = btn.dataset.viewdiscrepancies;
+      const box = document.querySelector(`[data-discrepancylistbox="${transferId}"]`);
+      box.style.display = box.style.display === "none" ? "block" : "none";
+      if (box.style.display === "none") return;
+      const discs = await api(`/api/kitchen-transfers/${transferId}/discrepancies`);
+      const statusLabels = { OPEN: "مفتوح", ACKNOWLEDGED: "تحت المراجعة", RESOLVED: "اتراجع", REJECTED: "اترفض" };
+      box.innerHTML = discs.length ? `<table><thead><tr><th>الصنف</th><th>النوع</th><th>الكمية</th><th>الحالة</th></tr></thead><tbody>${
+        discs.map(d => `<tr><td>${d.item_name}</td><td>${DISCREPANCY_TYPE_LABELS[d.discrepancy_type] || d.discrepancy_type}</td><td>${d.quantity}</td><td>${statusLabels[d.status] || d.status}</td></tr>`).join("")
+      }</tbody></table>` : `<div style="color:var(--faint);font-size:12px">مفيش فروقات مسجّلة على التحويل ده</div>`;
+    };
+  });
+}
+
+// ---------------- المخزون ----------------
+async function loadStockTab() {
+  const stock = await api(`/api/inventory/stock?branchId=${auth.user.branchId}`);
+  document.getElementById("stockBody").innerHTML = stock.map(s => `
+    <tr><td>${s.name}</td><td>${s.quantity} ${s.unit}</td></tr>
+  `).join("") || `<tr><td colspan="2">مفيش رصيد مسجل لسه</td></tr>`;
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) bootSafely();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>
