@@ -50,6 +50,17 @@ async function traceBackward(client, batchId, depth = 0, visited = new Set()) {
         [prodRes.rows[0].production_order_id]
       );
       node.origin = { type: "PRODUCTION", ...prodRes.rows[0], inputs: inputsRes.rows };
+      // STEP L-audit fix: أمر تصنيع بمصادر متعددة (مثلًا دفعة X استهلكت من دفعتين خام A وB) كان بيوقف
+      // التتبّع هنا - inputsRes.rows بترجع كل المدخلات صح على المستوى ده، بس مفيش recursion لأي مستوى
+      // أعمق منها غير عن طريق batch.parent_batch_id (عمود قيمة واحدة بس، وproduction.js أصلًا بيملاه
+      // بس لما يكون فيه مصدر واحد لا لبس فيه - في حالة تعدد المصادر بيفضل NULL). فكانت أي دفعة متعددة
+      // المصادر بتقطع السلسلة هنا تمامًا (A وB مايتتبّعوش لأصلهم الحقيقي - GRN/مورد). الحل: نتتبّع كل
+      // مدخل من inputsRes.rows رجوعًا لأصله بنفس الدالة (recursive)، مش بس نعرضهم في المستوى الحالي.
+      for (const input of node.origin.inputs) {
+        if (input.batch_id) {
+          input.trace = await traceBackward(client, input.batch_id, depth + 1, visited);
+        }
+      }
     }
   }
 
@@ -85,7 +96,9 @@ async function traceBackward(client, batchId, depth = 0, visited = new Set()) {
     if (node.transferredIn.source_batch_id) {
       node.parent = await traceBackward(client, node.transferredIn.source_batch_id, depth + 1, visited);
     }
-  } else if (batch.parent_batch_id) {
+  } else if (batch.parent_batch_id && !(node.origin && node.origin.type === "PRODUCTION")) {
+    // لو أصل الدفعة أمر تصنيع، السطر فوق (تتبّع كل input.batch_id) أصلًا بيغطي الحالة دي بالكامل - سواء
+    // مصدر واحد أو أكتر - فتتبّع batch.parent_batch_id تاني هنا هيكرر نفس السلسلة من غير أي فايدة إضافية
     node.parent = await traceBackward(client, batch.parent_batch_id, depth + 1, visited);
   }
 

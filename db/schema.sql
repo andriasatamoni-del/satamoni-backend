@@ -903,6 +903,7 @@ CREATE TABLE kitchen_order_items (
   inventory_item_id   INTEGER REFERENCES inventory_items(id),
   quantity_requested  NUMERIC NOT NULL
 );
+CREATE INDEX idx_kitchen_order_items_order ON kitchen_order_items(kitchen_order_id);
 
 CREATE TABLE kitchen_transfers (
   id               SERIAL PRIMARY KEY,
@@ -941,6 +942,7 @@ CREATE TABLE kitchen_transfer_items (
   quantity_sent         NUMERIC,                 -- الكمية اللي فعلًا خرجت من فرع المصدر (وقت issue)
   quantity_received     NUMERIC                  -- الكمية اللي فعلًا وصلت الفرع المستلم (وقت receive) - ممكن تقل عن المُرسل
 );
+CREATE INDEX idx_kitchen_transfer_items_transfer ON kitchen_transfer_items(kitchen_transfer_id);
 
 CREATE TABLE branch_inventory_stock (
   id                SERIAL PRIMARY KEY,

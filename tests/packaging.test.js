@@ -3,8 +3,8 @@
 // مش محددة) وتنتج دفعة معبأة جديدة مربوطة بيها كـparent_batch_id مباشر (مفيش غموض تعدد مصادر).
 const { app, request, pool, seedUser, login, authed } = require("./helpers");
 
-let branchId;
-let adminToken, managerToken;
+let branchId, otherBranchId;
+let adminToken, managerToken, otherManagerToken;
 let bulkItemId, packagedItemId;
 let bulkBatchId;
 
@@ -21,10 +21,14 @@ async function createApprovedPackagingOrder(extra = {}) {
 beforeAll(async () => {
   const b1 = await pool.query("INSERT INTO branches (name) VALUES ('فرع تعبئة-جست') RETURNING id");
   branchId = b1.rows[0].id;
+  const b2 = await pool.query("INSERT INTO branches (name) VALUES ('فرع تاني تعبئة-جست') RETURNING id");
+  otherBranchId = b2.rows[0].id;
   await seedUser({ name: "أدمن-تعبئة", email: "admin-packaging@jest.test", role: "admin" });
   await seedUser({ branchId, name: "مدير فرع-تعبئة", email: "manager-packaging@jest.test", role: "branch_manager" });
+  await seedUser({ branchId: otherBranchId, name: "مدير فرع تاني-تعبئة", email: "othermanager-packaging@jest.test", role: "branch_manager" });
   adminToken = await login("admin-packaging@jest.test");
   managerToken = await login("manager-packaging@jest.test");
+  otherManagerToken = await login("othermanager-packaging@jest.test");
 
   const bulk = await pool.query(
     "INSERT INTO inventory_items (name, unit, unit_cost, item_type, batch_prefix) VALUES ('صوص سائب-تعبئة-جست', 'KG', 10, 'manufactured', 'SCE') RETURNING id"
@@ -137,5 +141,45 @@ describe("حراسات وصلاحيات", () => {
     });
     const res = await request(app).post(`/api/packaging/${created.body.id}/approve`).set(authed(managerToken));
     expect(res.status).toBe(403);
+  });
+});
+
+// STEP L-audit (بند 13 - عزل الفروع "حرج"): مفيش أي اختبار عزل فروع كان موجود لأوامر التعبئة قبل كده -
+// الكود فيه assertOwnBranch على كل نقطة (POST /، GET /:id، /start، /complete، /cancel) بس من غير اختبار
+// فعلي يثبت إنها شغالة. الاختبارات دي بتسد الفجوة دي.
+describe("عزل الفروع - أمر تعبئة", () => {
+  let isolatedOrderId;
+
+  test("إنشاء أمر تعبئة لفرع تاني - مرفوض", async () => {
+    const res = await request(app).post("/api/packaging").set(authed(otherManagerToken)).send({
+      branchId, inputItemId: bulkItemId, outputItemId: packagedItemId, plannedInputQuantity: 5, plannedOutputQuantity: 10,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("مدير فرع تاني ممنوع يشوف/يبدأ أمر تعبئة مش بتاعه", async () => {
+    isolatedOrderId = await createApprovedPackagingOrder();
+
+    const get = await request(app).get(`/api/packaging/${isolatedOrderId}`).set(authed(otherManagerToken));
+    expect(get.status).toBe(403);
+
+    const start = await request(app).post(`/api/packaging/${isolatedOrderId}/start`).set(authed(otherManagerToken));
+    expect(start.status).toBe(403);
+  });
+
+  test("مدير الفرع صاحب أمر التعبئة يبدأه فعليًا - وبعد كده الفرع التاني لسه ممنوع يكمّل/يلغي (الحالة بقت IN_PROGRESS دلوقتي فالفحص فعليًا بيوصل لعزل الفرع)", async () => {
+    const start = await request(app).post(`/api/packaging/${isolatedOrderId}/start`).set(authed(managerToken));
+    expect(start.status).toBe(200);
+
+    const complete = await request(app).post(`/api/packaging/${isolatedOrderId}/complete`).set(authed(otherManagerToken)).send({ actualOutputQuantity: 10 });
+    expect(complete.status).toBe(403);
+
+    const cancel = await request(app).post(`/api/packaging/${isolatedOrderId}/cancel`).set(authed(otherManagerToken)).send({ reason: "محاولة اختراق عزل" });
+    expect(cancel.status).toBe(403);
+  });
+
+  test("مدير الفرع صاحب أمر التعبئة لسه يقدر يكمّله عادي بعد محاولات الفرع التاني", async () => {
+    const complete = await request(app).post(`/api/packaging/${isolatedOrderId}/complete`).set(authed(managerToken)).send({ actualOutputQuantity: 10 });
+    expect(complete.status).toBe(200);
   });
 });

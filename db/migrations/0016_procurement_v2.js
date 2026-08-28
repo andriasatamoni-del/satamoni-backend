@@ -171,6 +171,14 @@ module.exports = {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_transfer_discrepancies_transfer ON transfer_discrepancies(kitchen_transfer_id)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_transfer_discrepancies_status ON transfer_discrepancies(status)`);
 
+    // STEP L-audit (بند 18 - أداء): kitchen_order_items.kitchen_order_id و kitchen_transfer_items.kitchen_transfer_id
+    // عمودين FK بس من غير أي index عليهم صراحة (Postgres مابيعملش index تلقائي لعمود FK نفسه، بس للعمود
+    // المُشار إليه). الجدولين دول بيتقروا بكثرة شديدة مع كل استدعاء تقريبًا في الـworkflow الجديد (تفاصيل
+    // الطلبية، picking، التقاط الفروقات، تقرير requisition-fulfillment) - على مقياس مطعم حقيقي (آلاف
+    // الطلبيات/التحويلات) الاستعلامات دي هتتحول لـsequential scan كامل على الجدول من غير الـindex ده
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_kitchen_order_items_order ON kitchen_order_items(kitchen_order_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_kitchen_transfer_items_transfer ON kitchen_transfer_items(kitchen_transfer_id)`);
+
     await client.query(`
       DO $$ BEGIN
         ALTER TABLE production_orders ADD COLUMN parent_production_order_id INTEGER REFERENCES production_orders(id);

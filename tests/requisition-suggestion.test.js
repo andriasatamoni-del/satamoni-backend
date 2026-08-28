@@ -2,7 +2,10 @@
 // + GET /api/kitchen-orders/suggested. اختبارات مباشرة على المحرك (بـpool زي أي كود تاني في المشروع)
 // + اختبارات API فوقه.
 const { app, request, pool, seedUser, login, authed } = require("./helpers");
-const { pastOccurrencesOfWeekday, averageWeekdayConsumption, computeSuggestedQuantity, generateSuggestedRequisition } = require("../db/requisition-suggestion");
+const {
+  pastOccurrencesOfWeekday, averageWeekdayConsumption, expectedConsumptionWindow,
+  pendingPipelineQuantity, inTransitQuantity, computeSuggestedQuantity, generateSuggestedRequisition,
+} = require("../db/requisition-suggestion");
 
 let branchId, otherBranchId;
 let adminToken, managerToken, otherManagerToken;
@@ -187,5 +190,141 @@ describe("GET /api/kitchen-orders/suggested", () => {
     );
     expect(Number(itemRow.rows[0].quantity_requested)).toBeCloseTo(25, 5);
     expect(Number(itemRow.rows[0].quantity_suggested)).toBeCloseTo(25, 5);
+  });
+});
+
+// STEP L-audit (بند 1 - "المحرك حرج"): قبل الإصلاح، الصيغة كانت target - current بس - من غير أي وعي
+// بطلبيات معتمدة لسه في الطريق (pending pipeline) ولا بكميات وصلت فعليًا للطريق (in-transit) - يعني
+// ممكن تقترح كمية إضافية لصنف أصلًا جاي. الاختبارات دي بتثبّت Scenario D وE بالظبط من طلب المستخدم.
+describe("db/requisition-suggestion.js - خط الأنابيب (pending) والتحويل الجاري (in-transit) لازم يتخصموا", () => {
+  let pipelineBranchId, pipelineItemId;
+
+  beforeAll(async () => {
+    const b = await pool.query("INSERT INTO branches (name) VALUES ('فرع خط أنابيب-جست') RETURNING id");
+    pipelineBranchId = b.rows[0].id;
+    const item = await pool.query("INSERT INTO inventory_items (name, unit, unit_cost) VALUES ('صنف خط أنابيب-جست', 'KG', 5) RETURNING id");
+    pipelineItemId = item.rows[0].id;
+    await pool.query(
+      "INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity, min_stock, max_stock) VALUES ($1,$2,50,100,1000)",
+      [pipelineBranchId, pipelineItemId]
+    );
+  });
+
+  test("Scenario E - طلبية معتمدة لسه في الطريق (80 وحدة) لازم تتخصم - مايتضاعفش الطلب", async () => {
+    const before = await computeSuggestedQuantity(pool, { branchId: pipelineBranchId, inventoryItemId: pipelineItemId, targetDate: "2026-09-10" });
+    expect(before.suggestedQuantity).toBeCloseTo(50, 5); // target=100 (min فقط، avg=0) - current=50
+
+    const order = await pool.query("INSERT INTO kitchen_orders (branch_id, status) VALUES ($1,'SUBMITTED') RETURNING id", [pipelineBranchId]);
+    await pool.query(
+      "INSERT INTO kitchen_order_items (kitchen_order_id, inventory_item_id, quantity_requested) VALUES ($1,$2,80)",
+      [order.rows[0].id, pipelineItemId]
+    );
+
+    const pending = await pendingPipelineQuantity(pool, { branchId: pipelineBranchId, inventoryItemId: pipelineItemId });
+    expect(pending).toBeCloseTo(80, 5);
+
+    const after = await computeSuggestedQuantity(pool, { branchId: pipelineBranchId, inventoryItemId: pipelineItemId, targetDate: "2026-09-10" });
+    // target=100 - (رصيد حالي 50 + pending 80) = -30 => مسقوف عند صفر، مش طلب إضافي
+    expect(after.suggestedQuantity).toBe(0);
+    expect(after.pendingPipelineQuantity).toBeCloseTo(80, 5);
+  });
+
+  test("Scenario D - تحويل في الطريق فعليًا (100 وحدة) لازم يتخصم برضه - مفيش طلب زيادة 100+ من غير داعي", async () => {
+    const b2 = await pool.query("INSERT INTO branches (name) VALUES ('فرع تحويل جاري-جست') RETURNING id");
+    const branch2 = b2.rows[0].id;
+    const src = await pool.query("INSERT INTO branches (name) VALUES ('فرع مصدر تحويل جاري-جست') RETURNING id");
+    await pool.query(
+      "INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity, min_stock) VALUES ($1,$2,50,30)",
+      [branch2, pipelineItemId]
+    );
+
+    const transfer = await pool.query(
+      `INSERT INTO kitchen_transfers (from_branch_id, to_branch_id, business_date, amount_at_cost, status)
+       VALUES ($1,$2,CURRENT_DATE,0,'in_transit') RETURNING id`,
+      [src.rows[0].id, branch2]
+    );
+    await pool.query(
+      "INSERT INTO kitchen_transfer_items (kitchen_transfer_id, inventory_item_id, quantity, quantity_sent) VALUES ($1,$2,100,100)",
+      [transfer.rows[0].id, pipelineItemId]
+    );
+
+    const inTransit = await inTransitQuantity(pool, { branchId: branch2, inventoryItemId: pipelineItemId });
+    expect(inTransit).toBeCloseTo(100, 5);
+
+    const res = await computeSuggestedQuantity(pool, { branchId: branch2, inventoryItemId: pipelineItemId, targetDate: "2026-09-10" });
+    // target=30 (min فقط، avg=0)، لكن المتاح فعليًا 50(رصيد)+100(في الطريق)=150 >> 30 => مفيش داعي لأي طلب
+    expect(res.suggestedQuantity).toBe(0);
+    expect(res.inTransitQuantity).toBeCloseTo(100, 5);
+  });
+});
+
+// STEP L-audit (بند 1 - Scenario B): يوم زي الخميس ممكن يحتاج يغطي استهلاك الجمعة كمان لو التزويد الجاي
+// مش هيوصل غير السبت - الصيغة القديمة كانت بتحسب يوم الهدف بس (الخميس)، من غير أي وعي باستهلاك الأيام
+// اللي بعده لحد فرصة التزويد الجاية. nextReplenishmentDate الاختياري الجديد بيصلّح ده.
+describe("db/requisition-suggestion.js - نافذة تغطية متعددة الأيام (nextReplenishmentDate) - Scenario B", () => {
+  let windowBranchId, windowItemId, windowThursday, windowSaturday;
+
+  beforeAll(async () => {
+    const b = await pool.query("INSERT INTO branches (name) VALUES ('فرع نافذة تغطية-جست') RETURNING id");
+    windowBranchId = b.rows[0].id;
+    const item = await pool.query("INSERT INTO inventory_items (name, unit, unit_cost) VALUES ('صنف نافذة تغطية-جست', 'KG', 5) RETURNING id");
+    windowItemId = item.rows[0].id;
+    await pool.query("INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity) VALUES ($1,$2,0)", [windowBranchId, windowItemId]);
+
+    // خميس ماضي معروف (استهلاك 100) + الجمعة اللي بعده (استهلاك 150) - مرة واحدة بس (lookbackWeeks=1)
+    const pastThursday = lastWeekday(new Date().toISOString().slice(0, 10), 4);
+    const pastFridayD = new Date(`${pastThursday}T00:00:00Z`);
+    pastFridayD.setUTCDate(pastFridayD.getUTCDate() + 1);
+    const pastFriday = pastFridayD.toISOString().slice(0, 10);
+    await pool.query(
+      "INSERT INTO inventory_movements (branch_id, inventory_item_id, movement_type, quantity, business_date) VALUES ($1,$2,'SALE',-100,$3)",
+      [windowBranchId, windowItemId, pastThursday]
+    );
+    await pool.query(
+      "INSERT INTO inventory_movements (branch_id, inventory_item_id, movement_type, quantity, business_date) VALUES ($1,$2,'SALE',-150,$3)",
+      [windowBranchId, windowItemId, pastFriday]
+    );
+
+    // targetDate = نفس يوم الخميس ده بعد أسبوع بالظبط (نفس النمط المستخدم في باقي اختبارات الملف ده)
+    const nextThuD = new Date(`${pastThursday}T00:00:00Z`);
+    nextThuD.setUTCDate(nextThuD.getUTCDate() + 7);
+    windowThursday = nextThuD.toISOString().slice(0, 10);
+    const nextSatD = new Date(nextThuD);
+    nextSatD.setUTCDate(nextSatD.getUTCDate() + 2); // الخميس + يومين = السبت (تغطي الخميس والجمعة، مش السبت نفسه)
+    windowSaturday = nextSatD.toISOString().slice(0, 10);
+  });
+
+  test("من غير nextReplenishmentDate - نافذة يوم واحد بس (الخميس) - نفس السلوك القديم بالظبط", async () => {
+    const res = await computeSuggestedQuantity(pool, {
+      branchId: windowBranchId, inventoryItemId: windowItemId, targetDate: windowThursday, lookbackWeeks: 1,
+    });
+    expect(res.coverageDays).toBe(1);
+    expect(res.expectedConsumption).toBeCloseTo(100, 5);
+  });
+
+  test("Scenario B - nextReplenishmentDate = السبت الجاي - الاستهلاك المتوقع = خميس+جمعة = 250 مش 100 بس", async () => {
+    const res = await computeSuggestedQuantity(pool, {
+      branchId: windowBranchId, inventoryItemId: windowItemId, targetDate: windowThursday,
+      nextReplenishmentDate: windowSaturday, lookbackWeeks: 1,
+    });
+    expect(res.coverageDays).toBe(2);
+    expect(res.expectedConsumption).toBeCloseTo(250, 5); // خميس (100) + جمعة (150)
+    expect(res.suggestedQuantity).toBeCloseTo(250, 5); // current=0, min=0
+  });
+
+  test("expectedConsumptionWindow مباشرة - نفس النتيجة", async () => {
+    const res = await expectedConsumptionWindow(pool, {
+      branchId: windowBranchId, inventoryItemId: windowItemId, targetDate: windowThursday,
+      nextReplenishmentDate: windowSaturday, lookbackWeeks: 1,
+    });
+    expect(res.coverageDays).toBe(2);
+    expect(res.expectedConsumption).toBeCloseTo(250, 5);
+  });
+
+  test("GET /api/kitchen-orders/suggested?nextReplenishmentDate= - النافذة متوصّلة فعليًا للـAPI", async () => {
+    const res = await request(app).get(
+      `/api/kitchen-orders/suggested?branchId=${windowBranchId}&targetDate=${windowThursday}&lookbackWeeks=1&nextReplenishmentDate=${windowSaturday}`
+    ).set(authed(adminToken));
+    expect(res.status).toBe(200);
   });
 });

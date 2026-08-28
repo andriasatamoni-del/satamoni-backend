@@ -481,12 +481,16 @@ router.post("/:id/ready", requireAuth, requireRole("admin", "branch_manager"), a
   }
 });
 
-// GET /api/kitchen-orders/suggested?branchId=&targetDate=&lookbackWeeks= - Procurement v2 STEP E:
-// معاينة بس (مفيش أي تسجيل) لاقتراح الطلبية اليومية - واعي بيوم الأسبوع بتاع targetDate ومبني على متوسط
-// الاستهلاك الفعلي في نفس يوم الأسبوع ده آخر lookbackWeeks أسبوع (افتراضي 8). مدير الفرع بعد كده بيستخدم
-// النتيجة كـitems في POST / (status:'DRAFT') ويعدّل أي كمية قبل التقديم - الـendpoint ده مايُنشئش أي حاجة
+// GET /api/kitchen-orders/suggested?branchId=&targetDate=&lookbackWeeks=&nextReplenishmentDate= -
+// Procurement v2 STEP E: معاينة بس (مفيش أي تسجيل) لاقتراح الطلبية اليومية - واعي بيوم الأسبوع بتاع
+// targetDate ومبني على متوسط الاستهلاك الفعلي في نفس يوم الأسبوع ده آخر lookbackWeeks أسبوع (افتراضي 8).
+// مدير الفرع بعد كده بيستخدم النتيجة كـitems في POST / (status:'DRAFT') ويعدّل أي كمية قبل التقديم -
+// الـendpoint ده مايُنشئش أي حاجة. nextReplenishmentDate اختياري (STEP L-audit): لو الفرع عارف إمتى
+// فرصة التزويد الجاية (مثلًا خميس بيطلب واعي إن التزويد الجاي هيوصله يوم السبت بس) - بيبعتها هنا فيتحسب
+// الاستهلاك المتوقع كمجموع كل الأيام من targetDate لحد نفس التاريخ ده، مش يوم واحد بس. من غيرها، السلوك
+// زي الأول تمامًا (يوم واحد)
 router.get("/suggested", requireAuth, requireRole("admin", "branch_manager", "cashier"), async (req, res) => {
-  let { branchId, targetDate, lookbackWeeks } = req.query;
+  let { branchId, targetDate, lookbackWeeks, nextReplenishmentDate } = req.query;
   if (!assertOwnBranch(req.user, branchId) && req.user.role !== "admin") {
     return res.status(403).json({ error: "معندكش صلاحية تشوف اقتراح فرع تاني" });
   }
@@ -495,6 +499,7 @@ router.get("/suggested", requireAuth, requireRole("admin", "branch_manager", "ca
   try {
     const suggestions = await generateSuggestedRequisition(pool, {
       branchId, targetDate, lookbackWeeks: lookbackWeeks ? Number(lookbackWeeks) : 8,
+      nextReplenishmentDate: nextReplenishmentDate || null,
     });
     res.json({ branchId: Number(branchId), targetDate, suggestions });
   } catch (err) {
