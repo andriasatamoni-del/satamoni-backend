@@ -7,6 +7,7 @@ const { logAudit } = require("../db/audit");
 const { postInventoryMovement, consumeFromBatches } = require("../db/inventory-ledger");
 const { explodeRecipeConsumption, computeRecipeCost } = require("../db/recipe-engine");
 const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
+const { generateBatchNumber } = require("../db/batch-numbering");
 
 // POST /api/production - أمر تصنيع جديد (DRAFT) - بياخد الوصفة من النسخة النشطة حاليًا للصنف الناتج
 // {branchId, recipeId, plannedQuantity, productionDate?, batchNumber?, expiryDate?, notes?}
@@ -92,7 +93,12 @@ router.post("/:id/approve", requireAuth, requireRole("admin"), requirePermission
 
 // POST /api/production/:id/start - APPROVED → IN_PROGRESS - بيخصم مكونات الوصفة (مفصولة نظريًا حسب
 // الكمية المخططة) من مخزون الفرع فعليًا، واعية بالدفعات (FEFO/FIFO) زي التحويلات بالظبط
+// Procurement v2 STEP H: {actualConsumption?: [{inventoryItemId, actualQuantity, varianceReason?}]} اختياري
+// - لو مش متبعت، السلوك زي الأول بالظبط (الفعلي = النظري، فرق صفر). لو متبعت لصنف معيّن، بيتخصم فعليًا
+// الرقم ده (مش النظري) - عشان "تكلفة التصنيع من مدخلات فعلية حقيقية مش نظرية مفترضة دايمًا 100%"
 router.post("/:id/start", requireAuth, requirePermission("production.create"), async (req, res) => {
+  const { actualConsumption } = req.body;
+  const actualByItem = new Map((actualConsumption || []).map((a) => [Number(a.inventoryItemId), a]));
   const client = await pool.connect();
   try {
     // المرحلة 6 (6A.2): القفل (FOR UPDATE) لازم يكون أول حاجة بعد BEGIN، قبل أي فحص حالة - نفس باج
@@ -111,8 +117,22 @@ router.post("/:id/start", requireAuth, requirePermission("production.create"), a
 
     const { raw } = await explodeRecipeConsumption(client, order.recipe_version_id, order.planned_quantity, new Set());
 
+    // Procurement v2 STEP H: parent_production_order_id بيتحدد لو (ولو بس) كل الدفعات المستهلكة في أمر
+    // التصنيع ده كلها طالعة من نفس أمر تصنيع سابق واحد بالظبط - لينك "أب" واحد ومعروف. لو الاستهلاك جاي
+    // من أكتر من دفعة/أمر مختلف، مفيش عمود واحد يقدر يمثّل ده بأمانة - التتبّع الكامل (multi-parent) بيفضل
+    // متاح دايمًا عن طريق production_order_batches نفسها (STEP I)
+    const consumedFromOrderIds = new Set();
+
     for (const [itemId, data] of raw) {
-      const consumed = await consumeFromBatches(client, { branchId: order.branch_id, inventoryItemId: itemId, quantity: data.quantity });
+      const override = actualByItem.get(Number(itemId));
+      const plannedQuantity = Number(data.quantity);
+      const totalActual = override ? Number(override.actualQuantity) : plannedQuantity;
+      if (override && (!totalActual || totalActual < 0)) {
+        throw Object.assign(new Error(`الكمية الفعلية لصنف #${itemId} لازم تكون رقم صحيح صفر أو أكبر`), { code: "PRODUCTION_VALIDATION" });
+      }
+      const varianceReasonForItem = override?.varianceReason || null;
+
+      const consumed = await consumeFromBatches(client, { branchId: order.branch_id, inventoryItemId: itemId, quantity: totalActual });
       if (consumed && consumed.consumed.length > 0) {
         for (const part of consumed.consumed) {
           await postInventoryMovement(client, {
@@ -121,29 +141,41 @@ router.post("/:id/start", requireAuth, requirePermission("production.create"), a
             unitCost: part.unitCost, batchId: part.batchId, userId: req.user.id,
             skipBatchConsumption: true, negativeStockOverrideApproved: true,
           });
+          // نصيب هذا الجزء من الكمية المخططة الإجمالية للصنف، بالتناسب مع نصيبه الفعلي - عشان مجموع
+          // planned_quantity على كل الأجزاء يفضل مساوي للمخطط الإجمالي بالظبط
+          const partPlanned = totalActual > 0 ? (Number(part.quantity) / totalActual) * plannedQuantity : 0;
           await client.query(
-            `INSERT INTO production_order_batches (production_order_id, role, inventory_item_id, batch_id, quantity)
-             VALUES ($1,'input',$2,$3,$4)`,
-            [order.id, itemId, part.batchId, part.quantity]
+            `INSERT INTO production_order_batches
+              (production_order_id, role, inventory_item_id, batch_id, quantity, planned_quantity, variance_quantity, variance_reason)
+             VALUES ($1,'input',$2,$3,$4,$5,$6,$7)`,
+            [order.id, itemId, part.batchId, part.quantity, partPlanned, Number(part.quantity) - partPlanned, varianceReasonForItem]
           );
+          if (part.batchId) {
+            const originRes = await client.query(
+              "SELECT production_order_id FROM production_order_batches WHERE role = 'output' AND batch_id = $1", [part.batchId]
+            );
+            if (originRes.rows.length > 0) consumedFromOrderIds.add(originRes.rows[0].production_order_id);
+          }
         }
       } else {
         await postInventoryMovement(client, {
-          branchId: order.branch_id, inventoryItemId: itemId, quantity: -data.quantity,
+          branchId: order.branch_id, inventoryItemId: itemId, quantity: -totalActual,
           movementType: "PRODUCTION_OUT", referenceType: "production_order", referenceId: order.id,
           userId: req.user.id, negativeStockOverrideApproved: true,
         });
         await client.query(
-          `INSERT INTO production_order_batches (production_order_id, role, inventory_item_id, batch_id, quantity)
-           VALUES ($1,'input',$2,NULL,$3)`,
-          [order.id, itemId, data.quantity]
+          `INSERT INTO production_order_batches
+            (production_order_id, role, inventory_item_id, batch_id, quantity, planned_quantity, variance_quantity, variance_reason)
+           VALUES ($1,'input',$2,NULL,$3,$4,$5,$6)`,
+          [order.id, itemId, totalActual, plannedQuantity, totalActual - plannedQuantity, varianceReasonForItem]
         );
       }
     }
 
+    const parentProductionOrderId = consumedFromOrderIds.size === 1 ? [...consumedFromOrderIds][0] : null;
     const updated = await client.query(
-      `UPDATE production_orders SET status = 'IN_PROGRESS', started_at = now() WHERE id = $1 RETURNING *`,
-      [order.id]
+      `UPDATE production_orders SET status = 'IN_PROGRESS', started_at = now(), parent_production_order_id = $2 WHERE id = $1 RETURNING *`,
+      [order.id, parentProductionOrderId]
     );
     await logAudit(client, {
       branchId: order.branch_id, userId: req.user.id, action: "PRODUCTION_ORDER_STARTED",
@@ -153,7 +185,7 @@ router.post("/:id/start", requireAuth, requirePermission("production.create"), a
     res.json(updated.rows[0]);
   } catch (err) {
     await client.query("ROLLBACK");
-    if (err.code === "INSUFFICIENT_STOCK" || err.code === "NO_UNIT_CONVERSION") return res.status(400).json({ error: err.message });
+    if (["INSUFFICIENT_STOCK", "NO_UNIT_CONVERSION", "PRODUCTION_VALIDATION"].includes(err.code)) return res.status(400).json({ error: err.message });
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
@@ -202,13 +234,26 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
     const costInfo = await computeRecipeCost(pool, order.recipe_version_id, 1);
     const unitCost = costInfo.incomplete ? null : costInfo.totalCost;
 
+    // Procurement v2 STEP H: parent_batch_id بيتحدد لو (ولو بس) كل مدخلات التصنيع دي طالعة من دفعة واحدة
+    // بعينها - نفس منطق parent_production_order_id فوق بالظبط، بس على مستوى الدفعة مش الأمر
+    const inputBatchesRes = await client.query(
+      "SELECT DISTINCT batch_id FROM production_order_batches WHERE production_order_id = $1 AND role = 'input' AND batch_id IS NOT NULL",
+      [order.id]
+    );
+    const parentBatchId = inputBatchesRes.rows.length === 1 ? inputBatchesRes.rows[0].batch_id : null;
+
     let batchId = null;
+    let batchNumber = null;
     if (order.batch_number || order.expiry_date) {
+      // Procurement v2 STEP H: رقم دفعة تصنيع فريد إلزامي - لو الأوبريتور معملش batch_number بنفسه، بيتولّد
+      // نظاميًا من db/batch-numbering.js (SAU-20260828-001 مثلًا)، مش بيتسيب فاضي أبدًا لأي دفعة تصنيع فعلية
+      batchNumber = order.batch_number || (await generateBatchNumber(client, { inventoryItemId: outputItemId }));
       const batch = await client.query(
         `INSERT INTO inventory_batches
-          (batch_number, inventory_item_id, branch_id, received_date, expiry_date, original_quantity, remaining_quantity, unit_cost, created_by)
-         VALUES ($1,$2,$3,CURRENT_DATE,$4,$5,$5,$6,$7) RETURNING id`,
-        [order.batch_number, outputItemId, order.branch_id, order.expiry_date, actualQuantity, unitCost, req.user.id]
+          (batch_number, inventory_item_id, branch_id, received_date, expiry_date, original_quantity, remaining_quantity,
+           unit_cost, created_by, parent_batch_id)
+         VALUES ($1,$2,$3,CURRENT_DATE,$4,$5,$5,$6,$7,$8) RETURNING id`,
+        [batchNumber, outputItemId, order.branch_id, order.expiry_date, actualQuantity, unitCost, req.user.id, parentBatchId]
       );
       batchId = batch.rows[0].id;
     }
@@ -270,7 +315,7 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
       newValues: { actualQuantity, variance, variancePercent }, metadata: { varianceReason }, req,
     });
     await client.query("COMMIT");
-    res.json({ ...updated.rows[0], variance, variancePercent });
+    res.json({ ...updated.rows[0], variance, variancePercent, generatedBatchNumber: batchNumber, batchId, parentBatchId });
   } catch (err) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
