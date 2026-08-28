@@ -212,7 +212,7 @@ router.get("/:id", requireAuth, requirePermission("purchasing.view"), async (req
       [req.params.id]
     );
     const payments = await pool.query(
-      "SELECT id, amount, payment_date, status FROM supplier_payments WHERE supplier_invoice_id = $1 ORDER BY id",
+      "SELECT id, amount, payment_date FROM supplier_payments WHERE supplier_invoice_id = $1 ORDER BY id",
       [req.params.id]
     );
     res.json({ invoice: invoice.rows[0], lines: lines.rows, payments: payments.rows });

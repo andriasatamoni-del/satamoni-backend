@@ -1,5 +1,8 @@
 // المرحلة 4B: سداد مورد - Accounts Payable (مدين) مقابل Cash/Bank (دائن). رصيد المورد بيتحسب من سطور
 // حساب 2100 المرتبطة بيه (reference_type='supplier') - مفيش عمود "رصيد" مخزّن (كان هيعمل drift).
+// Procurement v2 STEP C: السداد بقى ممكن (اختياري) يتخصص على فاتورة مورد محددة (supplierInvoiceId) بدل
+// ما يفضل بس على الرصيد العام للمورد - نفس القيد المحاسبي بالظبط (مفيش فرق في الترحيل نفسه)، بس بيتتبّع
+// إجمالي المسدد على الفاتورة دي وبيحدّث حالتها (APPROVED → PARTIALLY_PAID/PAID) عشان تقفيلها يبقى واضح
 const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
@@ -8,9 +11,12 @@ const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
 
-// POST /api/supplier-payments - {supplierId, branchId, amount, paymentMethodId?, referenceNumber?, notes?, idempotencyKey?}
+const PAYABLE_INVOICE_STATUSES = ["APPROVED", "PARTIALLY_PAID"];
+const INVOICE_TOLERANCE = 0.01;
+
+// POST /api/supplier-payments - {supplierId, branchId, amount, supplierInvoiceId?, paymentMethodId?, referenceNumber?, notes?, idempotencyKey?}
 router.post("/", requireAuth, requirePermission("purchasing.create", "accounting.create"), async (req, res) => {
-  const { supplierId, branchId, amount, paymentDate, paymentMethodId, referenceNumber, notes, idempotencyKey } = req.body;
+  const { supplierId, branchId, amount, supplierInvoiceId, paymentDate, paymentMethodId, referenceNumber, notes, idempotencyKey } = req.body;
   if (!supplierId || !branchId || !amount || Number(amount) <= 0) {
     return res.status(400).json({ error: "لازم مورد وفرع ومبلغ أكبر من صفر" });
   }
@@ -36,6 +42,32 @@ router.post("/", requireAuth, requirePermission("purchasing.create", "accounting
     }
 
     await client.query("BEGIN");
+
+    // لو السداد مخصص على فاتورة محددة: قفل صف الفاتورة (FOR UPDATE) قبل أي حساب - عشان سدادين متزامنين
+    // على نفس الفاتورة يتسلسلوا (مش يعدّوا "المتبقي" مع بعض ويعملوا سداد زيادة). نفس نمط قفل GRN/production
+    // order قبل أي فحص حالة في باقي المشروع بالظبط
+    let invoice = null;
+    if (supplierInvoiceId) {
+      const invRes = await client.query("SELECT * FROM supplier_invoices WHERE id = $1 FOR UPDATE", [supplierInvoiceId]);
+      if (invRes.rows.length === 0) throw Object.assign(new Error("فاتورة المورد المحددة مش موجودة"), { code: "INVOICE_PAYMENT_VALIDATION" });
+      invoice = invRes.rows[0];
+      if (Number(invoice.supplier_id) !== Number(supplierId)) throw Object.assign(new Error("الفاتورة دي تابعة لمورد تاني"), { code: "INVOICE_PAYMENT_VALIDATION" });
+      if (Number(invoice.branch_id) !== Number(branchId)) throw Object.assign(new Error("الفاتورة دي تابعة لفرع تاني"), { code: "INVOICE_PAYMENT_VALIDATION" });
+      if (!PAYABLE_INVOICE_STATUSES.includes(invoice.status)) {
+        throw Object.assign(new Error("الفاتورة دي مش في حالة قابلة للسداد (لازم تكون معتمدة الأول)"), { code: "INVOICE_PAYMENT_VALIDATION" });
+      }
+      const paidRes = await client.query(
+        "SELECT COALESCE(SUM(amount), 0) AS paid FROM supplier_payments WHERE supplier_invoice_id = $1", [supplierInvoiceId]
+      );
+      const alreadyPaid = Number(paidRes.rows[0].paid);
+      if (alreadyPaid + Number(amount) > Number(invoice.total) + INVOICE_TOLERANCE) {
+        throw Object.assign(
+          new Error(`المبلغ أكبر من المتبقي على الفاتورة (المتبقي ${(Number(invoice.total) - alreadyPaid).toFixed(2)})`),
+          { code: "INVOICE_PAYMENT_VALIDATION" }
+        );
+      }
+    }
+
     const ap = await getAccountByCode(client, "2100");
     let cashAccount;
     let paymentMethodKind = "cash";
@@ -50,9 +82,10 @@ router.post("/", requireAuth, requirePermission("purchasing.create", "accounting
     let payment;
     try {
       payment = await client.query(
-        `INSERT INTO supplier_payments (supplier_id, branch_id, payment_date, amount, payment_method_id, reference_number, notes, idempotency_key, created_by)
-         VALUES ($1,$2,COALESCE($3,CURRENT_DATE),$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [supplierId, branchId, paymentDate || null, amount, paymentMethodId || null, referenceNumber || null, notes || null, idempotencyKey || null, req.user.id]
+        `INSERT INTO supplier_payments (supplier_id, branch_id, payment_date, amount, supplier_invoice_id, payment_method_id, reference_number, notes, idempotency_key, created_by)
+         VALUES ($1,$2,COALESCE($3,CURRENT_DATE),$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [supplierId, branchId, paymentDate || null, amount, supplierInvoiceId || null, paymentMethodId || null,
+         referenceNumber || null, notes || null, idempotencyKey || null, req.user.id]
       );
     } catch (err) {
       if (err.code === "23505" && idempotencyKey) {
@@ -74,14 +107,24 @@ router.post("/", requireAuth, requirePermission("purchasing.create", "accounting
     });
     await client.query("UPDATE supplier_payments SET journal_entry_id = $1 WHERE id = $2", [je.entry.id, payment.rows[0].id]);
 
+    if (invoice) {
+      const totalPaidRes = await client.query(
+        "SELECT COALESCE(SUM(amount), 0) AS paid FROM supplier_payments WHERE supplier_invoice_id = $1", [supplierInvoiceId]
+      );
+      const totalPaid = Number(totalPaidRes.rows[0].paid);
+      const newStatus = totalPaid >= Number(invoice.total) - INVOICE_TOLERANCE ? "PAID" : "PARTIALLY_PAID";
+      await client.query("UPDATE supplier_invoices SET status = $1, updated_at = now() WHERE id = $2", [newStatus, supplierInvoiceId]);
+    }
+
     await logAudit(client, {
       branchId, userId: req.user.id, action: "SUPPLIER_PAYMENT_CREATED", entityType: "supplier_payment", entityId: payment.rows[0].id,
-      newValues: { supplierId, amount, journalEntryId: je.entry.id }, req,
+      newValues: { supplierId, amount, supplierInvoiceId: supplierInvoiceId || null, journalEntryId: je.entry.id }, req,
     });
     await client.query("COMMIT");
     res.status(201).json({ ...payment.rows[0], journal_entry_id: je.entry.id, duplicate: false });
   } catch (err) {
     await client.query("ROLLBACK");
+    if (err.code === "INVOICE_PAYMENT_VALIDATION") return res.status(400).json({ error: err.message });
     res.status(500).json({ error: err.message });
   } finally {
     client.release();

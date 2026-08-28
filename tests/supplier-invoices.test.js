@@ -286,3 +286,113 @@ describe("Supplier Invoices - guards", () => {
     expect(cancel.status).toBe(400);
   });
 });
+
+// Procurement v2 STEP C: تخصيص سداد المورد على فاتورة محددة (routes/supplier-payments.js) - نفس القيد
+// المحاسبي بالظبط (DR 2100 / CR كاش)، بس بيتتبّع "المتبقي" على الفاتورة ويحدّث حالتها
+describe("Supplier Payments - invoice allocation (STEP C)", () => {
+  async function createApprovedInvoice(invoiceNumber, total) {
+    const created = await request(app).post("/api/supplier-invoices").set(authed(managerToken)).send({
+      supplierId, branchId, supplierInvoiceNumber: invoiceNumber,
+      lines: [{ inventoryItemId: itemId, invoicedQuantity: 1, unitPrice: total }],
+    });
+    expect(created.status).toBe(201);
+    const approved = await request(app).post(`/api/supplier-invoices/${created.body.id}/approve`).set(authed(adminToken));
+    expect(approved.status).toBe(200);
+    return approved.body;
+  }
+
+  test("سداد كامل المبلغ دفعة واحدة - الفاتورة بتتحول PAID", async () => {
+    const invoice = await createApprovedInvoice("INV-PAY-FULL-001", 1000);
+    const res = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send({
+      supplierId, branchId, amount: 1000, supplierInvoiceId: invoice.id,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.supplier_invoice_id).toBe(invoice.id);
+
+    const invAfter = await request(app).get(`/api/supplier-invoices/${invoice.id}`).set(authed(managerToken));
+    expect(invAfter.body.invoice.status).toBe("PAID");
+    expect(invAfter.body.payments.length).toBe(1);
+  });
+
+  test("سداد على مرحلتين (جزئي ثم مكمل) - PARTIALLY_PAID ثم PAID", async () => {
+    const invoice = await createApprovedInvoice("INV-PAY-PARTIAL-001", 1000);
+    const first = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send({
+      supplierId, branchId, amount: 400, supplierInvoiceId: invoice.id,
+    });
+    expect(first.status).toBe(201);
+    let invMid = await request(app).get(`/api/supplier-invoices/${invoice.id}`).set(authed(managerToken));
+    expect(invMid.body.invoice.status).toBe("PARTIALLY_PAID");
+
+    const second = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send({
+      supplierId, branchId, amount: 600, supplierInvoiceId: invoice.id,
+    });
+    expect(second.status).toBe(201);
+    const invFinal = await request(app).get(`/api/supplier-invoices/${invoice.id}`).set(authed(managerToken));
+    expect(invFinal.body.invoice.status).toBe("PAID");
+    expect(invFinal.body.payments.length).toBe(2);
+  });
+
+  test("سداد أكبر من المتبقي على الفاتورة - مرفوض", async () => {
+    const invoice = await createApprovedInvoice("INV-PAY-OVER-001", 500);
+    const res = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send({
+      supplierId, branchId, amount: 600, supplierInvoiceId: invoice.id,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("سداد جزئي ثم محاولة سداد يتخطى المتبقي - مرفوض حتى لو المبلغ نفسه أقل من الإجمالي", async () => {
+    const invoice = await createApprovedInvoice("INV-PAY-OVER-002", 500);
+    await request(app).post("/api/supplier-payments").set(authed(managerToken)).send({
+      supplierId, branchId, amount: 300, supplierInvoiceId: invoice.id,
+    }).expect(201);
+    const res = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send({
+      supplierId, branchId, amount: 300, supplierInvoiceId: invoice.id,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("سداد على فاتورة لسه مش معتمدة (MATCHED/VARIANCE_PENDING) - مرفوض", async () => {
+    const created = await request(app).post("/api/supplier-invoices").set(authed(managerToken)).send({
+      supplierId, branchId, supplierInvoiceNumber: "INV-PAY-UNAPPROVED-001",
+      lines: [{ inventoryItemId: itemId, invoicedQuantity: 1, unitPrice: 100 }],
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe("VARIANCE_PENDING");
+    const res = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send({
+      supplierId, branchId, amount: 100, supplierInvoiceId: created.body.id,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("سداد بفرع مختلف عن فرع الفاتورة - مرفوض", async () => {
+    const invoice = await createApprovedInvoice("INV-PAY-BRANCH-001", 100);
+    const res = await request(app).post("/api/supplier-payments").set(authed(otherManagerToken)).send({
+      supplierId, branchId: otherBranchId, amount: 100, supplierInvoiceId: invoice.id,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("idempotencyKey على سداد مخصص لفاتورة - مفيش تكرار في السداد ولا في تحديث حالة الفاتورة", async () => {
+    const invoice = await createApprovedInvoice("INV-PAY-IDEM-001", 200);
+    const key = "supplier-payment-invoice-idem-" + Date.now();
+    const payload = { supplierId, branchId, amount: 200, supplierInvoiceId: invoice.id, idempotencyKey: key };
+    const first = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send(payload);
+    expect(first.status).toBe(201);
+    const second = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send(payload);
+    expect(second.status).toBe(200);
+    expect(second.body.duplicate).toBe(true);
+
+    const count = await pool.query("SELECT COUNT(*) FROM supplier_payments WHERE supplier_invoice_id = $1", [invoice.id]);
+    expect(Number(count.rows[0].count)).toBe(1);
+    const invAfter = await request(app).get(`/api/supplier-invoices/${invoice.id}`).set(authed(managerToken));
+    expect(invAfter.body.invoice.status).toBe("PAID");
+  });
+
+  test("سداد من غير supplierInvoiceId لسه شغال زي الأول (سداد عام على رصيد المورد)", async () => {
+    const res = await request(app).post("/api/supplier-payments").set(authed(managerToken)).send({
+      supplierId, branchId, amount: 50,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.supplier_invoice_id).toBeNull();
+  });
+});
