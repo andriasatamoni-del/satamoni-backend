@@ -48,7 +48,12 @@ async function printJobContent({ html, paperWidthMm, osPrinterName }) {
   if (!osPrinterName) throw new Error("الطابعة دي معندهاش اسم نظام تشغيل (os_printer_name) مسجّل - ظبّطها من إعدادات الطباعة");
   const pdfPath = await renderHtmlToPdf(html, paperWidthMm);
   try {
-    await printPdf(pdfPath, { printer: osPrinterName });
+    // pdf-to-printer (SumatraPDF من جواه) افتراضيًا بيعمل "Fit to Page" - بيكبّر/يصغّر أي PDF عشان
+    // يملي حجم الورق المُعرَّف في درايفر الطابعة نفسه في ويندوز، حتى لو الـPDF نفسه متولّد بحجم مضبوط
+    // بالظبط. ده بيبوّظ مستندات قصيرة (تذكرة مطبخ صف واحد) - بتتصغّر جدًا لو حجم الورق في الدرايفر
+    // مختلف عن المتولّد. "-print-settings noscale" بيوقف الفيت التلقائي ده، فالطباعة بتحصل بالمقاس
+    // الحقيقي 1:1 اللي احنا حددناه (paperWidthMm/heightMm) بدل ما تتصغّر/تتكبّر تلقائي
+    await printPdf(pdfPath, { printer: osPrinterName, win32: ["-print-settings", "noscale"] });
   } finally {
     fs.unlink(pdfPath, () => {});
   }
