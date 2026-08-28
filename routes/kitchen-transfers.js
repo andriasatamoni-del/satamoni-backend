@@ -490,47 +490,118 @@ const DISCREPANCY_TYPE_TO_MOVEMENT = {
   DAMAGED: "WASTE", EXPIRED: "EXPIRY",
 };
 
+// STEP L-audit (إغلاق M-1): لازم نفرّق بوضوح بين نوعين مختلفين من "النقص" - (أ) نقص استلام: sent > received،
+// ده أصلًا بيتحاسب أوتوماتيك في postTransferAccounting وقت /receive نفسه (كتابة القيمة على 5300 بفرع
+// المصدر) - القيد ده موجود ومترحّل فعليًا بمجرد الاستلام. (ب) فقد بعد الاستلام: مُكتشف لاحقًا (جرد فعلي)
+// على كمية *فعلًا دخلت* مخزون الفرع. المشكلة اللي انكشفت في المراجعة: مفيش أي حاجة كانت بتمنع فرع من إنه
+// يبلّغ عن فرق SHORTAGE لاحق بنفس قيمة نقص الاستلام اللي أصلًا اتحاسب - ده كان بيسبب ترحيل نفس الخسارة
+// مرتين (مرة تلقائي وقت الاستلام، ومرة تانية يدوي عن طريق /discrepancies) وخصم كمية من مخزون الفرع هو
+// أصلًا ماكانش استلمها. الحل (القاعدة الأبسط والأقل غموضًا، بدل موازنة جزئية معقدة): لو الصنف على التحويل
+// ده فيه نقص استلام معروف بالفعل (quantity_sent > quantity_received)، ممنوع تمامًا تتسجل عليه أي فرق
+// SHORTAGE تاني - أي خسارة إضافية *حقيقية* (تلف، صنف غلط، منتهي، أو أي سبب تاني) لازم تتسجل بنوعها الفعلي
+// (DAMAGED/WRONG_ITEM/EXPIRED/OTHER) مش SHORTAGE، عشان يفضل واضح ومتتبّع إن الفرق ده حاجة تانية غير نقص
+// الاستلام الأصلي. لو الصنف اتستلم كامل (مفيش نقص استلام خالص)، فرق SHORTAGE مسموح عادي زي ما هو، بس
+// إجمالي كل فروقات SHORTAGE المسجّلة (غير المرفوضة) على نفس البند ما يتخطاش الكمية المُستلمة فعليًا -
+// منطقي: مينفعش تبلّغ إنك فقدت أكتر من اللي استلمته أصلًا
+async function assertNoDuplicateShortageAccounting(client, { kitchenTransferItemId, discrepancyType, requestedQuantity }) {
+  if (discrepancyType !== "SHORTAGE") return; // القاعدة دي بتخص SHORTAGE بس - باقي الأنواع مش متأثرة
+  const itemRes = await client.query("SELECT * FROM kitchen_transfer_items WHERE id = $1 FOR UPDATE", [kitchenTransferItemId]);
+  if (itemRes.rows.length === 0) throw Object.assign(new Error("بند التحويل مش موجود"), { code: "DISCREPANCY_VALIDATION" });
+  const item = itemRes.rows[0];
+  const sentQty = Number(item.quantity_sent ?? item.quantity);
+  const receivedQty = Number(item.quantity_received ?? item.quantity);
+  const receivingShortage = sentQty - receivedQty;
+
+  if (receivingShortage > 0.0000001) {
+    throw Object.assign(new Error(
+      `الصنف ده أصلًا فيه نقص استلام مُحاسَب عليه تلقائيًا (اتبعت ${sentQty} واتستلم ${receivedQty} - فرق ${receivingShortage.toFixed(2)} ` +
+      `اترحّل محاسبيًا وقت الاستلام) - مينفعش تتسجل عليه فرق SHORTAGE تاني (ده هيحاسب نفس الخسارة مرتين). ` +
+      `لو فيه خسارة حقيقية تانية غير نقص الاستلام ده (تلف/صنف غلط/منتهي/سبب تاني)، سجّلها بنوعها الفعلي مش SHORTAGE.`
+    ), { code: "DISCREPANCY_VALIDATION" });
+  }
+
+  const existingRes = await client.query(
+    `SELECT COALESCE(SUM(quantity),0) AS total FROM transfer_discrepancies
+     WHERE kitchen_transfer_item_id = $1 AND discrepancy_type = 'SHORTAGE' AND status <> 'REJECTED'`,
+    [kitchenTransferItemId]
+  );
+  const existingShortageTotal = Number(existingRes.rows[0].total);
+  const newTotal = existingShortageTotal + Number(requestedQuantity);
+  if (newTotal > receivedQty + 0.0000001) {
+    const remaining = Math.max(0, receivedQty - existingShortageTotal);
+    throw Object.assign(new Error(
+      `إجمالي فروقات النقص (SHORTAGE) المسجّلة على البند ده (${existingShortageTotal.toFixed(2)}) + الكمية الجديدة (${Number(requestedQuantity).toFixed(2)}) ` +
+      `هيتخطى الكمية المُستلمة فعليًا (${receivedQty.toFixed(2)}) - مينفعش تبلّغ فقدان أكتر مما استلمته. ` +
+      `أقصى كمية مسموحة دلوقتي: ${remaining.toFixed(2)}`
+    ), { code: "DISCREPANCY_VALIDATION" });
+  }
+}
+
 // POST /api/kitchen-transfers/:id/discrepancies - الفرع المستلم (أو الأدمن) بيسجّل فرق/أكتر - التحويل
 // لازم يكون received أو partially_received بالفعل (بعد الاستلام بس، مش قبله)
 // {items: [{kitchenTransferItemId, inventoryItemId, discrepancyType, quantity, unit?, notes?, evidenceUrls?}]}
 router.post("/:id/discrepancies", requireAuth, stockManagers, async (req, res) => {
   const { items } = req.body;
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "لازم فرق واحد على الأقل" });
+  const client = await pool.connect();
   try {
-    const existing = await pool.query("SELECT * FROM kitchen_transfers WHERE id = $1", [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: "التحويل مش موجود" });
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM kitchen_transfers WHERE id = $1", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "التحويل مش موجود" }); }
     const t = existing.rows[0];
     if (!["received", "partially_received"].includes(t.status)) {
+      await client.query("ROLLBACK");
       return res.status(400).json({ error: "تسجيل الفروقات متاح بس بعد استلام التحويل" });
     }
     if (!assertOwnBranch(req.user, t.to_branch_id)) {
+      await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية تسجل فروقات على استلام فرع تاني" });
     }
     const inserted = [];
     for (const it of items) {
       if (!DISCREPANCY_TYPE_TO_MOVEMENT[it.discrepancyType]) {
+        await client.query("ROLLBACK");
         return res.status(400).json({ error: `نوع فرق غير معروف: ${it.discrepancyType}` });
       }
       if (!it.quantity || Number(it.quantity) <= 0) {
+        await client.query("ROLLBACK");
         return res.status(400).json({ error: "كمية الفرق لازم تكون أكبر من صفر" });
       }
-      const row = await pool.query(
+      let kitchenTransferItemId = it.kitchenTransferItemId || null;
+      if (!kitchenTransferItemId) {
+        const matched = await client.query(
+          "SELECT id FROM kitchen_transfer_items WHERE kitchen_transfer_id = $1 AND inventory_item_id = $2",
+          [t.id, it.inventoryItemId]
+        );
+        kitchenTransferItemId = matched.rows[0]?.id || null;
+      }
+      if (kitchenTransferItemId) {
+        await assertNoDuplicateShortageAccounting(client, {
+          kitchenTransferItemId, discrepancyType: it.discrepancyType, requestedQuantity: it.quantity,
+        });
+      }
+      const row = await client.query(
         `INSERT INTO transfer_discrepancies
           (kitchen_transfer_id, kitchen_transfer_item_id, inventory_item_id, discrepancy_type, quantity, unit,
            notes, evidence_urls, reported_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [t.id, it.kitchenTransferItemId || null, it.inventoryItemId, it.discrepancyType, it.quantity,
+        [t.id, kitchenTransferItemId, it.inventoryItemId, it.discrepancyType, it.quantity,
          it.unit || null, it.notes || null, it.evidenceUrls || null, req.user.id]
       );
       inserted.push(row.rows[0]);
     }
-    await logAudit(pool, {
+    await logAudit(client, {
       branchId: t.to_branch_id, userId: req.user.id, action: "TRANSFER_DISCREPANCY_REPORTED",
       entityType: "kitchen_transfer", entityId: t.id, metadata: { count: inserted.length }, req,
     });
+    await client.query("COMMIT");
     res.status(201).json(inserted);
   } catch (err) {
+    await client.query("ROLLBACK");
+    if (err.code === "DISCREPANCY_VALIDATION") return res.status(400).json({ error: err.message });
     res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
