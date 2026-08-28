@@ -73,6 +73,7 @@ app.use("/api/deliveries", require("./routes/deliveries"));
 app.use("/api/driver-settlements", require("./routes/driver-settlements"));
 app.use("/api/recipes", require("./routes/recipes"));
 app.use("/api/production", require("./routes/production"));
+app.use("/api/packaging", require("./routes/packaging"));
 app.use("/api/purchase-requests", require("./routes/purchase-requests"));
 app.use("/api/purchase-orders", require("./routes/purchase-orders"));
 app.use("/api/goods-receipts", require("./routes/goods-receipts"));
