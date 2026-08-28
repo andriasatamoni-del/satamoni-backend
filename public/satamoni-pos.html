@@ -106,6 +106,9 @@
     width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line); background: var(--card);
     color: var(--ink); cursor: pointer; font-size: 14px; line-height: 1;
   }
+  .cart-row .line-total { font-size: 13px; font-weight: 800; color: var(--gold-bright); font-family: 'Courier New', monospace; min-width: 60px; text-align: left; }
+  .cart-remove { background: transparent; border: none; cursor: pointer; font-size: 14px; opacity: .6; padding: 2px 4px; }
+  .cart-remove:hover { opacity: 1; }
   .cart-empty { text-align: center; color: var(--faint); padding: 30px 10px; font-size: 13px; }
   #cartFooter { padding: 14px 16px; border-top: 1px solid var(--line); }
   .row { display: flex; justify-content: space-between; font-family: 'Courier New', monospace; font-size: 13px; margin-bottom: 4px; }
@@ -833,17 +836,28 @@ function renderCart() {
   if (rows.length === 0) {
     list.innerHTML = '<div class="cart-empty">السلة فاضية — دوس على أي صنف من المنيو</div>';
   } else {
+    // المرحلة 8.6: السلة كانت بتوضّح السعر الفردي بس، من غير إجمالي السطر خالص (الكاشير مضطر يضرب في
+    // دماغه) - وماكانش فيه زرار "شيل" منفصل (غير إنك تنزل بالـ- لحد الصفر). دلوقتي كل سطر واضح:
+    // الاسم (+علامة 🎁 لو عرض/كومبو) + المقاس والسعر الفردي + المرفقات، وإجمالي السطر بارز + زرار شيل
     list.innerHTML = rows.map(([key, v]) => `
       <div class="cart-row">
-        <div class="info"><div class="n">${v.name}</div><div class="l">${v.label} × ${money(v.price)}${(v.modifiers || []).length ? "<br/>" + v.modifiers.map(m => m.name).join("، ") : ""}</div></div>
+        <div class="info">
+          <div class="n">${v.comboId ? "🎁 " : ""}${v.name}</div>
+          <div class="l">${v.label} × ${money(v.price)}${(v.modifiers || []).length ? "<br/>+ " + v.modifiers.map(m => m.name).join("، +") : ""}</div>
+        </div>
         <div class="qty-ctrl">
           <button data-key="${key}" data-d="-1">−</button>
           <span>${v.qty}</span>
           <button data-key="${key}" data-d="1">+</button>
         </div>
+        <div class="line-total">${money(v.price * v.qty)}</div>
+        <button class="cart-remove" data-remove-key="${key}" title="شيل من السلة">🗑️</button>
       </div>`).join("");
     list.querySelectorAll("button[data-key]").forEach(btn => {
       btn.onclick = () => changeQty(btn.dataset.key, parseInt(btn.dataset.d, 10));
+    });
+    list.querySelectorAll("button[data-remove-key]").forEach(btn => {
+      btn.onclick = () => { delete state.cart[btn.dataset.removeKey]; renderCart(); };
     });
   }
 
@@ -1079,16 +1093,82 @@ function renderCashEntryExpenseForm(categories) {
   document.getElementById("cashEntryModalSubmit").textContent = "تسجيل المصروف";
 }
 
-function renderCashEntryPurchaseForm() {
+// المرحلة 8.6: فاتورة مشترى مواد خام حقيقية - الكاشير بيختار من كتالوج المواد الخام الموجودة فعلاً
+// (item_type='raw' بس، نفس /api/inventory/items اللي بيستخدمه المخزون) - میقدرش يكتب صنف جديد.
+// الإجمالي بيتحسب هنا للعرض بس - السيرفر هو اللي بيعيد حسابه فعليًا من سطور الأصناف (عشان محدش يقدر
+// يلاعب فيه)، ومفيش أي تأثير على المخزون لحد ما مدير الفرع/المحاسب يراجع ويأكّد (/:id/confirm)
+let rawMaterialsCache = null;
+let purchaseInvoiceItems = [];
+
+async function loadRawMaterials() {
+  if (rawMaterialsCache) return rawMaterialsCache;
+  const res = await fetch(`${API_BASE_URL}/api/inventory/items`, { headers: { Authorization: `Bearer ${auth.token}` } });
+  if (!res.ok) throw new Error("تعذر تحميل قائمة المواد الخام");
+  rawMaterialsCache = (await res.json()).filter((i) => i.item_type === "raw");
+  return rawMaterialsCache;
+}
+
+function renderPurchaseItemsTable() {
+  const tbody = document.getElementById("purchaseItemsTbody");
+  if (!tbody) return;
+  tbody.innerHTML = purchaseInvoiceItems.length
+    ? purchaseInvoiceItems.map((it, idx) => `
+        <tr>
+          <td>${it.name}</td>
+          <td>${it.quantity} ${it.unit}</td>
+          <td>${money(it.unitPrice)}</td>
+          <td>${money(it.quantity * it.unitPrice)}</td>
+          <td><button type="button" data-idx="${idx}" class="purchase-item-remove">🗑️</button></td>
+        </tr>
+      `).join("")
+    : `<tr><td colspan="5" style="text-align:center;color:var(--faint)">لسه مفيش أصناف مضافة</td></tr>`;
+  const total = purchaseInvoiceItems.reduce((s, it) => s + it.quantity * it.unitPrice, 0);
+  const totalEl = document.getElementById("purchaseItemsTotal");
+  if (totalEl) totalEl.textContent = money(total);
+  tbody.querySelectorAll(".purchase-item-remove").forEach((btn) => {
+    btn.onclick = () => { purchaseInvoiceItems.splice(Number(btn.dataset.idx), 1); renderPurchaseItemsTable(); };
+  });
+}
+
+function renderCashEntryPurchaseForm(rawMaterials) {
   document.getElementById("cashEntryModalBody").innerHTML = `
-    <label>النوع (لحوم / خضار / بقالة ...)</label>
-    <input id="cashEntryCategory" placeholder="النوع" />
-    <label>المبلغ (ج.م)</label>
-    <input id="cashEntryAmount" type="number" min="0.01" step="0.01" placeholder="المبلغ" />
-    <label>ملاحظات (اختياري)</label>
+    <label>فاتورة مشترى مواد خام</label>
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+      <select id="purchaseItemSelect" style="flex:2;min-width:140px">
+        <option value="">اختر مادة خام...</option>
+        ${rawMaterials.map((m) => `<option value="${m.id}" data-unit="${m.unit}">${m.name} (${m.unit})</option>`).join("")}
+      </select>
+      <input id="purchaseItemQty" type="number" min="0.001" step="0.001" placeholder="الكمية" style="flex:1;min-width:70px" />
+      <input id="purchaseItemPrice" type="number" min="0" step="0.01" placeholder="سعر الوحدة" style="flex:1;min-width:80px" />
+      <button id="purchaseItemAddBtn" type="button">+ إضافة</button>
+    </div>
+    <table id="purchaseItemsTable" style="width:100%;font-size:13px;margin-bottom:8px;border-collapse:collapse">
+      <thead><tr><th style="text-align:right">المادة</th><th style="text-align:right">الكمية</th><th style="text-align:right">سعر الوحدة</th><th style="text-align:right">الإجمالي</th><th></th></tr></thead>
+      <tbody id="purchaseItemsTbody"></tbody>
+      <tfoot><tr><td colspan="3" style="text-align:left;font-weight:700">الإجمالي</td><td id="purchaseItemsTotal" style="font-weight:700">0.00</td><td></td></tr></tfoot>
+    </table>
+    <label>ملاحظات (اختياري، اسم المورد مثلًا)</label>
     <input id="cashEntryNotes" placeholder="ملاحظات" />
   `;
-  document.getElementById("cashEntryModalSubmit").textContent = "تسجيل المشترى";
+  document.getElementById("cashEntryModalSubmit").textContent = "تسجيل فاتورة المشترى";
+  renderPurchaseItemsTable();
+  document.getElementById("purchaseItemAddBtn").onclick = () => {
+    const errBox = document.getElementById("cashEntryModalErr");
+    errBox.textContent = "";
+    const sel = document.getElementById("purchaseItemSelect");
+    const id = Number(sel.value);
+    const qty = Number(document.getElementById("purchaseItemQty").value);
+    const price = Number(document.getElementById("purchaseItemPrice").value);
+    if (!id) { errBox.textContent = "لازم تختار مادة خام"; return; }
+    if (!(qty > 0)) { errBox.textContent = "لازم تدخل كمية أكبر من صفر"; return; }
+    if (!(price >= 0)) { errBox.textContent = "لازم تدخل سعر وحدة صحيح"; return; }
+    const mat = rawMaterials.find((m) => m.id === id);
+    purchaseInvoiceItems.push({ inventoryItemId: id, name: mat.name, unit: mat.unit, quantity: qty, unitPrice: price });
+    sel.value = "";
+    document.getElementById("purchaseItemQty").value = "";
+    document.getElementById("purchaseItemPrice").value = "";
+    renderPurchaseItemsTable();
+  };
 }
 
 async function switchCashEntryTab(tab) {
@@ -1097,15 +1177,20 @@ async function switchCashEntryTab(tab) {
   document.getElementById("cashEntryTabPurchase").className = tab === "purchase" ? "active" : "";
   document.getElementById("cashEntryModalErr").textContent = "";
   document.getElementById("cashEntryModalOk").textContent = "";
+  document.getElementById("cashEntryModalBody").innerHTML = `<div style="text-align:center;color:var(--faint);font-size:13px">جاري التحميل...</div>`;
   if (tab === "expense") {
-    document.getElementById("cashEntryModalBody").innerHTML = `<div style="text-align:center;color:var(--faint);font-size:13px">جاري التحميل...</div>`;
     try {
       renderCashEntryExpenseForm(await loadExpenseCategories());
     } catch (e) {
       document.getElementById("cashEntryModalErr").textContent = e.message;
     }
   } else {
-    renderCashEntryPurchaseForm();
+    purchaseInvoiceItems = [];
+    try {
+      renderCashEntryPurchaseForm(await loadRawMaterials());
+    } catch (e) {
+      document.getElementById("cashEntryModalErr").textContent = e.message;
+    }
   }
 }
 document.getElementById("cashEntryTabExpense").onclick = () => switchCashEntryTab("expense");
@@ -1152,29 +1237,54 @@ document.getElementById("cashEntryModalSubmit").onclick = async () => {
   const okBox = document.getElementById("cashEntryModalOk");
   errBox.textContent = "";
   okBox.textContent = "";
+  const submitBtn = document.getElementById("cashEntryModalSubmit");
+
+  // المرحلة 8.6: فاتورة مشترى مواد خام - مسار منفصل تمامًا (بنود، مش مبلغ حر) - الإجمالي هنا للعرض
+  // بس، السيرفر بيعيد حسابه من سطور الأصناف نفسها
+  if (cashEntryTab === "purchase") {
+    if (purchaseInvoiceItems.length === 0) { errBox.textContent = "لازم تضيف صنف واحد على الأقل للفاتورة"; return; }
+    const notes = document.getElementById("cashEntryNotes").value.trim();
+    submitBtn.disabled = true;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/purchases`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+        body: JSON.stringify({
+          items: purchaseInvoiceItems.map((it) => ({ inventoryItemId: it.inventoryItemId, quantity: it.quantity, unitPrice: it.unitPrice })),
+          notes: notes || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "تعذر تسجيل فاتورة المشترى");
+      okBox.textContent = "✅ تم تسجيل فاتورة المشترى - في انتظار مراجعة المدير/المحاسب";
+      purchaseInvoiceItems = [];
+      renderPurchaseItemsTable();
+      document.getElementById("cashEntryNotes").value = "";
+      loadCashEntryTodayList();
+    } catch (e) {
+      errBox.textContent = e.message;
+    } finally {
+      submitBtn.disabled = false;
+    }
+    return;
+  }
+
   const category = document.getElementById("cashEntryCategory").value;
   const amount = Number(document.getElementById("cashEntryAmount").value);
   const notes = document.getElementById("cashEntryNotes").value.trim();
-  if (!category) { errBox.textContent = cashEntryTab === "expense" ? "لازم تختار بند مصروف" : "لازم تكتب النوع"; return; }
+  if (!category) { errBox.textContent = "لازم تختار بند مصروف"; return; }
   if (!amount || amount <= 0) { errBox.textContent = "لازم تدخل مبلغ أكبر من صفر"; return; }
 
-  const submitBtn = document.getElementById("cashEntryModalSubmit");
   submitBtn.disabled = true;
   try {
-    const path = cashEntryTab === "expense" ? "/api/expenses" : "/api/purchases";
-    const body = cashEntryTab === "expense"
-      ? { categoryId: category, amount, notes: notes || null }
-      : { category, amount, notes: notes || null };
-    const res = await fetch(`${API_BASE_URL}${path}`, {
+    const res = await fetch(`${API_BASE_URL}/api/expenses`, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ categoryId: category, amount, notes: notes || null }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "تعذر التسجيل");
     okBox.textContent = "✅ تم التسجيل - في انتظار مراجعة المدير/المحاسب";
     document.getElementById("cashEntryAmount").value = "";
     document.getElementById("cashEntryNotes").value = "";
-    if (cashEntryTab === "purchase") document.getElementById("cashEntryCategory").value = "";
     loadCashEntryTodayList();
   } catch (e) {
     errBox.textContent = e.message;

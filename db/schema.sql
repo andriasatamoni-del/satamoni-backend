@@ -574,6 +574,9 @@ CREATE TABLE purchases (
   reviewed_by       INTEGER REFERENCES users(id),
   reviewed_at       TIMESTAMPTZ,
   rejection_reason  TEXT,
+  -- المرحلة 8.6: هل المشترى ده اتترحّل للمخزون/المحاسبة بالفعل (وقت التأكيد) - مرة واحدة بس، بيتقفل
+  -- بنفس قفل FOR UPDATE بتاع /:id/confirm فمينفعش يترحّل مرتين حتى لو الطلب اتكرر
+  posted_to_inventory BOOLEAN NOT NULL DEFAULT FALSE,
   sync_uuid     UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   synced_at     TIMESTAMPTZ
 );
@@ -606,6 +609,22 @@ CREATE TABLE inventory_items (
   negative_stock_policy TEXT NOT NULL DEFAULT 'STRICT' CHECK (negative_stock_policy IN ('STRICT', 'ALLOW_WITH_APPROVAL')),
   created_at            TIMESTAMPTZ DEFAULT now()
 );
+
+-- المرحلة 8.6: بنود مشترى الكاشير النقدي (اختيارية) - كل بند بيربط بمادة خام موجودة فعلاً في
+-- inventory_items بس (الكاشير میقدرش ينشئ صنف جديد، مجرد اختيار من الكتالوج الموجود). الترحيل الفعلي
+-- للمخزون/المحاسبة (postInventoryMovement + postJournalEntry) بيحصل عند التأكيد بس - نفس نقطة الترحيل
+-- الوحيدة المستخدمة في GRN، مفيش آلية مخزون تانية موازية
+CREATE TABLE purchase_items (
+  id                 SERIAL PRIMARY KEY,
+  purchase_id        INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+  inventory_item_id  INTEGER NOT NULL REFERENCES inventory_items(id),
+  quantity           NUMERIC NOT NULL CHECK (quantity > 0),
+  unit               TEXT NOT NULL,
+  unit_price         NUMERIC NOT NULL CHECK (unit_price >= 0),
+  line_total         NUMERIC NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_purchase_items_purchase ON purchase_items(purchase_id);
 
 -- ---------------- الموردين (شركات المواد الخام) ----------------
 -- المرحلة 4A: name فضل زي ما هو (لتوافق كل الكود القديم اللي بيقرأه) - الحقول الجديدة كلها اختيارية،

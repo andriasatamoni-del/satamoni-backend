@@ -12,6 +12,11 @@ const {
   openShift, previewExpectedCash, closeShift, reviewShiftVariance, forceCloseShift,
   sanitizeShiftForCashier,
 } = require("../db/shift-engine");
+const { validateIdParam } = require("../middleware/validate-id-param");
+
+// المرحلة 8.6: نفس التحقق من routes/orders.js (المرحلة 8B) - :id لازم يكون رقم صحيح، وإلا 400 واضح
+// بدل ما استعلام SQL يرمي خطأ Postgres خام (invalid input syntax) كـ500
+router.param("id", validateIdParam);
 
 // المرحلة 8.6: تصفية استجابة الشيفت حسب دور اللي طالبها - كاشير مايشوفش أي رقم مالي حساس عن شيفته
 // (كاش متوقع/فعلي/فرق) حتى لو كان صاحب الشيفت نفسه. القرار ده على مستوى الـresponse نفسه، مش إخفاء

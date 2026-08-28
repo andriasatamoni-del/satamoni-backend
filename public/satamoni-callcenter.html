@@ -85,6 +85,8 @@
   .qty-ctrl button { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; font-size: 14px; }
   .qty-ctrl span { min-width: 16px; text-align: center; font-weight: 700; }
   .cart-row .line-total { font-family: 'Courier New', monospace; font-weight: 800; color: var(--gold-bright); font-size: 13px; min-width: 60px; text-align: left; }
+  .cart-remove { background: transparent; border: none; cursor: pointer; font-size: 14px; opacity: .6; padding: 2px 4px; }
+  .cart-remove:hover { opacity: 1; }
   .cart-empty { text-align: center; color: var(--faint); padding: 30px 10px; font-size: 13px; }
   #cartFooter { padding: 14px 16px; border-top: 1px solid var(--line); }
   .row { display: flex; justify-content: space-between; font-family: 'Courier New', monospace; font-size: 13px; margin-bottom: 4px; }
@@ -654,17 +656,20 @@ function renderCart() {
   if (rows.length === 0) {
     list.innerHTML = '<div class="cart-empty">السلة فاضية</div>';
   } else {
+    // المرحلة 8.6: زرار "شيل" منفصل عن تصفير الكمية بالـ- + علامة 🎁 واضحة للعروض/الكومبو
     list.innerHTML = rows.map(([key, v]) => `
       <div class="cart-row">
         <div class="info">
-          <div class="n">${v.name} <span class="l">(${v.label})</span></div>
+          <div class="n">${v.comboId ? "🎁 " : ""}${v.name} <span class="l">(${v.label})</span></div>
           ${(v.modifiers || []).length ? `<div class="mods">+ ${v.modifiers.map(m => m.name).join("، ")}</div>` : ""}
           <div class="unit">${money(v.price)} × ${v.qty}</div>
         </div>
         <div class="qty-ctrl"><button data-key="${key}" data-d="-1">−</button><span>${v.qty}</span><button data-key="${key}" data-d="1">+</button></div>
         <div class="line-total">${money(v.price * v.qty)}</div>
+        <button class="cart-remove" data-remove-key="${key}" title="شيل من السلة">🗑️</button>
       </div>`).join("");
     list.querySelectorAll("button[data-key]").forEach(btn => { btn.onclick = () => changeQty(btn.dataset.key, parseInt(btn.dataset.d, 10)); });
+    list.querySelectorAll("button[data-remove-key]").forEach(btn => { btn.onclick = () => { delete state.cart[btn.dataset.removeKey]; renderCart(); }; });
   }
   const subtotal = rows.reduce((s, [, v]) => s + v.price * v.qty, 0);
   const deliveryFee = currentDeliveryFee();
