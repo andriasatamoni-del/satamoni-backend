@@ -5,31 +5,102 @@ const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/aut
 const { logAudit } = require("../db/audit");
 const { generateSuggestedRequisition } = require("../db/requisition-suggestion");
 
-// GET /api/kitchen-orders?branchId=&status= - طلبيات الفروع للسنتر كيتشن
-// مدير الفرع/الكاشير يشوفوا طلبيات فرعهم بس، الأدمن يشوف كل حاجة (قايمة تنفيذ السنتر كيتشن)
+// GET /api/kitchen-orders?branchId=&status=&from=&to=&createdBy=&page=&limit= - طلبيات الفروع للسنتر كيتشن
+// مدير الفرع/الكاشير يشوفوا طلبيات فرعهم بس، الأدمن/السنتر كيتشن يشوفوا كل حاجة (قايمة تنفيذ السنتر كيتشن)
+//
+// STEP L-audit (جاهزية الواجهة): فلاتر إضافية فوق الفلترة القديمة (branchId/status) - كلها اختيارية
+// وبتترجم لـNULL (بدون فلترة) لو مبعتتش، فمفيش أي تأثير على أي استدعاء قديم:
+//   - status: قيمة واحدة أو أكتر مفصولة بفاصلة (status=SUBMITTED,APPROVED) - نفس الآلية دي بتغطي "طابور
+//     اعتماد السنتر كيتشن" (status=SUBMITTED) و"طابور التجهيز" (status=APPROVED,PREPARING) وأي تركيبة
+//     تانية من غير الحاجة لباراميتر مخصص منفصل لكل حالة استخدام
+//   - from/to: مدى تاريخ بيفلتر على business_date (نفس اصطلاح from/to المستخدم في routes/reports.js)
+//   - createdBy: صنّاع الطلبية (مفيد لمدير فرع عايز يشوف بس طلباته هو وسط طلبات فرعه)
+//
+// الترقيم (pagination): اختياري تمامًا وبيتفعّل بس لو page أو limit اتبعتوا صراحة - من غيرهم الـresponse
+// شكله زي ما هو بالظبط (مصفوفة خام) عشان satamoni-kitchen.html والاختبارات القديمة (kitchen-orders-
+// workflow.test.js) يفضلوا شغالين من غير أي تغيير. لو page/limit اتبعتوا، الرد بيبقى غلاف
+// {data, page, limit, total, totalPages} بترتيب ثابت (أحدث طلبية الأول: business_date DESC, id DESC)
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 100;
+
+function parsePositiveInt(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) return null; // null = قيمة غير صالحة (مش نفس معنى fallback)
+  return n;
+}
+
 router.get(
   "/",
   requireAuth,
   requireRole("admin", "branch_manager", "cashier"),
   async (req, res) => {
-    let { branchId, status } = req.query;
+    let { branchId, status, from, to, createdBy, page, limit } = req.query;
     // أدمن أو موظف السنتر كيتشن يشوفوا طلبيات كل الفروع (عشان ينفذوها) - غيرهم فرعهم بس
     if (req.user.role !== "admin" && !req.user.isCentralKitchen) {
       if (branchId && !assertOwnBranch(req.user, branchId)) {
-        return res.status(403).json({ error: "معندكش صلاحية تشوف طلبيات فرع تاني" });
+        return res.status(403).json({ error: "معندكش صلاحية تشوف طلبيات فرع تاني", code: "FORBIDDEN_BRANCH" });
       }
       branchId = req.user.branchId;
     }
+
+    const statusList = status ? String(status).split(",").map((s) => s.trim()).filter(Boolean) : null;
+    if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      return res.status(400).json({ error: "from لازم يكون بصيغة YYYY-MM-DD", code: "INVALID_PARAMETER" });
+    }
+    if (to && !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      return res.status(400).json({ error: "to لازم يكون بصيغة YYYY-MM-DD", code: "INVALID_PARAMETER" });
+    }
+
+    const paginated = page !== undefined || limit !== undefined;
+    let pageNum = 1, limitNum = DEFAULT_PAGE_SIZE;
+    if (paginated) {
+      pageNum = parsePositiveInt(page, 1);
+      limitNum = parsePositiveInt(limit, DEFAULT_PAGE_SIZE);
+      if (pageNum === null) return res.status(400).json({ error: "page لازم يكون رقم صحيح أكبر من صفر", code: "INVALID_PARAMETER" });
+      if (limitNum === null) return res.status(400).json({ error: "limit لازم يكون رقم صحيح أكبر من صفر", code: "INVALID_PARAMETER" });
+      if (limitNum > MAX_PAGE_SIZE) {
+        return res.status(400).json({ error: `limit مايتخطاش ${MAX_PAGE_SIZE}`, code: "INVALID_PARAMETER" });
+      }
+    }
+
     try {
-      const orders = await pool.query(
-        `SELECT ko.*, b.name AS branch_name
-         FROM kitchen_orders ko
-         JOIN branches b ON b.id = ko.branch_id
-         WHERE ($1::int IS NULL OR ko.branch_id = $1)
-           AND ($2::text IS NULL OR ko.status = $2)
-         ORDER BY ko.created_at DESC`,
-        [branchId || null, status || null]
-      );
+      const filters = [branchId || null, statusList, from || null, to || null, createdBy || null];
+      const whereClause = `
+        WHERE ($1::int IS NULL OR ko.branch_id = $1)
+          AND ($2::text[] IS NULL OR ko.status = ANY($2))
+          AND ($3::date IS NULL OR ko.business_date >= $3)
+          AND ($4::date IS NULL OR ko.business_date <= $4)
+          AND ($5::int IS NULL OR ko.created_by = $5)
+      `;
+
+      let orders, total = null, totalPages = null;
+      if (paginated) {
+        const countRes = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM kitchen_orders ko ${whereClause}`, filters
+        );
+        total = countRes.rows[0].n;
+        totalPages = Math.max(1, Math.ceil(total / limitNum));
+        orders = await pool.query(
+          `SELECT ko.*, b.name AS branch_name
+           FROM kitchen_orders ko JOIN branches b ON b.id = ko.branch_id
+           ${whereClause}
+           ORDER BY ko.business_date DESC, ko.id DESC
+           LIMIT $6 OFFSET $7`,
+          [...filters, limitNum, (pageNum - 1) * limitNum]
+        );
+      } else {
+        // نفس الاستعلام القديم بالظبط (بدون LIMIT/OFFSET، بنفس الترتيب created_at DESC) - عشان أي استدعاء
+        // قديم (من غير page/limit) يفضل شغال بنفس الشكل والترتيب تمامًا زي قبل الفلاتر الإضافية دي
+        orders = await pool.query(
+          `SELECT ko.*, b.name AS branch_name
+           FROM kitchen_orders ko JOIN branches b ON b.id = ko.branch_id
+           ${whereClause}
+           ORDER BY ko.created_at DESC`,
+          filters
+        );
+      }
+
       const orderIds = orders.rows.map((o) => o.id);
       const items = orderIds.length
         ? (await pool.query(
@@ -44,7 +115,12 @@ router.get(
         ...o,
         items: items.filter((it) => it.kitchen_order_id === o.id),
       }));
-      res.json(result);
+
+      if (paginated) {
+        res.json({ data: result, page: pageNum, limit: limitNum, total, totalPages });
+      } else {
+        res.json(result);
+      }
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -90,7 +166,10 @@ router.post(
         );
       }
       await client.query("COMMIT");
-      res.status(201).json({ orderId });
+      // STEP L-audit (جاهزية الواجهة): id مضافة صراحة عشان تتماشى مع باقي نقاط الإنشاء في الـProcurement v2
+      // (packaging/production/purchase-orders... إلخ كلها بترجع id) - orderId فضلت زي ما هي بالظبط عشان
+      // أي كود قديم بيعتمد عليها (public/satamoni-kitchen.html وباقي الاختبارات) يفضل شغال من غير أي تغيير
+      res.status(201).json({ id: orderId, orderId });
     } catch (err) {
       await client.query("ROLLBACK");
       res.status(500).json({ error: err.message });
