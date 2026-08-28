@@ -10,7 +10,6 @@
   "dependencies": {
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
-    "pdf-to-printer": "^5.6.0",
     "puppeteer": "^23.9.0"
   }
 }

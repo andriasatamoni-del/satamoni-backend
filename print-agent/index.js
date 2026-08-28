@@ -33,9 +33,7 @@ async function processJob(job) {
   try {
     const claimed = await api.claimJob(job.id);
     const printer = await api.getPrinter(claimed.printer_id);
-    await printJobContent({
-      html: claimed.content_html, paperWidthMm: printer.paper_width_mm, osPrinterName: printer.os_printer_name,
-    });
+    await printJobContent({ html: claimed.content_html, osPrinterName: printer.os_printer_name });
     await api.markPrinted(job.id);
     console.log(`[job ${job.id}] تمت الطباعة بنجاح`);
   } catch (err) {

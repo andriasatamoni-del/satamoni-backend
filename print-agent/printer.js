@@ -1,68 +1,61 @@
-// طبقة الطباعة الفعلية - Puppeteer بيرندر محتوى الـjob (HTML جاهز من db/print-templates.js) لـPDF بحجم
-// ورق الطابعة الحرارية بالظبط (عرض ثابت + ارتفاع محسوب من طول المحتوى فعليًا، زي أي إيصال حراري حقيقي)،
-// وبعدين pdf-to-printer بيبعت الـPDF ده صامت تمامًا (من غير أي نافذة/print dialog) للطابعة المستهدفة
-// بالاسم بالظبط (os_printer_name). ده الحل اللي بيتجنب المشكلة اللي واجهناها فعليًا مع Chrome العادي
-// (--kiosk-printing بيتأثر بأي نسخة Chrome شغالة بالفعل على الجهاز) - Puppeteer هنا بيشغّل نسخة Chromium
-// منعزلة تمامًا عن أي حاجة تانية شغالة على الجهاز.
+// طبقة الطباعة الفعلية - Puppeteer بيفتح نسخة Chromium معزولة تمامًا وبيطبع بنفس آلية المتصفح العادي
+// بالظبط (window.print() فعليًا، مش توليد PDF وسيط) - نفس الآلية اللي شاشات ساتاموني القديمة
+// (print-tickets.js، زرار "إعادة طباعة" في متابعة الطلبات) بتستخدمها وبتطبع صح على نفس الطابعة دايمًا.
+//
+// جرّبنا الأول توليد PDF بحجم مضبوط وبعته بـpdf-to-printer (SumatraPDF) - اتأكد فعليًا على XP-D200N
+// إنه بيطبع الإيصالات الطويلة صح، لكن تذاكر المطبخ القصيرة كانت بتطلع منزّحة/مقطوعة رغم كل محاولات
+// ضبط المقاس - بينما "إعادة طباعة" من متابعة الطلبات (اللي بتستخدم window.print() من المتصفح مباشرة)
+// كانت بتطبع نفس المحتوى صح تمامًا كل مرة. يبقى المشكلة مش في المحتوى ولا في الطابعة - في مسار
+// SumatraPDF نفسه. الحل: نستخدم نفس آلية window.print() المضمونة، بس من غير المستخدم يشوف أي حاجة
+// (--kiosk-printing بيمنع ظهور نافذة/dialog الطباعة، ونافذة Chromium نفسها برّه حدود الشاشة تمامًا).
+//
+// قيد واحد مهم: --kiosk-printing بيطبع على "الطابعة الافتراضية" في ويندوز بس (مش بيقبل تحديد طابعة
+// لكل طبعة لوحدها زي pdf-to-printer). عشان نفضل نقدر نوجّه لأكتر من طابعة (كاشير/مطبخ/دليفري)، بنغيّر
+// الطابعة الافتراضية لحظيًا قبل كل أمر طباعة (setDefaultPrinter) - آمن لأن الطابور بيتعالج واحد واحد
+// بالترتيب (index.js) مش بالتوازي، فمفيش تعارض بين أمرين بيغيّروا الافتراضية في نفس اللحظة.
 const puppeteer = require("puppeteer");
-const { print: printPdf, getPrinters } = require("pdf-to-printer");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+const { exec } = require("child_process");
+const { promisify } = require("util");
+const execAsync = promisify(exec);
 
 let browserPromise = null;
 function getBrowser() {
   if (!browserPromise) {
-    browserPromise = puppeteer.launch({ headless: true });
+    browserPromise = puppeteer.launch({
+      headless: false, // لازم non-headless عشان window.print() يوصل فعليًا لطابور طباعة ويندوز
+      args: [
+        "--kiosk-printing", // يطبع فورًا صامت من غير أي نافذة/dialog تأكيد
+        "--window-position=-3000,-3000", // برّه حدود الشاشة تمامًا - المستخدم مايشوفهاش خالص
+        "--window-size=420,600",
+      ],
+    });
   }
   return browserPromise;
 }
 
-// PX -> MM (96 DPI، نفس معيار CSS القياسي) + هامش بسيط تحت عشان أي فاصل/سطر أخير ميتقصش
-function pxToMm(px) {
-  return (px * 25.4) / 96;
-}
-
-async function renderHtmlToPdf(html, paperWidthMm) {
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-  try {
-    await page.setContent(html, { waitUntil: "load" });
-    const heightPx = await page.evaluate(() => document.body.scrollHeight);
-    const widthMm = paperWidthMm || 80;
-    // اتأكد فعليًا على XP-D200N: مستندات قصيرة (تذكرة صنف واحد، ~30-40mm ارتفاع) طلعت مقلوبة landscape
-    // وبخط صغير جدًا. السبب الحقيقي: صفحة عرضها (80mm) أكبر من ارتفاعها (30mm) شكلها هندسيًا landscape
-    // (عرض > ارتفاع)، ومحرك الطباعة/الدرايفر بيتعامل مع أي صفحة عرضها أكبر من ارتفاعها كـlandscape
-    // تلقائيًا بغض النظر عن نية المحتوى - "-print-settings noscale" (تحت) بيوقف التكبير/التصغير بس مش
-    // كافي لوحده. الحل الحقيقي: الارتفاع مينفعش يفضل أصغر من العرض أبدًا - نضمن كده إن الصفحة تفضل
-    // portrait هندسيًا دايمًا (ارتفاع >= عرض)، حتى لو ده معناه مساحة بيضا فاضية تحت في التذاكر القصيرة -
-    // ده تكلفة ورق بسيطة جدًا مقابل ضمان الطباعة صح كل مرة
-    const heightMm = Math.max(widthMm + 10, Math.ceil(pxToMm(heightPx)) + 8);
-    const pdfPath = path.join(os.tmpdir(), `satamoni-print-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.pdf`);
-    await page.pdf({
-      path: pdfPath, width: `${widthMm}mm`, height: `${heightMm}mm`,
-      printBackground: true, margin: { top: 0, bottom: 0, left: 0, right: 0 },
-    });
-    return pdfPath;
-  } finally {
-    await page.close();
-  }
+// بيغيّر الطابعة الافتراضية في ويندوز لحظيًا - لازم يحصل قبل كل window.print() عشان --kiosk-printing
+// يستهدف الطابعة الصح. PowerShell (Win32_Printer + SetDefaultPrinter) موجود افتراضيًا في أي ويندوز 10/11
+async function setDefaultPrinter(osPrinterName) {
+  const escaped = osPrinterName.replace(/'/g, "''");
+  const cmd = `powershell -NoProfile -Command "(Get-CimInstance -ClassName Win32_Printer -Filter \\"Name='${escaped}'\\") | Invoke-CimMethod -MethodName SetDefaultPrinter"`;
+  await execAsync(cmd);
 }
 
 // {html, paperWidthMm, osPrinterName} - بيرمي استثناء لو فشلت الطباعة (الـcaller في index.js مسؤول عن
 // تبليغ الباك إند FAILED وعدم إيقاف باقي الطابور)
-async function printJobContent({ html, paperWidthMm, osPrinterName }) {
+async function printJobContent({ html, osPrinterName }) {
   if (!osPrinterName) throw new Error("الطابعة دي معندهاش اسم نظام تشغيل (os_printer_name) مسجّل - ظبّطها من إعدادات الطباعة");
-  const pdfPath = await renderHtmlToPdf(html, paperWidthMm);
+  await setDefaultPrinter(osPrinterName);
+  const browser = await getBrowser();
+  const page = await browser.newPage();
   try {
-    // pdf-to-printer (SumatraPDF من جواه) افتراضيًا بيعمل "Fit to Page" - بيكبّر/يصغّر أي PDF عشان يملي
-    // حجم الورق المُعرَّف في درايفر الطابعة نفسه في ويندوز، حتى لو الـPDF نفسه متولّد بحجم مضبوط بالظبط.
-    // "noscale" بيوقف ده - الطباعة بتحصل بالمقاس الحقيقي 1:1 اللي احنا حددناه (paperWidthMm/heightMm)
-    // بدل ما تتصغّر/تتكبّر تلقائي. مشكلة الاتجاه (landscape) اتحلت من مصدرها في renderHtmlToPdf فوق -
-    // بضمان إن الصفحة تفضل portrait هندسيًا دايمًا، مش هنا
-    await printPdf(pdfPath, { printer: osPrinterName, win32: ["-print-settings", "noscale"] });
+    await page.setContent(html, { waitUntil: "load" });
+    await page.evaluate(() => window.print());
+    // مفيش dialog نستنى قفوله (kiosk-printing بيطبع صامت فورًا) - بس محتاجين نسيب وقت كافي قبل ما نقفل
+    // الصفحة عشان نضمن إن أمر الطباعة اتبعت فعليًا لطابور ويندوز قبل ما ننتقل للـjob اللي بعده
+    await new Promise((r) => setTimeout(r, 2000));
   } finally {
-    fs.unlink(pdfPath, () => {});
+    await page.close();
   }
 }
 
@@ -74,4 +67,4 @@ async function closeBrowser() {
   }
 }
 
-module.exports = { printJobContent, closeBrowser, listSystemPrinters: getPrinters };
+module.exports = { printJobContent, closeBrowser };
