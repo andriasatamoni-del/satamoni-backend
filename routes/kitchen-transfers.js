@@ -8,6 +8,20 @@ const { logAudit } = require("../db/audit");
 
 const stockManagers = requireRole("admin", "branch_manager");
 
+// Procurement v2 STEP D: لو الطلبية المرتبطة (kitchen_order_id) بتستخدم دورة الحياة الجديدة (DRAFT→...→
+// IN_TRANSIT)، بنكملها لنفس النمط (IN_TRANSIT وقت /issue، RECEIVED وقت /receive) بدل ما تتقفل على القيمة
+// القديمة 'fulfilled' زي طلبيات pending العادية - نفس السطر بالظبط بيفرّق بين المسارين حسب حالتها الحالية
+const NEW_WORKFLOW_ACTIVE_STATUSES = ["DRAFT", "SUBMITTED", "APPROVED", "PREPARING", "READY", "DISPATCHED", "IN_TRANSIT"];
+async function syncLinkedKitchenOrder(client, kitchenOrderId, { newWorkflowStatus, legacyStatus }) {
+  if (!kitchenOrderId) return;
+  const existing = await client.query("SELECT status FROM kitchen_orders WHERE id = $1", [kitchenOrderId]);
+  if (existing.rows.length === 0) return;
+  const isNewWorkflow = NEW_WORKFLOW_ACTIVE_STATUSES.includes(existing.rows[0].status);
+  await client.query("UPDATE kitchen_orders SET status = $1 WHERE id = $2", [
+    isNewWorkflow ? newWorkflowStatus : legacyStatus, kitchenOrderId,
+  ]);
+}
+
 // بيستهلك من دفعات فرع المصدر (لو الصنف متتبّع بدفعات) وبيسجل تفصيل كل دفعة اتصرف منها في
 // kitchen_transfer_item_batches عشان هويتها (رقم/صلاحية/إنتاج/تكلفة) تتنقل مع الكمية لفرع الاستلام
 // بعدين - لو الصنف عادي (مفيش دفعات نشطة)، بيرجع لحركة واحدة عادية زي أي تحويل قبل هذه المرحلة
@@ -276,7 +290,7 @@ router.post("/itemized", requireAuth, requireRole("admin"), async (req, res) => 
     }
 
     if (kitchenOrderId) {
-      await client.query("UPDATE kitchen_orders SET status = 'fulfilled' WHERE id = $1", [kitchenOrderId]);
+      await syncLinkedKitchenOrder(client, kitchenOrderId, { newWorkflowStatus: "RECEIVED", legacyStatus: "fulfilled" });
     }
 
     await logAudit(client, {
@@ -390,6 +404,9 @@ router.post("/:id/issue", requireAuth, stockManagers, async (req, res) => {
       `UPDATE kitchen_transfers SET status = 'in_transit', issued_by = $1, issued_at = now() WHERE id = $2 RETURNING *`,
       [req.user.id, t.id]
     );
+    if (t.kitchen_order_id) {
+      await syncLinkedKitchenOrder(client, t.kitchen_order_id, { newWorkflowStatus: "IN_TRANSIT", legacyStatus: "pending" });
+    }
     await logAudit(client, {
       branchId: t.from_branch_id, userId: req.user.id, action: "TRANSFER_ISSUED", entityType: "kitchen_transfer", entityId: t.id, req,
     });
@@ -446,7 +463,7 @@ router.post("/:id/receive", requireAuth, stockManagers, async (req, res) => {
       [newStatus, req.user.id, accountingResult ? accountingResult.entry.id : null, t.id]
     );
     if (t.kitchen_order_id) {
-      await client.query("UPDATE kitchen_orders SET status = 'fulfilled' WHERE id = $1", [t.kitchen_order_id]);
+      await syncLinkedKitchenOrder(client, t.kitchen_order_id, { newWorkflowStatus: "RECEIVED", legacyStatus: "fulfilled" });
     }
     await logAudit(client, {
       branchId: t.to_branch_id, userId: req.user.id, action: "TRANSFER_RECEIVED", entityType: "kitchen_transfer", entityId: t.id,
