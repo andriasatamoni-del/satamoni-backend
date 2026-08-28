@@ -1922,3 +1922,62 @@ CREATE TABLE approval_requests (
 );
 CREATE INDEX idx_approval_requests_status ON approval_requests(status);
 CREATE INDEX idx_approval_requests_branch ON approval_requests(branch_id);
+
+-- ---------------- نظام الطباعة (طابعات فرع + محطات تحضير + طابور طباعة) ----------------
+-- راجع db/migrations/0015_printing.js للشرح الكامل للفلسفة (فشل الطباعة ميوقفش الطلب أبدًا، التوجيه
+-- Menu Item/Category -> Station -> Printer مش هارد كودد)
+CREATE TABLE kitchen_stations (
+  id          SERIAL PRIMARY KEY,
+  branch_id   INTEGER NOT NULL REFERENCES branches(id),
+  name        TEXT NOT NULL,
+  printer_id  INTEGER,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(branch_id, name)
+);
+
+CREATE TABLE printers (
+  id                   SERIAL PRIMARY KEY,
+  branch_id            INTEGER NOT NULL REFERENCES branches(id),
+  name                 TEXT NOT NULL,
+  printer_type         TEXT NOT NULL CHECK (printer_type IN ('CASHIER', 'KITCHEN', 'DELIVERY', 'REPORT')),
+  connection_type      TEXT NOT NULL DEFAULT 'USB' CHECK (connection_type IN ('USB', 'LAN')),
+  os_printer_name      TEXT,
+  ip_address           TEXT,
+  port                 INTEGER,
+  paper_width_mm       INTEGER NOT NULL DEFAULT 80,
+  is_enabled           BOOLEAN NOT NULL DEFAULT TRUE,
+  is_default_for_type  BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE kitchen_stations ADD CONSTRAINT fk_kitchen_stations_printer FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL;
+
+ALTER TABLE menu_categories ADD COLUMN station_id INTEGER REFERENCES kitchen_stations(id) ON DELETE SET NULL;
+ALTER TABLE menu_items ADD COLUMN station_id INTEGER REFERENCES kitchen_stations(id) ON DELETE SET NULL;
+
+CREATE TABLE print_jobs (
+  id                  SERIAL PRIMARY KEY,
+  order_id            INTEGER REFERENCES orders(id),
+  branch_id           INTEGER NOT NULL REFERENCES branches(id),
+  print_type          TEXT NOT NULL CHECK (print_type IN (
+    'CUSTOMER_RECEIPT', 'KITCHEN_TICKET', 'KITCHEN_SUMMARY',
+    'DELIVERY_SUMMARY', 'DELIVERY_FINAL_RECEIPT', 'DINE_IN_BILL', 'TEST_PRINT'
+  )),
+  CONSTRAINT chk_print_jobs_order_id CHECK (order_id IS NOT NULL OR print_type = 'TEST_PRINT'),
+  printer_id          INTEGER REFERENCES printers(id) ON DELETE SET NULL,
+  station_id          INTEGER REFERENCES kitchen_stations(id) ON DELETE SET NULL,
+  status              TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PRINTING', 'PRINTED', 'FAILED', 'CANCELLED')),
+  content_html        TEXT NOT NULL,
+  idempotency_key     TEXT NOT NULL UNIQUE,
+  attempts            INTEGER NOT NULL DEFAULT 0,
+  last_error          TEXT,
+  created_by          INTEGER REFERENCES users(id),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  printing_started_at TIMESTAMPTZ,
+  printed_at          TIMESTAMPTZ,
+  failed_at           TIMESTAMPTZ
+);
+CREATE INDEX idx_print_jobs_branch_status ON print_jobs(branch_id, status);
+CREATE INDEX idx_print_jobs_order ON print_jobs(order_id);

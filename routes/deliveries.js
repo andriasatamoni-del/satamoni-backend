@@ -9,6 +9,7 @@ const { requirePermission, hasPermission } = require("../middleware/permissions"
 const {
   assignDriver, unassignDriver, markOutForDelivery, markDelivered, markFailed, rescheduleFailed,
 } = require("../db/delivery-engine");
+const { queueDeliveryHandoverPrintJobs } = require("../db/print-queue");
 
 router.use(requireAuth);
 
@@ -197,6 +198,8 @@ router.post("/:orderId/out-for-delivery", async (req, res) => {
     const auth = await authorizeDeliveryAction(client, req, res, order);
     if (!auth) { await client.query("ROLLBACK"); return; }
     const updated = await markOutForDelivery(client, { order, actorUserId: req.user.id });
+    // نظام الطباعة: إيصال دليفري نهائي (فيه سعر) لحظة تسليم الطلب فعليًا للسائق - هو اللي هيسلّمه للعميل
+    await queueDeliveryHandoverPrintJobs(client, { orderId: order.id, createdBy: req.user.id });
     await client.query("COMMIT");
     res.json(updated);
   } catch (err) {

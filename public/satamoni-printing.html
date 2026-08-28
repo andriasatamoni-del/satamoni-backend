@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — إعدادات الطباعة</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 10px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #topbar select { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+  p.hint { color: var(--faint); font-size: 12px; margin: -6px 0 12px; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tabbtn { padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-size: 13px; font-weight: 700; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .tabpanel { display: none; }
+  .tabpanel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select { flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .tablewrap { overflow-x: auto; margin-bottom: 16px; }
+  select.inlineSelect { background: var(--bg-alt); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .pill.yes { background: rgba(63,163,77,.15); color: var(--green); }
+  .pill.no { background: rgba(194,42,36,.15); color: #F08A83; }
+  .pill.failed { background: rgba(194,42,36,.15); color: #F08A83; }
+  .pill.pending { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .pill.printed { background: rgba(63,163,77,.15); color: var(--green); }
+  .smallbtn { padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-alt); color: var(--ink); cursor: pointer; font-size: 11px; }
+  .smallbtn.danger { color: #F08A83; border-color: #6b2b28; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🖨️ ساتاموني — إعدادات الطباعة</div>
+  <select id="branchSelect" style="display:none"></select>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🖨️ تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div class="tabs">
+    <button class="tabbtn active" data-tab="printers">الطابعات</button>
+    <button class="tabbtn" data-tab="routing">المحطات والتوجيه</button>
+    <button class="tabbtn" data-tab="queue">طابور الطباعة</button>
+  </div>
+
+  <!-- ===================== تبويب: الطابعات ===================== -->
+  <div class="tabpanel active" id="panel-printers">
+    <h1>طابعة جديدة</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="pName" placeholder="اسم الطابعة (مثال: طابعة الكاشير الأمامية)" />
+        <select id="pType">
+          <option value="CASHIER">كاشير</option>
+          <option value="KITCHEN">مطبخ</option>
+          <option value="DELIVERY">دليفري</option>
+          <option value="REPORT">تقارير</option>
+        </select>
+        <select id="pConn">
+          <option value="USB">USB</option>
+          <option value="LAN">شبكة (LAN)</option>
+        </select>
+      </div>
+      <div class="row" id="pUsbRow">
+        <input id="pOsName" placeholder="اسم الطابعة بالظبط زي ما هو في Windows (مثال: XP-80C)" />
+      </div>
+      <div class="row" id="pLanRow" style="display:none">
+        <input id="pIp" placeholder="عنوان IP" />
+        <input id="pPort" placeholder="Port (افتراضي 9100)" />
+      </div>
+      <div class="row">
+        <input id="pWidth" placeholder="عرض الورق بالمم (افتراضي 80)" style="max-width:180px" />
+      </div>
+      <button id="createPrinterBtn">إضافة الطابعة</button>
+      <div class="err" id="pErr"></div>
+      <div class="ok" id="pOk"></div>
+    </div>
+
+    <h1>الطابعات المسجّلة</h1>
+    <p class="hint">"اختبار طباعة" بينشئ أمر طباعة حقيقي جوه نفس الطابور اللي الطباعة الفعلية بتمر منه (نفس مسار الإنتاج بالظبط) - راجع تبويب "طابور الطباعة" لمتابعته.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الاسم</th><th>النوع</th><th>الاتصال</th><th>الهدف</th><th>مفعّلة</th><th>افتراضية للنوع</th><th></th></tr></thead>
+      <tbody id="printersBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- ===================== تبويب: المحطات والتوجيه ===================== -->
+  <div class="tabpanel" id="panel-routing">
+    <h1>محطة تحضير جديدة</h1>
+    <p class="hint">محطة تحضير (مثال: بيتزا، حلواني، مشويات) - بتتربط بطابعة مطبخ عشان تذاكر المطبخ الخاصة بيها تطبع عليها.</p>
+    <div class="formbox">
+      <div class="row">
+        <input id="sName" placeholder="اسم المحطة (مثال: بيتزا)" />
+        <select id="sPrinter"></select>
+      </div>
+      <button id="createStationBtn">إضافة المحطة</button>
+      <div class="err" id="sErr"></div>
+      <div class="ok" id="sOk"></div>
+    </div>
+
+    <h1>المحطات</h1>
+    <div class="tablewrap"><table>
+      <thead><tr><th>المحطة</th><th>الطابعة المربوطة</th><th>نشطة</th><th></th></tr></thead>
+      <tbody id="stationsBody"></tbody>
+    </table></div>
+
+    <h1>توجيه المنيو للمحطات</h1>
+    <p class="hint">الصنف بيغلب القسم لو الاتنين متسجلين - اختار "بدون" في الصنف عشان يرجع يستخدم توجيه القسم.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>القسم / الصنف</th><th>المحطة</th></tr></thead>
+      <tbody id="menuRoutingBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- ===================== تبويب: طابور الطباعة ===================== -->
+  <div class="tabpanel" id="panel-queue">
+    <h1>طابور الطباعة</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="qStatus">
+          <option value="">كل الحالات</option>
+          <option value="PENDING">PENDING</option>
+          <option value="PRINTING">PRINTING</option>
+          <option value="PRINTED">PRINTED</option>
+          <option value="FAILED">FAILED</option>
+          <option value="CANCELLED">CANCELLED</option>
+        </select>
+        <button id="refreshQueueBtn" class="smallbtn">تحديث</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>#</th><th>طلب</th><th>النوع</th><th>الحالة</th><th>خطأ</th><th>وقت الإنشاء</th><th></th></tr></thead>
+      <tbody id="queueBody"></tbody>
+    </table></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الشاشة دي.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager"];
+const PRINTER_TYPE_LABELS = { CASHIER: "كاشير", KITCHEN: "مطبخ", DELIVERY: "دليفري", REPORT: "تقارير" };
+const PRINT_TYPE_LABELS = {
+  CUSTOMER_RECEIPT: "إيصال عميل", KITCHEN_TICKET: "تذكرة مطبخ", KITCHEN_SUMMARY: "ملخص مطبخ",
+  DELIVERY_SUMMARY: "ملخص دليفري", DELIVERY_FINAL_RECEIPT: "إيصال دليفري نهائي",
+  DINE_IN_BILL: "فاتورة صالة", TEST_PRINT: "اختبار طباعة",
+};
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+if (auth.user && auth.user.role === "cashier") location.replace("satamoni-pos.html");
+if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
+if (auth.user && auth.user.role === "driver") location.replace("satamoni-driver-app.html");
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach((btn) => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tabpanel").forEach((p) => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById(`panel-${btn.dataset.tab}`).classList.add("active");
+    if (btn.dataset.tab === "queue") loadQueue();
+  };
+});
+
+document.getElementById("pConn").addEventListener("change", (e) => {
+  document.getElementById("pUsbRow").style.display = e.target.value === "USB" ? "flex" : "none";
+  document.getElementById("pLanRow").style.display = e.target.value === "LAN" ? "flex" : "none";
+});
+
+function currentBranchId() {
+  return auth.user.role === "admin" ? document.getElementById("branchSelect").value : auth.user.branchId;
+}
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  if (auth.user.role === "admin") {
+    const branches = await api("/api/branches");
+    const sel = document.getElementById("branchSelect");
+    sel.innerHTML = branches.map((b) => `<option value="${b.id}">${b.name}</option>`).join("");
+    sel.style.display = "block";
+    sel.onchange = loadAll;
+  }
+  await loadAll();
+}
+
+async function loadAll() {
+  await loadPrinters();
+  await loadStations();
+  await loadMenuRouting();
+}
+
+// ---------------- الطابعات ----------------
+async function loadPrinters() {
+  const branchId = currentBranchId();
+  if (!branchId) return;
+  const body = document.getElementById("printersBody");
+  body.innerHTML = `<tr><td colspan="7">...جاري التحميل</td></tr>`;
+  try {
+    const printers = await api(`/api/printers?branchId=${branchId}`);
+    body.innerHTML = printers.map((p) => `
+      <tr>
+        <td>${p.name}</td>
+        <td>${PRINTER_TYPE_LABELS[p.printer_type] || p.printer_type}</td>
+        <td>${p.connection_type}</td>
+        <td>${p.connection_type === "USB" ? (p.os_printer_name || "—") : `${p.ip_address || "—"}:${p.port || "—"}`}</td>
+        <td><input type="checkbox" data-id="${p.id}" class="pEnabledCk" ${p.is_enabled ? "checked" : ""} /></td>
+        <td><input type="checkbox" data-id="${p.id}" class="pDefaultCk" ${p.is_default_for_type ? "checked" : ""} /></td>
+        <td>
+          <button class="smallbtn testPrintBtn" data-id="${p.id}">اختبار طباعة</button>
+          <button class="smallbtn danger deletePrinterBtn" data-id="${p.id}">حذف</button>
+        </td>
+      </tr>
+    `).join("") || `<tr><td colspan="7">لسه مفيش طابعات مسجّلة لهذا الفرع</td></tr>`;
+
+    body.querySelectorAll(".pEnabledCk").forEach((ck) => {
+      ck.onchange = async () => {
+        try { await api(`/api/printers/${ck.dataset.id}`, { method: "PATCH", body: JSON.stringify({ isEnabled: ck.checked }) }); }
+        catch (e) { alert(e.message); loadPrinters(); }
+      };
+    });
+    body.querySelectorAll(".pDefaultCk").forEach((ck) => {
+      ck.onchange = async () => {
+        try { await api(`/api/printers/${ck.dataset.id}`, { method: "PATCH", body: JSON.stringify({ isDefaultForType: ck.checked }) }); loadPrinters(); }
+        catch (e) { alert(e.message); loadPrinters(); }
+      };
+    });
+    body.querySelectorAll(".testPrintBtn").forEach((btn) => {
+      btn.onclick = async () => {
+        btn.disabled = true; btn.textContent = "جاري الإرسال...";
+        try {
+          await api(`/api/printers/${btn.dataset.id}/test-print`, { method: "POST" });
+          alert("اتبعتت أمر طباعة تجريبي - تابع تبويب طابور الطباعة");
+        } catch (e) { alert(e.message); }
+        btn.disabled = false; btn.textContent = "اختبار طباعة";
+      };
+    });
+    body.querySelectorAll(".deletePrinterBtn").forEach((btn) => {
+      btn.onclick = async () => {
+        if (!confirm("حذف الطابعة دي؟ أي محطة مربوطة بيها هترجع بدون طابعة.")) return;
+        try { await api(`/api/printers/${btn.dataset.id}`, { method: "DELETE" }); loadPrinters(); loadStations(); }
+        catch (e) { alert(e.message); }
+      };
+    });
+
+    // تحديث قايمة الطابعات في فورم إضافة محطة
+    const sSel = document.getElementById("sPrinter");
+    const current = sSel.value;
+    sSel.innerHTML = `<option value="">بدون طابعة (يتظبط بعدين)</option>` +
+      printers.map((p) => `<option value="${p.id}">${p.name} (${PRINTER_TYPE_LABELS[p.printer_type] || p.printer_type})</option>`).join("");
+    if (current) sSel.value = current;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="7">${e.message}</td></tr>`;
+  }
+}
+
+document.getElementById("createPrinterBtn").onclick = async () => {
+  const errBox = document.getElementById("pErr");
+  const okBox = document.getElementById("pOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const name = document.getElementById("pName").value.trim();
+  const printerType = document.getElementById("pType").value;
+  const connectionType = document.getElementById("pConn").value;
+  if (!name) return (errBox.textContent = "لازم اسم الطابعة");
+  const payload = {
+    name, printerType, connectionType, branchId: currentBranchId(),
+    paperWidthMm: Number(document.getElementById("pWidth").value) || 80,
+  };
+  if (connectionType === "USB") payload.osPrinterName = document.getElementById("pOsName").value.trim();
+  else {
+    payload.ipAddress = document.getElementById("pIp").value.trim();
+    payload.port = Number(document.getElementById("pPort").value) || 9100;
+  }
+  try {
+    await api("/api/printers", { method: "POST", body: JSON.stringify(payload) });
+    okBox.textContent = "تم إضافة الطابعة";
+    document.getElementById("pName").value = "";
+    document.getElementById("pOsName").value = "";
+    document.getElementById("pIp").value = "";
+    document.getElementById("pPort").value = "";
+    document.getElementById("pWidth").value = "";
+    loadPrinters();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- المحطات ----------------
+async function loadStations() {
+  const branchId = currentBranchId();
+  if (!branchId) return;
+  const body = document.getElementById("stationsBody");
+  body.innerHTML = `<tr><td colspan="4">...جاري التحميل</td></tr>`;
+  try {
+    const stations = await api(`/api/kitchen-stations?branchId=${branchId}`);
+    const printers = await api(`/api/printers?branchId=${branchId}`);
+    body.innerHTML = stations.map((s) => `
+      <tr>
+        <td>${s.name}</td>
+        <td>
+          <select class="inlineSelect stationPrinterSel" data-id="${s.id}">
+            <option value="">بدون طابعة</option>
+            ${printers.map((p) => `<option value="${p.id}" ${s.printer_id === p.id ? "selected" : ""}>${p.name}</option>`).join("")}
+          </select>
+        </td>
+        <td><input type="checkbox" class="stationActiveCk" data-id="${s.id}" ${s.is_active ? "checked" : ""} /></td>
+        <td><button class="smallbtn danger deleteStationBtn" data-id="${s.id}">حذف</button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="4">لسه مفيش محطات مسجّلة لهذا الفرع</td></tr>`;
+
+    body.querySelectorAll(".stationPrinterSel").forEach((sel) => {
+      sel.onchange = async () => {
+        try { await api(`/api/kitchen-stations/${sel.dataset.id}`, { method: "PATCH", body: JSON.stringify({ printerId: sel.value || null }) }); }
+        catch (e) { alert(e.message); loadStations(); }
+      };
+    });
+    body.querySelectorAll(".stationActiveCk").forEach((ck) => {
+      ck.onchange = async () => {
+        try { await api(`/api/kitchen-stations/${ck.dataset.id}`, { method: "PATCH", body: JSON.stringify({ isActive: ck.checked }) }); }
+        catch (e) { alert(e.message); loadStations(); }
+      };
+    });
+    body.querySelectorAll(".deleteStationBtn").forEach((btn) => {
+      btn.onclick = async () => {
+        if (!confirm("حذف المحطة دي؟ أي صنف/قسم مربوط بيها هيرجع بدون محطة.")) return;
+        try { await api(`/api/kitchen-stations/${btn.dataset.id}`, { method: "DELETE" }); loadStations(); loadMenuRouting(); }
+        catch (e) { alert(e.message); }
+      };
+    });
+
+    window.__stationsCache = stations;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="4">${e.message}</td></tr>`;
+  }
+}
+
+document.getElementById("createStationBtn").onclick = async () => {
+  const errBox = document.getElementById("sErr");
+  const okBox = document.getElementById("sOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const name = document.getElementById("sName").value.trim();
+  if (!name) return (errBox.textContent = "لازم اسم المحطة");
+  const printerId = document.getElementById("sPrinter").value || undefined;
+  try {
+    await api("/api/kitchen-stations", { method: "POST", body: JSON.stringify({ name, printerId, branchId: currentBranchId() }) });
+    okBox.textContent = "تم إضافة المحطة";
+    document.getElementById("sName").value = "";
+    loadStations();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- توجيه المنيو ----------------
+function stationOptions(selectedId) {
+  const stations = window.__stationsCache || [];
+  return `<option value="">بدون</option>` +
+    stations.map((s) => `<option value="${s.id}" ${Number(selectedId) === s.id ? "selected" : ""}>${s.name}</option>`).join("");
+}
+
+async function loadMenuRouting() {
+  const body = document.getElementById("menuRoutingBody");
+  body.innerHTML = `<tr><td colspan="2">...جاري التحميل</td></tr>`;
+  try {
+    const rows = await api("/api/kitchen-stations/routing/menu");
+    const byCategory = {};
+    for (const r of rows) {
+      if (!byCategory[r.category_id]) byCategory[r.category_id] = { name: r.category_name, stationId: r.category_station_id, items: [] };
+      if (r.item_id) byCategory[r.category_id].items.push({ id: r.item_id, name: r.item_name, stationId: r.item_station_id });
+    }
+    let html = "";
+    for (const catId of Object.keys(byCategory)) {
+      const cat = byCategory[catId];
+      html += `<tr>
+        <td><strong>${cat.name}</strong> (القسم كله)</td>
+        <td><select class="inlineSelect catStationSel" data-id="${catId}">${stationOptions(cat.stationId)}</select></td>
+      </tr>`;
+      for (const it of cat.items) {
+        html += `<tr>
+          <td style="padding-inline-start:20px">↳ ${it.name}</td>
+          <td><select class="inlineSelect itemStationSel" data-id="${it.id}">${stationOptions(it.stationId)}</select></td>
+        </tr>`;
+      }
+    }
+    body.innerHTML = html || `<tr><td colspan="2">لسه مفيش منيو مسجّل</td></tr>`;
+
+    body.querySelectorAll(".catStationSel").forEach((sel) => {
+      sel.onchange = async () => {
+        try { await api(`/api/kitchen-stations/routing/menu-categories/${sel.dataset.id}`, { method: "PATCH", body: JSON.stringify({ stationId: sel.value || null }) }); }
+        catch (e) { alert(e.message); loadMenuRouting(); }
+      };
+    });
+    body.querySelectorAll(".itemStationSel").forEach((sel) => {
+      sel.onchange = async () => {
+        try { await api(`/api/kitchen-stations/routing/menu-items/${sel.dataset.id}`, { method: "PATCH", body: JSON.stringify({ stationId: sel.value || null }) }); }
+        catch (e) { alert(e.message); loadMenuRouting(); }
+      };
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="2">${e.message}</td></tr>`;
+  }
+}
+
+// ---------------- طابور الطباعة ----------------
+document.getElementById("refreshQueueBtn").onclick = loadQueue;
+document.getElementById("qStatus").onchange = loadQueue;
+
+async function loadQueue() {
+  const branchId = currentBranchId();
+  if (!branchId) return;
+  const body = document.getElementById("queueBody");
+  body.innerHTML = `<tr><td colspan="7">...جاري التحميل</td></tr>`;
+  const status = document.getElementById("qStatus").value;
+  try {
+    const jobs = await api(`/api/print-jobs?branchId=${branchId}${status ? `&status=${status}` : ""}&limit=100`);
+    body.innerHTML = jobs.map((j) => `
+      <tr>
+        <td>${j.id}</td>
+        <td>${j.order_id || "—"}</td>
+        <td>${PRINT_TYPE_LABELS[j.print_type] || j.print_type}</td>
+        <td><span class="pill ${j.status === "FAILED" ? "failed" : j.status === "PRINTED" ? "printed" : "pending"}">${j.status}</span></td>
+        <td>${j.last_error || "—"}</td>
+        <td>${new Date(j.created_at).toLocaleString("ar-EG")}</td>
+        <td>${j.status === "FAILED" ? `<button class="smallbtn retryJobBtn" data-id="${j.id}">إعادة المحاولة</button>` : ""}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="7">مفيش أوامر طباعة</td></tr>`;
+    body.querySelectorAll(".retryJobBtn").forEach((btn) => {
+      btn.onclick = async () => {
+        try { await api(`/api/print-jobs/${btn.dataset.id}/retry`, { method: "POST" }); loadQueue(); }
+        catch (e) { alert(e.message); }
+      };
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="7">${e.message}</td></tr>`;
+  }
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

@@ -9,6 +9,7 @@ const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, get
 const { upsertCustomerAddress } = require("../db/customer-addresses");
 const { maybeSendOrderConfirmation } = require("../db/order-notifications");
 const { validateIdParam } = require("../middleware/validate-id-param");
+const { queueOrderCreationPrintJobs, queueDineInPreparingPrintJobs, queueDineInBillPrintJob } = require("../db/print-queue");
 
 // المرحلة 8B: :id لازم يكون رقم صحيح قبل ما يوصل لأي راوت هنا - غير كده Postgres بيرمي خطأ cast خام
 // كـ500 بدل 400 واضح (اتكشف بهجوم أمني حي - راجع middleware/validate-id-param.js)
@@ -572,6 +573,14 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       });
     }
 
+    // نظام الطباعة: تيك أواي/دليفري بس بيتولّد ليهم print_jobs هنا (إيصال + تذاكر مطبخ/ملخص) - صالة
+    // بتستنى لحد ما المطبخ يقدّم الطلب فعليًا لـPREPARING (PATCH /:id/kitchen-status تحت). لازم تحصل
+    // جوه نفس الـtransaction دي قبل COMMIT (نفس فلسفة "SAVE ORDER -> CREATE PRINT JOBS -> COMMIT" في
+    // المواصفة) - لو التوجيه (محطة/طابعة) مش متظبط بيتسجل صف FAILED واضح، مش استثناء بيوقف الطلب
+    if (branchId) {
+      await queueOrderCreationPrintJobs(client, { orderId, createdBy });
+    }
+
     await client.query("COMMIT");
     // المرحلة 7S: تأكيد الطلب بـSMS للعميل - بعد الـCOMMIT عمدًا (الطلب اتسجل بنجاح بالفعل)، ومفيش أي
     // تأثير على استجابة الطلب حتى لو فشل الإرسال - راجع db/order-notifications.js
@@ -887,6 +896,12 @@ router.patch(
         [req.params.id, `kitchen_${status.toLowerCase()}`, req.user.id, KITCHEN_STATUS_LOG_NOTES[status]]
       );
 
+      // نظام الطباعة: طلبات الصالة بس بتتولّد ليها تذاكر مطبخ هنا (لحظة PREPARING فعليًا - مش وقت
+      // إنشاء الطلب زي التيك أواي/الدليفري). الدالة نفسها بترجع [] لأي نوع طلب تاني، فمفيش داعي لشرط هنا
+      if (status === "PREPARING") {
+        await queueDineInPreparingPrintJobs(client, { orderId: req.params.id, createdBy: req.user.id });
+      }
+
       await client.query("COMMIT");
       res.json(result.rows[0]);
     } catch (err) {
@@ -894,6 +909,35 @@ router.patch(
       res.status(500).json({ error: err.message });
     } finally {
       client.release();
+    }
+  }
+);
+
+// POST /api/orders/:id/print-bill - فاتورة صالة بطلب الجرسون (نظام الطباعة) - أي وقت قبل ما الطلب يتلغي.
+// idempotency_key ثابت لكل طلب في db/print-queue.js - ضغطة تانية على الزرار بترجع نفس صف print_jobs
+// الموجود بدل ما تنشئ واحد جديد ("مفيش فاتورة مكررة" حرفيًا زي ما اتطلب في المواصفة)
+router.post(
+  "/:id/print-bill",
+  requireAuth,
+  requirePermission("print_jobs.trigger", "print_jobs.manage_queue"),
+  async (req, res) => {
+    try {
+      const orderRes = await pool.query("SELECT * FROM orders WHERE id = $1", [req.params.id]);
+      if (orderRes.rows.length === 0) return res.status(404).json({ error: "الطلب مش موجود" });
+      const order = orderRes.rows[0];
+      if (order.order_type !== "dinein") {
+        return res.status(400).json({ error: "فاتورة الصالة متاحة بس لطلبات الصالة" });
+      }
+      if (!assertOwnBranch(req.user, order.branch_id)) {
+        return res.status(403).json({ error: "معندكش صلاحية على طلب فرع تاني" });
+      }
+      if (order.status === "cancelled") {
+        return res.status(400).json({ error: "الطلب ده ملغي - مينفعش تطبع فاتورته" });
+      }
+      const job = await queueDineInBillPrintJob(pool, { orderId: order.id, createdBy: req.user.id });
+      res.status(201).json(job);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   }
 );

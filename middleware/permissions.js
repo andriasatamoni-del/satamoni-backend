@@ -33,6 +33,11 @@ const ROLE_PERMISSIONS = {
     // المرحلة 7G: مدير الفرع يشوف شاشة المطبخ (KDS) بتاعة فرعه ويقدر يقدّم حالة أي طلب فيها -
     // مش مقصور على الكاشير بس، لأن مدير الفرع كتير بيغطي المطبخ برضو في فروع صغيرة
     "kitchen.view", "kitchen.advance",
+    // نظام الطباعة: مدير الفرع هو صاحب إدارة طابعات/محطات فرعه (نفس فلسفة إدارة السائقين drivers.manage
+    // بالظبط - جهاز فعلي في فرعه هو). print_jobs.manage_queue خاص بالـAgent المحلي (بيسجّل دخول بحساب
+    // مدير فرع حقيقي عادي، مفيش نوع حساب "خدمة" منفصل في النظام) - claim/printed/failed على طابور فرعه بس
+    "printers.view", "printers.manage", "print_routing.view", "print_routing.manage",
+    "print_jobs.view", "print_jobs.manage_queue", "print_jobs.trigger",
   ],
   accountant: [
     "inventory.view", "recipes.view",
@@ -53,6 +58,8 @@ const ROLE_PERMISSIONS = {
     // المرحلة 7F: نفس منطق مراجعة فروق الشيفت بالظبط - المحاسب يراجع فروق تسليم كاش السائقين، بس
     // مش هو اللي بيبدأ التسوية نفسها (ده قرار تشغيلي لمدير الفرع لحظة استلام الكاش فعليًا)
     "deliveries.view_branch", "driver_settlements.review",
+    // رؤية بس لطابور الطباعة - نفس منطق shifts.view_branch (يراجع، مش هو اللي بيدير الطابعات فعليًا)
+    "print_jobs.view",
   ],
   cashier: [
     "orders.create", "orders.discount.request", "orders.void.request",
@@ -67,6 +74,9 @@ const ROLE_PERMISSIONS = {
     // المرحلة 7G: الكاشير بيشوف شاشة المطبخ (KDS) بتاعة فرعه ويقدّم حالة الطلبات - هو أكتر حد
     // بيستخدمها فعليًا (واقف عند نقطة البيع/المطبخ في الفروع الصغيرة)
     "kitchen.view", "kitchen.advance",
+    // الكاشير هو اللي بيضغط "اطبع الفاتورة" لطلب صالة بناءً على طلب الجرسون، أو يعيد طباعة إيصال -
+    // مفيش صلاحية إدارة طابعات/توجيه خالص (ده مدير الفرع/الأدمن بس)
+    "print_jobs.trigger",
   ],
   callcenter: [
     "orders.create", "orders.discount.request", "orders.void.request",
