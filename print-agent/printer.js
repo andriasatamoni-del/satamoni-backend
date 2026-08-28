@@ -50,10 +50,11 @@ async function printJobContent({ html, paperWidthMm, osPrinterName }) {
   try {
     // pdf-to-printer (SumatraPDF من جواه) افتراضيًا بيعمل "Fit to Page" - بيكبّر/يصغّر أي PDF عشان
     // يملي حجم الورق المُعرَّف في درايفر الطابعة نفسه في ويندوز، حتى لو الـPDF نفسه متولّد بحجم مضبوط
-    // بالظبط. ده بيبوّظ مستندات قصيرة (تذكرة مطبخ صف واحد) - بتتصغّر جدًا لو حجم الورق في الدرايفر
-    // مختلف عن المتولّد. "-print-settings noscale" بيوقف الفيت التلقائي ده، فالطباعة بتحصل بالمقاس
-    // الحقيقي 1:1 اللي احنا حددناه (paperWidthMm/heightMm) بدل ما تتصغّر/تتكبّر تلقائي
-    await printPdf(pdfPath, { printer: osPrinterName, win32: ["-print-settings", "noscale"] });
+    // بالظبط. ده بيبوّظ مستندات قصيرة (تذكرة مطبخ صف واحد) - بتتصغّر جدًا وممكن كمان تتقلب landscape
+    // (اتأكد فعليًا على XP-D200N: تذاكر قصيرة طلعت landscape بخط صغير جدًا) لو الدرايفر حاول يوفّق حجم
+    // الصفحة القصيرة دي مع حجم رول أعرض. "-print-settings noscale,portrait" بيوقف الفيت التلقائي
+    // ويفرض اتجاه portrait صريح - الطباعة بتحصل بالمقاس الحقيقي 1:1 اللي احنا حددناه وباتجاه ثابت
+    await printPdf(pdfPath, { printer: osPrinterName, win32: ["-print-settings", "noscale,portrait"] });
   } finally {
     fs.unlink(pdfPath, () => {});
   }
