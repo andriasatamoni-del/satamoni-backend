@@ -77,6 +77,16 @@
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
   #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+
+  /* UI-1N: الفرع تشغيله الأساسي موبايل/تابلت - جداول بتتحول لبطاقات على الشاشات الصغيرة بدل ما تتقطّع أفقيًا */
+  @media (max-width: 720px) {
+    table, thead, tbody, th, td, tr { display: block; }
+    thead tr { display: none; }
+    td { border: none; padding: 4px 0; }
+    td::before { content: attr(data-label); font-weight: 700; color: var(--faint); display: inline-block; min-width: 110px; }
+    tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+    .formbox button { width: 100%; margin-bottom: 8px; }
+  }
 </style>
 </head>
 <body>
@@ -101,15 +111,23 @@
 
 <div id="main" style="display:none">
   <div id="tabs">
-    <div class="tabbtn active" data-tab="suggest">اقتراح طلبية</div>
+    <div class="tabbtn active" data-tab="dashboard">لوحة الفرع</div>
+    <div class="tabbtn" data-tab="suggest">إنشاء طلبية</div>
     <div class="tabbtn" data-tab="orders">طلبياتي</div>
-    <div class="tabbtn" data-tab="receiving">الاستلام</div>
+    <div class="tabbtn" data-tab="receiving">التحويلات الواردة</div>
     <div class="tabbtn" data-tab="stock">المخزون</div>
   </div>
 
-  <!-- اقتراح طلبية جديدة -->
-  <div class="panel active" id="panel-suggest">
-    <h1>اقتراح الطلبية</h1>
+  <!-- UI-1A: لوحة الفرع - نظرة تشغيلية سريعة على اقتراح اليوم، من غير تفاصيل محاسبية -->
+  <div class="panel active" id="panel-dashboard">
+    <h1>لوحة الفرع - اقتراح اليوم</h1>
+    <div class="hint">الجدول ده بيوضح ليه النظام مقترح تطلب الكميات دي: المخزون الحالي + أي كمية جاية ليك أصلًا (طلبيات معلّقة أو تحويلات في الطريق) مقابل المخزون المستهدف طبقًا لمتوسط استهلاكك.</div>
+    <div id="dashboardBox"></div>
+  </div>
+
+  <!-- إنشاء طلبية جديدة -->
+  <div class="panel" id="panel-suggest">
+    <h1>إنشاء طلبية</h1>
     <div class="formbox">
       <div class="hint">الاقتراح مبني على متوسط استهلاك نفس يوم الأسبوع، وبيتخصم منه أي كمية لسه في طريقها ليك (طلبيات معتمدة لسه ماوصلتش + تحويلات في الطريق فعليًا) - عشان مايتكررش طلب حاجة جاية أصلًا.</div>
       <div class="row">
@@ -168,7 +186,14 @@
       </div>
     </div>
 
-    <table><thead><tr><th>التاريخ</th><th>الأصناف</th><th>الحالة</th><th></th></tr></thead><tbody id="myOrdersBody"></tbody></table>
+    <table><thead><tr><th>رقم الطلبية</th><th>التاريخ</th><th>عدد الأصناف</th><th>إجمالي الكمية المطلوبة</th><th>الحالة</th><th></th></tr></thead><tbody id="myOrdersBody"></tbody></table>
+
+    <!-- UI-1D: تفاصيل الطلبية - رأس + شريط دورة الحياة البصري + جدول أصناف + الإجراءات المسموحة بس -->
+    <div id="orderDetailsBox" style="display:none">
+      <h2 style="margin-top:24px">تفاصيل الطلبية</h2>
+      <div class="formbox" id="orderDetailsContent"></div>
+      <button class="linkbtn" id="closeDetailsBtn">إغلاق التفاصيل</button>
+    </div>
     <div class="pager">
       <button id="ordersPrevBtn">◀ السابق</button>
       <span id="ordersPageInfo"></span>
@@ -207,6 +232,7 @@
 <div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
 <div id="bootStatus" style="display:none"></div>
 
+<script src="js/requisition-errors.js"></script>
 <script>
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
 const allowedRoles = ["admin", "branch_manager", "cashier"];
@@ -218,11 +244,17 @@ const auth = {
 if (auth.user && auth.user.role === "cashier" && !location.search.includes("stay")) { /* الكاشير مسموحله يستخدم الصفحة دي كمان - مفيش تحويل تلقائي */ }
 if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
 
+// تسميات الحالة العربية الرسمية (PHASE UI-1) - القيم القديمة (pending/fulfilled) فضلت زي ما هي لأي طلبية
+// لسه ماشية بالمسار القديم، والحالات الجديدة بنفس الأسماء المعتمدة بالظبط
 const STATUS_LABELS = {
   pending: "معلّقة (نظام قديم)", fulfilled: "اتنفذت (نظام قديم)", cancelled: "ملغية",
-  DRAFT: "مسودة", SUBMITTED: "مُقدَّمة", APPROVED: "معتمدة", REJECTED: "مرفوضة",
-  PREPARING: "بيتجهّز", READY: "جاهزة للتحويل", DISPATCHED: "اتصدرت", IN_TRANSIT: "في الطريق", RECEIVED: "اتستلمت",
+  DRAFT: "مسودة", SUBMITTED: "في انتظار الاعتماد", APPROVED: "معتمد", REJECTED: "مرفوض",
+  PREPARING: "جاري التجهيز", READY: "جاهز", DISPATCHED: "اتصدرت", IN_TRANSIT: "في الطريق", RECEIVED: "تم الاستلام",
 };
+// ترتيب مراحل دورة الحياة الجديدة - لعرض شريط تقدّم بصري في شاشة تفاصيل الطلبية (UI-1D). REJECTED/cancelled
+// خارج المسار الطبيعي (بيتعاملوا كحالة نهائية منفصلة، مش خطوة في الشريط)
+const WORKFLOW_STEPS = ["DRAFT", "SUBMITTED", "APPROVED", "PREPARING", "READY", "IN_TRANSIT", "RECEIVED"];
+const DISCREPANCY_STATUS_LABELS = { OPEN: "مفتوح", ACKNOWLEDGED: "تحت المراجعة", RESOLVED: "اتراجع", REJECTED: "اترفض" };
 const DISCREPANCY_TYPE_LABELS = {
   SHORTAGE: "نقص", DAMAGED: "تلف", WRONG_ITEM: "صنف غلط", WRONG_QUANTITY: "كمية غلط", EXPIRED: "منتهي الصلاحية", OTHER: "سبب تاني",
 };
@@ -251,9 +283,17 @@ async function api(path, opts = {}) {
   });
   if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  if (!res.ok) {
+    const err = new Error(data.error || "حصل خطأ");
+    err.code = data.code || null;
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
+// رسالة عربية جاهزة للعرض من أي خطأ راجع من api() - بتستخدم خريطة الرموز المركزية (js/requisition-errors.js)
+// بدل ما كل مكان يقرأ e.message مباشرة (نفس الرسالة الخام ممكن تتغيّر، الرمز مايتغيّرش)
+function apiErrorMessage(err) { return describeRequisitionError(err, err && err.status).message; }
 
 document.getElementById("loginBtn").onclick = async () => {
   const email = document.getElementById("loginEmail").value.trim();
@@ -272,7 +312,7 @@ document.getElementById("loginBtn").onclick = async () => {
     hideLogin();
     bootSafely();
   } catch (e) {
-    errBox.textContent = e.message;
+    errBox.textContent = apiErrorMessage(e);
   }
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
@@ -291,7 +331,7 @@ async function bootSafely() {
     const isNetworkFailure = e instanceof TypeError;
     const message = isNetworkFailure
       ? "تعذّر الاتصال بالسيرفر - تأكد من الإنترنت أو حاول تاني بعد شوية"
-      : `حصل خطأ أثناء تحميل البيانات: ${e.message}`;
+      : `حصل خطأ أثناء تحميل البيانات: ${apiErrorMessage(e)}`;
     statusBox.innerHTML = `
       <div class="box error">
         <div>${message}</div>
@@ -308,6 +348,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
     if (btn.dataset.tab === "receiving") loadReceivingTab();
     if (btn.dataset.tab === "stock") loadStockTab();
+    if (btn.dataset.tab === "dashboard") loadDashboardTab();
   };
 });
 
@@ -330,7 +371,56 @@ async function boot() {
   document.getElementById("suggestDate").value = new Date().toISOString().slice(0, 10);
   addManualRow();
 
+  await loadDashboardTab();
   await loadMyOrders();
+}
+
+// ---------------- لوحة الفرع (UI-1A) ----------------
+// كل الحقول هنا من رد /suggested زي ما هو - مفيش أي إعادة حساب لخوارزمية الاقتراح في الـJS. لو فيه طلبية
+// (DRAFT أو أبعد) موجودة أصلًا لنفس اليوم، بنعرض "الكمية النهائية المطلوبة" الفعلية بتاعتها جنب الاقتراح
+async function loadDashboardTab() {
+  const box = document.getElementById("dashboardBox");
+  box.innerHTML = `<div style="color:var(--faint);font-size:13px">جاري التحميل...</div>`;
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const [suggestRes, todaysOrders] = await Promise.all([
+      api(`/api/kitchen-orders/suggested?branchId=${auth.user.branchId}&targetDate=${today}`),
+      api(`/api/kitchen-orders?branchId=${auth.user.branchId}&from=${today}&to=${today}`),
+    ]);
+    const requestedByItem = new Map();
+    (Array.isArray(todaysOrders) ? todaysOrders : []).forEach(o => {
+      if (o.status === "cancelled" || o.status === "REJECTED") return;
+      (o.items || []).forEach(it => {
+        requestedByItem.set(it.inventory_item_id, (requestedByItem.get(it.inventory_item_id) || 0) + Number(it.quantity_requested));
+      });
+    });
+    const suggestions = suggestRes.suggestions;
+    if (suggestions.length === 0) {
+      box.innerHTML = `<div style="color:var(--faint);font-size:13px">مفيش أصناف ليها حدود مخزون مضبوطة (min/max/reorder point) في الفرع ده - محتاج الأدمن يضبطها الأول عشان الاقتراح يشتغل.</div>`;
+      return;
+    }
+    box.innerHTML = `
+      <table><thead><tr>
+        <th>الصنف</th><th>الرصيد الحالي</th><th>الكمية المقترحة</th><th>في الطريق/معلّق</th>
+        <th>الاستهلاك المتوقع</th><th>المخزون المستهدف</th><th>الكمية المطلوبة فعليًا اليوم</th>
+      </tr></thead><tbody>
+        ${suggestions.map(s => `<tr>
+          <td data-label="الصنف">${s.name}</td>
+          <td data-label="الرصيد الحالي">${Number(s.currentStock).toFixed(2)} ${s.unit}</td>
+          <td data-label="الكمية المقترحة"><b>${Number(s.suggestedQuantity).toFixed(2)}</b></td>
+          <td data-label="في الطريق/معلّق">${(Number(s.pendingPipelineQuantity || 0) + Number(s.inTransitQuantity || 0)).toFixed(2)}</td>
+          <td data-label="الاستهلاك المتوقع">${Number(s.expectedConsumption).toFixed(2)}</td>
+          <td data-label="المخزون المستهدف">${Number(s.target).toFixed(2)}</td>
+          <td data-label="المطلوب فعليًا اليوم">${requestedByItem.has(s.inventoryItemId) ? requestedByItem.get(s.inventoryItemId).toFixed(2) : "لسه ماطلبتش"}</td>
+        </tr>`).join("")}
+      </tbody></table>
+      <div class="row" style="margin-top:12px">
+        <button id="dashboardGoCreateBtn">إنشاء طلبية من الاقتراح ده</button>
+      </div>`;
+    document.getElementById("dashboardGoCreateBtn").onclick = () => document.querySelector('[data-tab="suggest"]').click();
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
 }
 
 // ---------------- اقتراح الطلبية ----------------
@@ -357,7 +447,7 @@ document.getElementById("suggestCalcBtn").onclick = async () => {
         <td><input type="number" min="0" step="any" class="suggest-qty" data-item="${s.inventoryItemId}" value="${Number(s.suggestedQuantity).toFixed(2)}" style="width:100px" /></td>
       </tr>
     `).join("") || `<tr><td colspan="5">مفيش أصناف ليها حدود مخزون مضبوطة (min/max/reorder point) في الفرع ده</td></tr>`;
-  } catch (e) { errBox.textContent = e.message; }
+  } catch (e) { errBox.textContent = apiErrorMessage(e); }
 };
 
 function addManualRow() {
@@ -407,7 +497,7 @@ document.getElementById("suggestSaveDraft").onclick = async () => {
     document.getElementById("manualRows").innerHTML = "";
     addManualRow();
     await loadMyOrders();
-  } catch (e) { errBox.textContent = e.message; }
+  } catch (e) { errBox.textContent = apiErrorMessage(e); }
 };
 
 // ---------------- طلبياتي ----------------
@@ -430,18 +520,22 @@ async function loadMyOrders() {
     const canEdit = o.status === "DRAFT";
     const canSubmit = o.status === "DRAFT";
     const canCancel = ["DRAFT", "SUBMITTED", "APPROVED", "pending"].includes(o.status);
+    const totalQty = o.items.reduce((s, it) => s + Number(it.quantity_requested), 0);
     return `
     <tr>
-      <td>${String(o.business_date).slice(0, 10)}</td>
-      <td>${o.items.map(it => `${it.name} × ${it.quantity_requested}`).join("، ")}</td>
-      <td><span class="badge ${o.status}">${STATUS_LABELS[o.status] || o.status}</span></td>
-      <td>
+      <td data-label="رقم الطلبية">#${o.id}</td>
+      <td data-label="التاريخ">${String(o.business_date).slice(0, 10)}</td>
+      <td data-label="عدد الأصناف">${o.items.length}</td>
+      <td data-label="إجمالي الكمية">${totalQty.toFixed(2)}</td>
+      <td data-label="الحالة"><span class="badge ${o.status}">${STATUS_LABELS[o.status] || o.status}</span></td>
+      <td data-label="">
+        <button class="linkbtn" data-details="${o.id}">تفاصيل</button>
         ${canEdit ? `<button class="linkbtn" data-edit="${o.id}">تعديل</button>` : ""}
         ${canSubmit ? `<button class="linkbtn" data-submit="${o.id}">تقديم</button>` : ""}
         ${canCancel ? `<button class="linkbtn danger" data-cancel="${o.id}" data-legacy="${o.status === "pending"}">إلغاء</button>` : ""}
       </td>
     </tr>`;
-  }).join("") || `<tr><td colspan="4">مفيش طلبيات مطابقة</td></tr>`;
+  }).join("") || `<tr><td colspan="6">مفيش طلبيات مطابقة</td></tr>`;
 
   document.getElementById("ordersPageInfo").textContent = `صفحة ${res.page} من ${res.totalPages} (إجمالي ${res.total})`;
   document.getElementById("ordersPrevBtn").disabled = res.page <= 1;
@@ -450,7 +544,7 @@ async function loadMyOrders() {
   document.querySelectorAll("[data-submit]").forEach(btn => {
     btn.onclick = async () => {
       try { await api(`/api/kitchen-orders/${btn.dataset.submit}/submit`, { method: "POST" }); await loadMyOrders(); }
-      catch (e) { alert(e.message); }
+      catch (e) { alert(apiErrorMessage(e)); }
     };
   });
   document.querySelectorAll("[data-cancel]").forEach(btn => {
@@ -463,13 +557,74 @@ async function loadMyOrders() {
           await api(`/api/kitchen-orders/${btn.dataset.cancel}/cancel`, { method: "POST", body: JSON.stringify({ reason: "اتلغت من الفرع" }) });
         }
         await loadMyOrders();
-      } catch (e) { alert(e.message); }
+      } catch (e) { alert(apiErrorMessage(e)); }
     };
   });
   document.querySelectorAll("[data-edit]").forEach(btn => {
     btn.onclick = () => openEditOrder(orders.find(o => o.id === Number(btn.dataset.edit)));
   });
+  document.querySelectorAll("[data-details]").forEach(btn => {
+    btn.onclick = () => showOrderDetails(btn.dataset.details);
+  });
 }
+
+// UI-1D: تفاصيل الطلبية - رأس، شريط دورة الحياة البصري، جدول الأصناف (المطلوب/المتاح/هيتجهّز/حالة
+// التنفيذ لو الطلبية وصلت لمرحلة التجهيز)، وبس الإجراءات المسموح بيها فعلًا من الحالة الحالية
+async function showOrderDetails(orderId) {
+  const wrap = document.getElementById("orderDetailsBox");
+  const content = document.getElementById("orderDetailsContent");
+  wrap.style.display = "block";
+  content.innerHTML = `<div style="color:var(--faint);font-size:13px">جاري التحميل...</div>`;
+  wrap.scrollIntoView({ behavior: "smooth" });
+  let o;
+  try {
+    o = await api(`/api/kitchen-orders/${orderId}`);
+  } catch (e) {
+    content.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+    return;
+  }
+  const isFinal = ["REJECTED", "cancelled"].includes(o.status);
+  const activeStepIdx = WORKFLOW_STEPS.indexOf(o.status);
+  const stepper = isFinal
+    ? `<div class="badge ${o.status}" style="font-size:13px">${STATUS_LABELS[o.status] || o.status}</div>`
+    : `<div class="row" style="flex-wrap:wrap">${WORKFLOW_STEPS.map((s, i) => `
+        <span class="badge ${i <= activeStepIdx ? (s === o.status ? s : "APPROVED") : ""}"
+              style="${i > activeStepIdx ? "opacity:.35" : ""}${s === o.status ? "outline:2px solid var(--gold-bright)" : ""}">
+          ${STATUS_LABELS[s]}${i < WORKFLOW_STEPS.length - 1 ? " ←" : ""}
+        </span>`).join(" ")}</div>`;
+
+  const hasPicking = o.items.some(it => it.quantity_to_prepare != null);
+  content.innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div style="font-weight:800;font-size:15px">طلبية #${o.id} - ${o.branch_name || ""}</div>
+        <div style="font-size:12px;color:var(--faint);margin-top:4px">
+          تاريخ الطلب: ${String(o.business_date).slice(0, 10)} —
+          مقدّم الطلب: ${o.created_by_name || "-"}
+          ${o.submitted_by_name ? ` — قدّمها: ${o.submitted_by_name}` : ""}
+        </div>
+        ${o.notes ? `<div style="font-size:12px;color:var(--faint);margin-top:4px">ملاحظات: ${o.notes}</div>` : ""}
+        ${o.status === "REJECTED" && o.rejection_reason ? `<div class="err" style="margin-top:4px">سبب الرفض: ${o.rejection_reason}</div>` : ""}
+      </div>
+    </div>
+    <div style="margin:14px 0">${stepper}</div>
+    <table><thead><tr>
+      <th>الصنف</th><th>المطلوب</th>
+      ${hasPicking ? "<th>المتاح وقت التجهيز</th><th>هيتجهّز</th><th>حالة التنفيذ</th>" : ""}
+    </tr></thead><tbody>
+      ${o.items.map(it => `<tr>
+        <td>${it.name}</td>
+        <td>${Number(it.quantity_requested).toFixed(2)} ${it.unit}</td>
+        ${hasPicking ? `
+          <td>${it.quantity_available != null ? Number(it.quantity_available).toFixed(2) : "-"}</td>
+          <td>${it.quantity_to_prepare != null ? Number(it.quantity_to_prepare).toFixed(2) : "-"}</td>
+          <td>${it.fulfillment_status ? `<span class="badge ${it.fulfillment_status === "FULL" ? "APPROVED" : it.fulfillment_status === "PARTIAL" ? "SUBMITTED" : "REJECTED"}">${it.fulfillment_status === "FULL" ? "كامل" : it.fulfillment_status === "PARTIAL" ? "جزئي" : "لم يتجهّز"}</span>` : "-"}
+        ` : ""}
+      </tr>`).join("")}
+    </tbody></table>
+  `;
+}
+document.getElementById("closeDetailsBtn").onclick = () => { document.getElementById("orderDetailsBox").style.display = "none"; };
 
 function openEditOrder(order) {
   document.getElementById("orderEditBox").style.display = "block";
@@ -512,21 +667,88 @@ document.getElementById("editSaveBtn").onclick = async () => {
     await api(`/api/kitchen-orders/${orderId}/items`, { method: "PATCH", body: JSON.stringify({ items }) });
     okBox.textContent = "اتحفظت التعديلات";
     await loadMyOrders();
-  } catch (e) { errBox.textContent = e.message; }
+  } catch (e) { errBox.textContent = apiErrorMessage(e); }
 };
 
 // ---------------- الاستلام ----------------
+// UI-1I: شاشة استلام حساسة تشغيليًا - خطوتين دايمًا: (1) إدخال الكميات الفعلية، (2) ملخص تأكيد واضح قبل
+// الإرسال الفعلي (خصوصًا لو فيه عجز) - مفيش استدعاء لـ/receive إلا بعد ما المستخدم يضغط "تأكيد" في الملخص
+function renderReceiveForm(box, transferId, transfer) {
+  box.innerHTML = transfer.items.map(it => `
+    <div class="pickrow">
+      <span style="flex:2">${it.name} (${it.unit}) - المُرسل: ${it.quantity}</span>
+      <input class="receive-qty" type="number" min="0" step="any" value="${it.quantity}" data-item="${it.inventory_item_id}" data-name="${it.name}" data-unit="${it.unit}" data-sent="${it.quantity}" />
+    </div>
+  `).join("") + `<button data-reviewreceive="${transferId}">مراجعة والتأكيد</button><div class="err" data-receiveerr="${transferId}"></div><div data-receivesummary="${transferId}"></div>`;
+
+  box.querySelector(`[data-reviewreceive="${transferId}"]`).onclick = () => {
+    const errBox = box.querySelector(`[data-receiveerr="${transferId}"]`);
+    errBox.textContent = "";
+    const rows = [...box.querySelectorAll(".receive-qty")];
+    for (const inp of rows) {
+      if (inp.value === "" || Number(inp.value) < 0 || Number.isNaN(Number(inp.value))) {
+        errBox.textContent = "لازم تدخّل كمية صحيحة (صفر أو أكبر) لكل صنف";
+        return;
+      }
+    }
+    const lines = rows.map(inp => {
+      const sent = Number(inp.dataset.sent);
+      const received = Number(inp.value);
+      const shortage = Math.max(0, sent - received);
+      return { name: inp.dataset.name, unit: inp.dataset.unit, sent, received, shortage };
+    });
+    const summaryBox = box.querySelector(`[data-receivesummary="${transferId}"]`);
+    summaryBox.innerHTML = `
+      <div class="expandbox">
+        <div style="font-weight:800;margin-bottom:6px">تأكيد الاستلام</div>
+        ${lines.map(l => `
+          <div style="font-size:12px;margin-bottom:4px">
+            ${l.name}: سيتم تسجيل استلام ${l.received} ${l.unit}
+            ${l.shortage > 0 ? ` <span style="color:#F08A83">وتسجيل عجز ${l.shortage} ${l.unit} تلقائيًا</span>` : ""}
+          </div>`).join("")}
+        <div class="row" style="margin-top:8px">
+          <button data-confirmreceive="${transferId}">تأكيد الاستلام</button>
+          <button class="secondary" data-cancelreceive="${transferId}">رجوع للتعديل</button>
+        </div>
+      </div>`;
+    summaryBox.querySelector(`[data-cancelreceive="${transferId}"]`).onclick = () => { summaryBox.innerHTML = ""; };
+    summaryBox.querySelector(`[data-confirmreceive="${transferId}"]`).onclick = async () => {
+      const confirmBtn = summaryBox.querySelector(`[data-confirmreceive="${transferId}"]`);
+      confirmBtn.disabled = true;
+      const items = rows.map(inp => ({ inventoryItemId: Number(inp.dataset.item), quantityReceived: Number(inp.value) }));
+      try {
+        await api(`/api/kitchen-transfers/${transferId}/receive`, { method: "POST", body: JSON.stringify({ items }) });
+        await loadReceivingTab();
+        await loadStockTab();
+      } catch (e) {
+        errBox.textContent = apiErrorMessage(e);
+        confirmBtn.disabled = false;
+      }
+    };
+  };
+}
+
 async function loadReceivingTab() {
-  const transfers = await api(`/api/kitchen-transfers?branchId=${auth.user.branchId}`);
+  const box0 = document.getElementById("inTransitList");
+  box0.innerHTML = `<div style="color:var(--faint);font-size:13px">جاري التحميل...</div>`;
+  let transfers;
+  try {
+    transfers = await api(`/api/kitchen-transfers?branchId=${auth.user.branchId}`);
+  } catch (e) {
+    box0.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+    return;
+  }
   const inTransit = transfers.filter(t => t.status === "in_transit");
   const recentReceived = transfers.filter(t => ["received", "partially_received"].includes(t.status)).slice(0, 10);
 
+  // UI-1H: التحويلات الواردة - رقم التحويل، السنتر كيتشن المُرسِل، التاريخ، الكميات المُرسلة (المخطط لها -
+  // مفيش تصدير جزئي في النظام الحالي فالمُرسل الفعلي = نفس الكمية المطلوبة وقت /issue)
   const inTransitBox = document.getElementById("inTransitList");
   inTransitBox.innerHTML = inTransit.length ? inTransit.map(t => `
     <div class="formbox" data-transfer="${t.id}">
-      <div><b>تحويل #${t.id}</b> — ${String(t.business_date).slice(0, 10)}</div>
+      <div><b>تحويل #${t.id}</b> من ${t.from_branch_name || "السنتر كيتشن"} — ${String(t.business_date).slice(0, 10)} <span class="badge IN_TRANSIT">في الطريق</span></div>
       <div style="font-size:12px;color:var(--faint);margin:6px 0">${t.items.map(it => `${it.name}: ${it.quantity} ${it.unit}`).join("، ")}</div>
-      <div class="hint">الكميات هنا هي المطلوبة أصلًا - عدّها فعليًا وقت الاستلام ودخّل الكمية الحقيقية اللي وصلتك.</div>
+      <div class="hint">الكميات هنا هي اللي اتصدّرت فعليًا - عدّها وقت الاستلام ودخّل الكمية الحقيقية اللي وصلتك (لو أقل، الفرق هيتسجل كعجز استلام تلقائي).</div>
       <button class="linkbtn" data-startreceive="${t.id}">استلام</button>
       <div class="expandbox" style="display:none" data-receivebox="${t.id}"></div>
     </div>
@@ -538,24 +760,7 @@ async function loadReceivingTab() {
       const transfer = inTransit.find(t => t.id === Number(transferId));
       const box = document.querySelector(`[data-receivebox="${transferId}"]`);
       box.style.display = "block";
-      box.innerHTML = transfer.items.map(it => `
-        <div class="pickrow">
-          <span style="flex:2">${it.name} (${it.unit})</span>
-          <input class="receive-qty" type="number" min="0" step="any" value="${it.quantity}" data-item="${it.inventory_item_id}" />
-        </div>
-      `).join("") + `<button data-confirmreceive="${transferId}">تأكيد الاستلام</button><div class="err" data-receiveerr="${transferId}"></div>`;
-
-      box.querySelector(`[data-confirmreceive="${transferId}"]`).onclick = async () => {
-        const errBox = box.querySelector(`[data-receiveerr="${transferId}"]`);
-        errBox.textContent = "";
-        const items = [...box.querySelectorAll(".receive-qty")].map(inp => ({
-          inventoryItemId: Number(inp.dataset.item), quantityReceived: Number(inp.value),
-        }));
-        try {
-          await api(`/api/kitchen-transfers/${transferId}/receive`, { method: "POST", body: JSON.stringify({ items }) });
-          await loadReceivingTab();
-        } catch (e) { errBox.textContent = e.message; }
-      };
+      renderReceiveForm(box, transferId, transfer);
     };
   });
 
@@ -607,7 +812,7 @@ async function loadReceivingTab() {
             body: JSON.stringify({ items: [{ inventoryItemId, discrepancyType, quantity, notes: notes || null }] }),
           });
           okBox.textContent = "اتسجّل الفرق - محتاج مراجعة قبل ما يترحّل فعليًا";
-        } catch (e) { errBox.textContent = e.message; }
+        } catch (e) { errBox.textContent = apiErrorMessage(e); }
       };
     };
   });
@@ -618,10 +823,23 @@ async function loadReceivingTab() {
       const box = document.querySelector(`[data-discrepancylistbox="${transferId}"]`);
       box.style.display = box.style.display === "none" ? "block" : "none";
       if (box.style.display === "none") return;
-      const discs = await api(`/api/kitchen-transfers/${transferId}/discrepancies`);
-      const statusLabels = { OPEN: "مفتوح", ACKNOWLEDGED: "تحت المراجعة", RESOLVED: "اتراجع", REJECTED: "اترفض" };
-      box.innerHTML = discs.length ? `<table><thead><tr><th>الصنف</th><th>النوع</th><th>الكمية</th><th>الحالة</th></tr></thead><tbody>${
-        discs.map(d => `<tr><td>${d.item_name}</td><td>${DISCREPANCY_TYPE_LABELS[d.discrepancy_type] || d.discrepancy_type}</td><td>${d.quantity}</td><td>${statusLabels[d.status] || d.status}</td></tr>`).join("")
+      let discs;
+      try {
+        discs = await api(`/api/kitchen-transfers/${transferId}/discrepancies`);
+      } catch (e) {
+        box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+        return;
+      }
+      box.innerHTML = discs.length ? `<table><thead><tr><th>الصنف</th><th>النوع</th><th>الكمية</th><th>ملاحظات</th><th>الحالة</th><th>سجّلها/تاريخ</th><th>القرار</th></tr></thead><tbody>${
+        discs.map(d => `<tr>
+          <td>${d.item_name}</td>
+          <td>${DISCREPANCY_TYPE_LABELS[d.discrepancy_type] || d.discrepancy_type}</td>
+          <td>${d.quantity}</td>
+          <td>${d.notes || "-"}</td>
+          <td><span class="badge ${d.status === "RESOLVED" || d.status === "ACKNOWLEDGED" ? "APPROVED" : d.status === "REJECTED" ? "REJECTED" : "SUBMITTED"}">${DISCREPANCY_STATUS_LABELS[d.status] || d.status}</span></td>
+          <td>${d.reported_by_name || "-"}<br>${String(d.reported_at || "").slice(0, 10)}</td>
+          <td>${d.resolution_notes || "-"}${d.resolved_by_name ? `<br>${d.resolved_by_name}` : ""}</td>
+        </tr>`).join("")
       }</tbody></table>` : `<div style="color:var(--faint);font-size:12px">مفيش فروقات مسجّلة على التحويل ده</div>`;
     };
   });
@@ -631,7 +849,7 @@ async function loadReceivingTab() {
 async function loadStockTab() {
   const stock = await api(`/api/inventory/stock?branchId=${auth.user.branchId}`);
   document.getElementById("stockBody").innerHTML = stock.map(s => `
-    <tr><td>${s.name}</td><td>${s.quantity} ${s.unit}</td></tr>
+    <tr><td data-label="الصنف">${s.name}</td><td data-label="الرصيد">${s.quantity} ${s.unit}</td></tr>
   `).join("") || `<tr><td colspan="2">مفيش رصيد مسجل لسه</td></tr>`;
 }
 

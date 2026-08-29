@@ -82,8 +82,9 @@ router.get(
         total = countRes.rows[0].n;
         totalPages = Math.max(1, Math.ceil(total / limitNum));
         orders = await pool.query(
-          `SELECT ko.*, b.name AS branch_name
+          `SELECT ko.*, b.name AS branch_name, ucb.name AS created_by_name
            FROM kitchen_orders ko JOIN branches b ON b.id = ko.branch_id
+           LEFT JOIN users ucb ON ucb.id = ko.created_by
            ${whereClause}
            ORDER BY ko.business_date DESC, ko.id DESC
            LIMIT $6 OFFSET $7`,
@@ -91,20 +92,28 @@ router.get(
         );
       } else {
         // نفس الاستعلام القديم بالظبط (بدون LIMIT/OFFSET، بنفس الترتيب created_at DESC) - عشان أي استدعاء
-        // قديم (من غير page/limit) يفضل شغال بنفس الشكل والترتيب تمامًا زي قبل الفلاتر الإضافية دي
+        // قديم (من غير page/limit) يفضل شغال بنفس الشكل والترتيب تمامًا زي قبل الفلاتر الإضافية دي.
+        // created_by_name حقل إضافي بس (UI-1: اسم مقدّم الطلب لقايمة اعتماد السنتر كيتشن) - مفيش أي حقل
+        // قديم اتشال أو اتغيّر
         orders = await pool.query(
-          `SELECT ko.*, b.name AS branch_name
+          `SELECT ko.*, b.name AS branch_name, ucb.name AS created_by_name
            FROM kitchen_orders ko JOIN branches b ON b.id = ko.branch_id
+           LEFT JOIN users ucb ON ucb.id = ko.created_by
            ${whereClause}
            ORDER BY ko.created_at DESC`,
           filters
         );
       }
 
+      // UI-1: quantity_to_prepare/quantity_available/fulfillment_status مضافين هنا (كانوا ناقصين في القايمة
+      // القديمة - الشاشة الوحيدة اللي كانت بتستخدمهم قبل كده هي GET /:id المفرد) - شاشة الجاهز/التحويل
+      // للسنتر كيتشن (UI-1G) محتاجاهم عشان تعرف تحوّل الكمية اللي اتجهّزت فعلًا لا المطلوبة بس. حقول
+      // إضافية بس - مفيش حقل قديم اتشال
       const orderIds = orders.rows.map((o) => o.id);
       const items = orderIds.length
         ? (await pool.query(
-            `SELECT koi.kitchen_order_id, koi.inventory_item_id, koi.quantity_requested, ii.name, ii.unit
+            `SELECT koi.kitchen_order_id, koi.inventory_item_id, koi.quantity_requested,
+                    koi.quantity_available, koi.quantity_to_prepare, koi.fulfillment_status, ii.name, ii.unit
              FROM kitchen_order_items koi
              JOIN inventory_items ii ON ii.id = koi.inventory_item_id
              WHERE koi.kitchen_order_id = ANY($1)`,
@@ -590,7 +599,12 @@ router.get("/suggested", requireAuth, requireRole("admin", "branch_manager", "ca
 router.get("/:id", requireAuth, requireRole("admin", "branch_manager", "cashier"), async (req, res) => {
   try {
     const order = await pool.query(
-      `SELECT ko.*, b.name AS branch_name FROM kitchen_orders ko JOIN branches b ON b.id = ko.branch_id WHERE ko.id = $1`,
+      `SELECT ko.*, b.name AS branch_name, ucb.name AS created_by_name, usb.name AS submitted_by_name
+       FROM kitchen_orders ko
+       JOIN branches b ON b.id = ko.branch_id
+       LEFT JOIN users ucb ON ucb.id = ko.created_by
+       LEFT JOIN users usb ON usb.id = ko.submitted_by
+       WHERE ko.id = $1`,
       [req.params.id]
     );
     if (order.rows.length === 0) return res.status(404).json({ error: "الطلبية مش موجودة" });

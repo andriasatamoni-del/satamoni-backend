@@ -177,22 +177,35 @@ router.get(
   requireAuth,
   requireRole("admin", "accountant", "branch_manager"),
   async (req, res) => {
-    let { branchId, date } = req.query;
+    let { branchId, fromBranchId, date } = req.query;
+    // UI-1 (Central Kitchen Ready/Dispatch): موظف السنتر كيتشن محتاج يشوف التحويلات اللي *هو بعتها*
+    // (from_branch_id = فرعه)، مش بس اللي وصلتله - قبل كده كان الفلتر مربوط بـto_branch_id بس، فمدير فرع
+    // السنتر كيتشن ماكانش يقدر يشوف تحويلاته الصادرة خالص عن طريق الـendpoint ده. fromBranchId فلتر إضافي
+    // اختياري (from_branch_id) - لو موجود بيتفحص إنه فرع المستخدم نفسه (لغير الأدمن) بدل ما يتفرض عليه
+    // branchId زي قبل، عشان يقدر يستعلم بيه لوحده من غير ما يتفرض عليه فلتر to_branch_id كمان
     if (req.user.role === "branch_manager") {
-      if (branchId && !assertOwnBranch(req.user, branchId)) {
-        return res.status(403).json({ error: "معندكش صلاحية تشوف تحويلات فرع تاني" });
+      if (fromBranchId) {
+        if (!assertOwnBranch(req.user, fromBranchId)) {
+          return res.status(403).json({ error: "معندكش صلاحية تشوف تحويلات فرع تاني" });
+        }
+      } else {
+        if (branchId && !assertOwnBranch(req.user, branchId)) {
+          return res.status(403).json({ error: "معندكش صلاحية تشوف تحويلات فرع تاني" });
+        }
+        branchId = req.user.branchId;
       }
-      branchId = req.user.branchId;
     }
     try {
       const transfers = await pool.query(
-        `SELECT kt.*, b.name AS to_branch_name
+        `SELECT kt.*, b.name AS to_branch_name, bf.name AS from_branch_name
          FROM kitchen_transfers kt
          JOIN branches b ON b.id = kt.to_branch_id
+         LEFT JOIN branches bf ON bf.id = kt.from_branch_id
          WHERE ($1::int IS NULL OR kt.to_branch_id = $1)
            AND ($2::date IS NULL OR kt.business_date = $2)
+           AND ($3::int IS NULL OR kt.from_branch_id = $3)
          ORDER BY kt.business_date DESC, kt.id DESC`,
-        [branchId || null, date || null]
+        [branchId || null, date || null, fromBranchId || null]
       );
       const transferIds = transfers.rows.map((t) => t.id);
       const items = transferIds.length
@@ -302,7 +315,7 @@ router.post("/itemized", requireAuth, requireRole("admin"), async (req, res) => 
     res.status(201).json({ transferId, amountAtCost });
   } catch (err) {
     await client.query("ROLLBACK");
-    if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message });
+    if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message, code: err.code });
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
@@ -414,7 +427,7 @@ router.post("/:id/issue", requireAuth, stockManagers, async (req, res) => {
     res.json(updated.rows[0]);
   } catch (err) {
     await client.query("ROLLBACK");
-    if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message });
+    if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message, code: err.code });
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
@@ -473,7 +486,7 @@ router.post("/:id/receive", requireAuth, stockManagers, async (req, res) => {
     res.json(updated.rows[0]);
   } catch (err) {
     await client.query("ROLLBACK");
-    if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message });
+    if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message, code: err.code });
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
@@ -598,7 +611,7 @@ router.post("/:id/discrepancies", requireAuth, stockManagers, async (req, res) =
     res.status(201).json(inserted);
   } catch (err) {
     await client.query("ROLLBACK");
-    if (err.code === "DISCREPANCY_VALIDATION") return res.status(400).json({ error: err.message });
+    if (err.code === "DISCREPANCY_VALIDATION") return res.status(400).json({ error: err.message, code: err.code });
     res.status(400).json({ error: err.message });
   } finally {
     client.release();
@@ -614,9 +627,14 @@ router.get("/:id/discrepancies", requireAuth, stockManagers, async (req, res) =>
     if (!assertOwnBranch(req.user, t.to_branch_id) && !assertOwnBranch(req.user, t.from_branch_id)) {
       return res.status(403).json({ error: "معندكش صلاحية تشوف فروقات التحويل ده" });
     }
-    const result = await pool.query(
-      `SELECT td.*, ii.name AS item_name
-       FROM transfer_discrepancies td JOIN inventory_items ii ON ii.id = td.inventory_item_id
+    // UI-1J: شاشة الفروقات محتاجة تعرض "مين سجّل ومين راجع" بالاسم مش بس ID - جوينز إضافية بس (زي
+      // created_by_name في kitchen-orders.js)، مفيش أي تغيير في السلوك أو الحقول القديمة
+      const result = await pool.query(
+      `SELECT td.*, ii.name AS item_name, ur.name AS reported_by_name, urs.name AS resolved_by_name
+       FROM transfer_discrepancies td
+       JOIN inventory_items ii ON ii.id = td.inventory_item_id
+       LEFT JOIN users ur ON ur.id = td.reported_by
+       LEFT JOIN users urs ON urs.id = td.resolved_by
        WHERE td.kitchen_transfer_id = $1 ORDER BY td.id`,
       [req.params.id]
     );

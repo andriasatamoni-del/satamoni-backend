@@ -161,7 +161,7 @@ async function computeSuggestedQuantity(client, {
   return {
     inventoryItemId, currentStock, minStock, maxStock,
     avgWeekdayConsumption: average, occurrencesUsed,
-    expectedConsumption, coverageDays,
+    expectedConsumption, coverageDays, target,
     pendingPipelineQuantity: pendingPipeline, inTransitQuantity: inTransit,
     suggestedQuantity,
   };

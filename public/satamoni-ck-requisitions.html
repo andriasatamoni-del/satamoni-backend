@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — السنتر كيتشن (الطلبيات)</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1100px; margin: 0 auto; padding: 20px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+  h2 { font-size: 14px; color: var(--faint); margin: 18px 0 8px; }
+
+  #tabs { display: flex; gap: 6px; margin: 16px 0; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 130px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; font-family: inherit; }
+  .formbox label.field-label { flex: 0; white-space: nowrap; font-size: 12px; color: var(--faint); }
+  button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+  button.good { background: var(--green); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+  .hint { color: var(--faint); font-size: 12px; margin-bottom: 8px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; margin-left: 10px; }
+  .linkbtn.danger { color: #F08A83; }
+
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .badge.DRAFT { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .badge.SUBMITTED { background: rgba(203,161,53,.25); color: var(--gold-bright); }
+  .badge.APPROVED, .badge.PREPARING, .badge.READY { background: rgba(63,163,77,.12); color: var(--green); }
+  .badge.IN_TRANSIT { background: rgba(63,163,77,.22); color: var(--green); }
+  .badge.RECEIVED { background: rgba(63,163,77,.15); color: var(--green); }
+  .badge.REJECTED, .badge.cancelled { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.shortage { background: rgba(194,42,36,.18); color: #F08A83; }
+
+  .expandbox { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-top: 8px; }
+  .pager { display: flex; align-items: center; gap: 10px; justify-content: center; margin: 12px 0; font-size: 12px; color: var(--faint); }
+  .pager button { padding: 6px 14px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; font-size: 12px; }
+  .pager button:disabled { opacity: .4; cursor: not-allowed; }
+
+  #bootStatus { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+  #bootStatus .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; text-align: center; }
+  #bootStatus .box.error { border-color: var(--red); }
+  #bootStatus button { margin-top: 10px; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; font-size: 15px; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+
+  @media (max-width: 720px) {
+    table, thead, tbody, th, td, tr { display: block; }
+    thead tr { display: none; }
+    td { border: none; padding: 4px 0; }
+    td::before { content: attr(data-label); font-weight: 700; color: var(--faint); display: inline-block; min-width: 110px; }
+    tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🏭 ساتاموني — السنتر كيتشن (الطلبيات)</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🏭 تسجيل الدخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <!-- الأدمن مش مربوط بفرع معيّن زي مدير السنتر كيتشن - لازم يختار بيشتغل باسم أي فرع سنتر كيتشن -->
+  <div class="formbox" id="ckBranchPickerBox" style="display:none">
+    <div class="row">
+      <label class="field-label">بتشتغل باسم فرع السنتر كيتشن:</label>
+      <select id="ckBranchSelect"></select>
+    </div>
+  </div>
+
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="approval">قائمة الاعتماد</div>
+    <div class="tabbtn" data-tab="picking">التجهيز</div>
+    <div class="tabbtn" data-tab="dispatch">الجاهز والتحويل</div>
+  </div>
+
+  <!-- UI-1E: قائمة اعتماد السنتر كيتشن -->
+  <div class="panel active" id="panel-approval">
+    <h1>قائمة الاعتماد</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الحالة:</label>
+        <select id="approvalStatusFilter">
+          <option value="SUBMITTED">في انتظار الاعتماد (الافتراضي)</option>
+          <option value="APPROVED">معتمد</option>
+          <option value="REJECTED">مرفوض</option>
+        </select>
+        <button id="approvalFilterBtn">تحديث</button>
+      </div>
+    </div>
+    <div id="approvalBox"></div>
+    <div class="pager">
+      <button id="approvalPrevBtn">◀ السابق</button>
+      <span id="approvalPageInfo"></span>
+      <button id="approvalNextBtn">التالي ▶</button>
+    </div>
+    <div id="approvalDetailsBox" style="display:none">
+      <h2>تفاصيل الطلبية</h2>
+      <div class="formbox" id="approvalDetailsContent"></div>
+      <button class="secondary" id="approvalDetailsCloseBtn">إغلاق</button>
+    </div>
+  </div>
+
+  <!-- UI-1F: التجهيز (Picking) - الشاشة الحرجة -->
+  <div class="panel" id="panel-picking">
+    <h1>التجهيز</h1>
+    <div class="hint">اختار طلبية معتمدة أو قيد التجهيز - الأرقام هنا من رد السيرفر مباشرة (المتاح الفعلي في مخزن السنتر كيتشن لحظة القراءة)، مفيش حساب بيتعمل في المتصفح.</div>
+    <div id="pickingQueueBox"></div>
+    <div id="pickingWorkBox" style="display:none"></div>
+  </div>
+
+  <!-- UI-1G: الجاهز والتحويل (Ready/Dispatch) -->
+  <div class="panel" id="panel-dispatch">
+    <h1>الجاهز والتحويل</h1>
+    <div class="hint">بعد ما تجهّز الطلبية، أكّد جاهزيتها، بعدين أنشئ تحويل للفرع الطالب. اعتماد التحويل بيتطلب الأدمن (استقلالية بين الطلب والاعتماد)، وبعد الاعتماد لازم تصديره فعليًا عشان تنزل الكمية من المخزون.</div>
+    <div id="dispatchBox"></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
+<div id="bootStatus" style="display:none"></div>
+
+<script src="js/requisition-errors.js"></script>
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+const STATUS_LABELS = {
+  DRAFT: "مسودة", SUBMITTED: "في انتظار الاعتماد", APPROVED: "معتمد", REJECTED: "مرفوض",
+  PREPARING: "جاري التجهيز", READY: "جاهز", DISPATCHED: "اتصدرت", IN_TRANSIT: "في الطريق", RECEIVED: "تم الاستلام",
+  cancelled: "ملغية",
+};
+const TRANSFER_STATUS_LABELS = {
+  requested: "بانتظار اعتماد الأدمن", approved: "معتمد - جاهز للتصدير", issued: "بيتصدّر",
+  in_transit: "في الطريق للفرع", received: "اتستلم", partially_received: "اتستلم جزئي", cancelled: "ملغي",
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || "حصل خطأ");
+    err.code = data.code || null;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+function apiErrorMessage(err) { return describeRequisitionError(err, err && err.status).message; }
+function isCentralKitchenActor(user) { return user.role === "admin" || (user.role === "branch_manager" && user.isCentralKitchen); }
+
+// الأدمن مش مربوط بفرع - لازم يختار فرع سنتر كيتشن يشتغل باسمه (state.ckBranchId). مدير السنتر كيتشن
+// فرعه هو نفسه فرع السنتر كيتشن أصلًا
+const state = { ckBranchId: null };
+function getCkBranchId() { return auth.user.role === "admin" ? state.ckBranchId : auth.user.branchId; }
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    hideLogin();
+    if (!allowedRoles.includes(data.user.role) || !isCentralKitchenActor(data.user)) {
+      document.getElementById("accessDenied").style.display = "block";
+      document.getElementById("accessDenied").textContent = "الشاشة دي مخصوصة لموظفي السنتر كيتشن أو الأدمن بس - لو انت مدير فرع عادي استخدم شاشة \"طلبيات الفرع\".";
+      return;
+    }
+    bootSafely();
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+async function bootSafely() {
+  const statusBox = document.getElementById("bootStatus");
+  const mainBox = document.getElementById("main");
+  statusBox.style.display = "block";
+  mainBox.style.display = "none";
+  statusBox.innerHTML = `<div class="box">جاري تحميل البيانات...</div>`;
+  try {
+    await boot();
+    statusBox.style.display = "none";
+  } catch (e) {
+    mainBox.style.display = "none";
+    const isNetworkFailure = e instanceof TypeError;
+    const message = isNetworkFailure
+      ? "تعذّر الاتصال بالسيرفر - تأكد من الإنترنت أو حاول تاني بعد شوية"
+      : `حصل خطأ أثناء تحميل البيانات: ${apiErrorMessage(e)}`;
+    statusBox.innerHTML = `<div class="box error"><div>${message}</div><button id="bootRetryBtn">إعادة المحاولة</button></div>`;
+    document.getElementById("bootRetryBtn").onclick = bootSafely;
+    console.error("boot() failed:", e);
+  }
+}
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    if (btn.dataset.tab === "approval") loadApprovalQueue();
+    if (btn.dataset.tab === "picking") loadPickingQueue();
+    if (btn.dataset.tab === "dispatch") loadDispatchBox();
+  };
+});
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  if (auth.user.role === "admin") {
+    const branches = await api("/api/branches/all");
+    const ckBranches = branches.filter(b => b.is_central_kitchen);
+    if (ckBranches.length === 0) {
+      document.getElementById("bootStatus").style.display = "block";
+      document.getElementById("bootStatus").innerHTML = `<div class="box">مفيش فرع سنتر كيتشن متسجّل في النظام - كلّم الأدمن يضيفه من شاشة إدارة الفروع الأول.</div>`;
+      document.getElementById("main").style.display = "none";
+      return;
+    }
+    state.ckBranchId = ckBranches[0].id;
+    document.getElementById("ckBranchPickerBox").style.display = "block";
+    const select = document.getElementById("ckBranchSelect");
+    select.innerHTML = ckBranches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    select.value = state.ckBranchId;
+    select.onchange = () => { state.ckBranchId = Number(select.value); loadApprovalQueue(); loadPickingQueue(); loadDispatchBox(); };
+  } else {
+    state.ckBranchId = auth.user.branchId;
+  }
+
+  await loadApprovalQueue();
+}
+
+// ================= UI-1E: قائمة الاعتماد =================
+let approvalPage = 1;
+const APPROVAL_PAGE_SIZE = 20;
+document.getElementById("approvalFilterBtn").onclick = () => { approvalPage = 1; loadApprovalQueue(); };
+document.getElementById("approvalPrevBtn").onclick = () => { if (approvalPage > 1) { approvalPage--; loadApprovalQueue(); } };
+document.getElementById("approvalNextBtn").onclick = () => { approvalPage++; loadApprovalQueue(); };
+
+async function loadApprovalQueue() {
+  const box = document.getElementById("approvalBox");
+  box.innerHTML = `<div style="color:var(--faint);font-size:13px">جاري التحميل...</div>`;
+  const status = document.getElementById("approvalStatusFilter").value;
+  try {
+    const res = await api(`/api/kitchen-orders?status=${status}&page=${approvalPage}&limit=${APPROVAL_PAGE_SIZE}`);
+    const orders = res.data;
+    box.innerHTML = orders.length ? `
+      <table><thead><tr>
+        <th>رقم الطلبية</th><th>الفرع</th><th>التاريخ</th><th>مقدّم الطلب</th><th>عدد الأصناف</th><th>إجمالي الكمية</th><th>الحالة</th><th></th>
+      </tr></thead><tbody>
+        ${orders.map(o => {
+          const totalQty = o.items.reduce((s, it) => s + Number(it.quantity_requested), 0);
+          return `<tr>
+            <td data-label="رقم الطلبية">#${o.id}</td>
+            <td data-label="الفرع">${o.branch_name}</td>
+            <td data-label="التاريخ">${String(o.business_date).slice(0, 10)}</td>
+            <td data-label="مقدّم الطلب">${o.created_by_name || "-"}</td>
+            <td data-label="عدد الأصناف">${o.items.length}</td>
+            <td data-label="إجمالي الكمية">${totalQty.toFixed(2)}</td>
+            <td data-label="الحالة"><span class="badge ${o.status}">${STATUS_LABELS[o.status] || o.status}</span></td>
+            <td data-label="">
+              <button class="linkbtn" data-view="${o.id}">عرض</button>
+              ${o.status === "SUBMITTED" ? `<button class="linkbtn" data-approve="${o.id}">اعتماد</button><button class="linkbtn danger" data-reject="${o.id}">رفض</button>` : ""}
+            </td>
+          </tr>`;
+        }).join("")}
+      </tbody></table>
+    ` : `<div style="color:var(--faint);font-size:13px">مفيش طلبيات في الحالة دي دلوقتي</div>`;
+
+    document.getElementById("approvalPageInfo").textContent = `صفحة ${res.page} من ${res.totalPages} (إجمالي ${res.total})`;
+    document.getElementById("approvalPrevBtn").disabled = res.page <= 1;
+    document.getElementById("approvalNextBtn").disabled = res.page >= res.totalPages;
+
+    document.querySelectorAll("[data-view]").forEach(btn => {
+      btn.onclick = () => showApprovalDetails(btn.dataset.view);
+    });
+    document.querySelectorAll("[data-approve]").forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm(`تأكيد اعتماد الطلبية #${btn.dataset.approve}؟`)) return;
+        try { await api(`/api/kitchen-orders/${btn.dataset.approve}/approve`, { method: "POST" }); await loadApprovalQueue(); }
+        catch (e) { alert(apiErrorMessage(e)); }
+      };
+    });
+    document.querySelectorAll("[data-reject]").forEach(btn => {
+      btn.onclick = async () => {
+        const reason = prompt("سبب الرفض (إلزامي):");
+        if (!reason || !reason.trim()) return;
+        try { await api(`/api/kitchen-orders/${btn.dataset.reject}/reject`, { method: "POST", body: JSON.stringify({ reason }) }); await loadApprovalQueue(); }
+        catch (e) { alert(apiErrorMessage(e)); }
+      };
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+async function showApprovalDetails(orderId) {
+  const wrap = document.getElementById("approvalDetailsBox");
+  const content = document.getElementById("approvalDetailsContent");
+  wrap.style.display = "block";
+  content.innerHTML = `<div style="color:var(--faint);font-size:13px">جاري التحميل...</div>`;
+  wrap.scrollIntoView({ behavior: "smooth" });
+  try {
+    const o = await api(`/api/kitchen-orders/${orderId}`);
+    content.innerHTML = `
+      <div style="font-weight:800">طلبية #${o.id} - ${o.branch_name}</div>
+      <div style="font-size:12px;color:var(--faint);margin:6px 0">التاريخ: ${String(o.business_date).slice(0, 10)} — مقدّم الطلب: ${o.created_by_name || "-"}</div>
+      ${o.notes ? `<div style="font-size:12px;color:var(--faint)">ملاحظات: ${o.notes}</div>` : ""}
+      <table style="margin-top:10px"><thead><tr><th>الصنف</th><th>الكمية المطلوبة</th></tr></thead><tbody>
+        ${o.items.map(it => `<tr><td>${it.name}</td><td>${Number(it.quantity_requested).toFixed(2)} ${it.unit}</td></tr>`).join("")}
+      </tbody></table>`;
+  } catch (e) {
+    content.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+document.getElementById("approvalDetailsCloseBtn").onclick = () => { document.getElementById("approvalDetailsBox").style.display = "none"; };
+
+// ================= UI-1F: التجهيز (Picking) =================
+async function loadPickingQueue() {
+  const box = document.getElementById("pickingQueueBox");
+  document.getElementById("pickingWorkBox").style.display = "none";
+  box.innerHTML = `<div style="color:var(--faint);font-size:13px">جاري التحميل...</div>`;
+  try {
+    const res = await api(`/api/kitchen-orders?status=APPROVED,PREPARING&page=1&limit=50`);
+    const orders = res.data;
+    box.innerHTML = orders.length ? `
+      <table><thead><tr><th>رقم الطلبية</th><th>الفرع</th><th>التاريخ</th><th>الحالة</th><th></th></tr></thead><tbody>
+        ${orders.map(o => `<tr>
+          <td data-label="رقم الطلبية">#${o.id}</td>
+          <td data-label="الفرع">${o.branch_name}</td>
+          <td data-label="التاريخ">${String(o.business_date).slice(0, 10)}</td>
+          <td data-label="الحالة"><span class="badge ${o.status}">${STATUS_LABELS[o.status] || o.status}</span></td>
+          <td data-label=""><button data-pick="${o.id}">ابدأ التجهيز</button></td>
+        </tr>`).join("")}
+      </tbody></table>
+    ` : `<div style="color:var(--faint);font-size:13px">مفيش طلبيات جاهزة للتجهيز دلوقتي</div>`;
+    document.querySelectorAll("[data-pick]").forEach(btn => {
+      btn.onclick = () => openPickingWork(btn.dataset.pick);
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+async function openPickingWork(orderId) {
+  const work = document.getElementById("pickingWorkBox");
+  work.style.display = "block";
+  work.innerHTML = `<div style="color:var(--faint);font-size:13px">جاري التحميل...</div>`;
+  work.scrollIntoView({ behavior: "smooth" });
+  const qs = auth.user.role === "admin" ? `?ckBranchId=${getCkBranchId()}` : "";
+  try {
+    const res = await api(`/api/kitchen-orders/${orderId}/picking${qs}`);
+    const items = res.items;
+    work.innerHTML = `
+      <h2>تجهيز طلبية #${orderId}</h2>
+      <table><thead><tr>
+        <th>الصنف</th><th>المطلوب</th><th>المتاح فعليًا</th><th>هيتجهّز</th><th>حالة</th>
+      </tr></thead><tbody>
+        ${items.map(it => {
+          const already = it.quantity_to_prepare != null ? Number(it.quantity_to_prepare) : Math.min(Number(it.quantity_requested), Number(it.available));
+          return `<tr>
+            <td data-label="الصنف">${it.name}</td>
+            <td data-label="المطلوب">${Number(it.quantity_requested).toFixed(2)} ${it.unit}</td>
+            <td data-label="المتاح فعليًا">${Number(it.available).toFixed(2)} ${it.unit}</td>
+            <td data-label="هيتجهّز"><input class="pick-qty" type="number" min="0" max="${it.quantity_requested}" step="any" value="${Math.max(0, already).toFixed(2)}" data-item="${it.inventory_item_id}" data-requested="${it.quantity_requested}" /></td>
+            <td data-label="حالة">${it.shortfall > 0 ? `<span class="badge shortage">نقص متوقع ${Number(it.shortfall).toFixed(2)} ${it.unit}</span>` : `<span class="badge APPROVED">متاح كامل</span>`}</td>
+          </tr>`;
+        }).join("")}
+      </tbody></table>
+      <div class="row" style="margin-top:12px">
+        <button id="pickingSubmitBtn">حفظ كميات التجهيز</button>
+        <button class="secondary" id="pickingCancelBtn">رجوع</button>
+      </div>
+      <div class="err" id="pickingErr"></div>
+      <div id="pickingSummary"></div>
+    `;
+    document.getElementById("pickingCancelBtn").onclick = () => { work.style.display = "none"; };
+    document.getElementById("pickingSubmitBtn").onclick = async () => {
+      const errBox = document.getElementById("pickingErr");
+      errBox.textContent = "";
+      const rows = [...work.querySelectorAll(".pick-qty")];
+      const pickItems = rows.map(inp => ({ inventoryItemId: Number(inp.dataset.item), quantityToPrepare: Number(inp.value) }));
+      try {
+        const result = await api(`/api/kitchen-orders/${orderId}/picking`, {
+          method: "POST",
+          body: JSON.stringify({ items: pickItems, ...(auth.user.role === "admin" ? { ckBranchId: getCkBranchId() } : {}) }),
+        });
+        const summaryBox = document.getElementById("pickingSummary");
+        const shortItems = result.items.filter(it => Number(it.quantity_to_prepare) < Number(it.quantity_requested));
+        summaryBox.innerHTML = `
+          <div class="ok" style="margin-top:10px">تم حفظ كميات التجهيز.</div>
+          ${shortItems.length ? `<div class="err">تنبيه: ${shortItems.length} صنف مش هيتجهّز كامل: ${shortItems.map(it => `${it.name} (طلب ${it.quantity_requested}، هيتجهّز ${it.quantity_to_prepare})`).join("، ")}</div>` : ""}
+        `;
+        await loadPickingQueue();
+      } catch (e) { errBox.textContent = apiErrorMessage(e); }
+    };
+  } catch (e) {
+    work.innerHTML = `<div class="err">${apiErrorMessage(e)}</div><button class="secondary" onclick="document.getElementById('pickingWorkBox').style.display='none'">رجوع</button>`;
+  }
+}
+
+// ================= UI-1G: الجاهز والتحويل =================
+async function loadDispatchBox() {
+  const box = document.getElementById("dispatchBox");
+  box.innerHTML = `<div style="color:var(--faint);font-size:13px">جاري التحميل...</div>`;
+  try {
+    const [preparingRes, readyRes, outgoingTransfers] = await Promise.all([
+      api(`/api/kitchen-orders?status=PREPARING&page=1&limit=50`),
+      api(`/api/kitchen-orders?status=READY&page=1&limit=50`),
+      api(`/api/kitchen-transfers?fromBranchId=${getCkBranchId()}`),
+    ]);
+    const transferByOrder = new Map();
+    outgoingTransfers
+      .filter(t => t.kitchen_order_id && ["requested", "approved", "issued", "in_transit"].includes(t.status))
+      .forEach(t => transferByOrder.set(t.kitchen_order_id, t));
+
+    const preparingRows = preparingRes.data.map(o => `
+      <div class="formbox" data-order="${o.id}">
+        <div class="row" style="justify-content:space-between">
+          <div><b>طلبية #${o.id}</b> - ${o.branch_name} — ${String(o.business_date).slice(0, 10)} <span class="badge PREPARING">جاري التجهيز</span></div>
+          <button data-ready="${o.id}">تأكيد الجاهزية</button>
+        </div>
+        <div style="font-size:12px;color:var(--faint);margin-top:6px">${o.items.map(it => `${it.name}: ${it.quantity_to_prepare != null ? Number(it.quantity_to_prepare).toFixed(2) : "-"}/${Number(it.quantity_requested).toFixed(2)} ${it.unit}`).join("، ")}</div>
+        <div class="err" data-readyerr="${o.id}"></div>
+      </div>`).join("");
+
+    const readyRows = readyRes.data.map(o => {
+      const t = transferByOrder.get(o.id);
+      return `
+      <div class="formbox" data-order="${o.id}">
+        <div class="row" style="justify-content:space-between">
+          <div><b>طلبية #${o.id}</b> - ${o.branch_name} — ${String(o.business_date).slice(0, 10)} <span class="badge READY">جاهز</span></div>
+          ${!t ? `<button data-createtransfer="${o.id}">إنشاء تحويل للفرع</button>` : ""}
+        </div>
+        <div style="font-size:12px;color:var(--faint);margin-top:6px">${o.items.filter(it => Number(it.quantity_to_prepare) > 0).map(it => `${it.name}: ${Number(it.quantity_to_prepare).toFixed(2)} ${it.unit}`).join("، ") || "مفيش كميات هتتحوّل"}</div>
+        ${t ? renderTransferActions(t) : ""}
+        <div class="err" data-transfererr="${o.id}"></div>
+      </div>`;
+    }).join("");
+
+    box.innerHTML = `
+      <h2>قيد التجهيز</h2>
+      ${preparingRows || `<div style="color:var(--faint);font-size:13px">مفيش طلبيات قيد التجهيز دلوقتي</div>`}
+      <h2 style="margin-top:20px">جاهز للتحويل</h2>
+      ${readyRows || `<div style="color:var(--faint);font-size:13px">مفيش طلبيات جاهزة للتحويل دلوقتي</div>`}
+    `;
+
+    document.querySelectorAll("[data-ready]").forEach(btn => {
+      btn.onclick = async () => {
+        const errBox = document.querySelector(`[data-readyerr="${btn.dataset.ready}"]`);
+        errBox.textContent = "";
+        if (!confirm(`تأكيد إن طلبية #${btn.dataset.ready} جاهزة بالكامل للتحويل؟`)) return;
+        try { await api(`/api/kitchen-orders/${btn.dataset.ready}/ready`, { method: "POST" }); await loadDispatchBox(); }
+        catch (e) { errBox.textContent = apiErrorMessage(e); }
+      };
+    });
+    document.querySelectorAll("[data-createtransfer]").forEach(btn => {
+      btn.onclick = async () => {
+        const orderId = Number(btn.dataset.createtransfer);
+        const errBox = document.querySelector(`[data-transfererr="${orderId}"]`);
+        errBox.textContent = "";
+        const order = readyRes.data.find(o => o.id === orderId);
+        const items = order.items.filter(it => Number(it.quantity_to_prepare) > 0).map(it => ({ inventoryItemId: it.inventory_item_id, quantity: Number(it.quantity_to_prepare) }));
+        if (items.length === 0) { errBox.textContent = "مفيش كميات هتتحوّل - راجع التجهيز الأول"; return; }
+        try {
+          await api("/api/kitchen-transfers/request", {
+            method: "POST",
+            body: JSON.stringify({ fromBranchId: getCkBranchId(), toBranchId: order.branch_id, businessDate: order.business_date, items, kitchenOrderId: orderId }),
+          });
+          await loadDispatchBox();
+        } catch (e) { errBox.textContent = apiErrorMessage(e); }
+      };
+    });
+    document.querySelectorAll("[data-approvetransfer]").forEach(btn => {
+      btn.onclick = async () => {
+        try { await api(`/api/kitchen-transfers/${btn.dataset.approvetransfer}/approve`, { method: "POST" }); await loadDispatchBox(); }
+        catch (e) { alert(apiErrorMessage(e)); }
+      };
+    });
+    document.querySelectorAll("[data-issuetransfer]").forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm("تأكيد تصدير التحويل؟ الكمية هتتخصم من مخزون السنتر كيتشن فورًا.")) return;
+        try { await api(`/api/kitchen-transfers/${btn.dataset.issuetransfer}/issue`, { method: "POST" }); await loadDispatchBox(); }
+        catch (e) { alert(apiErrorMessage(e)); }
+      };
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+function renderTransferActions(t) {
+  const label = TRANSFER_STATUS_LABELS[t.status] || t.status;
+  let action = "";
+  if (t.status === "requested") {
+    action = auth.user.role === "admin"
+      ? `<button data-approvetransfer="${t.id}">اعتماد التحويل</button>`
+      : `<span class="hint">بانتظار اعتماد الأدمن (الاعتماد لازم يكون من طرف مستقل)</span>`;
+  } else if (t.status === "approved") {
+    action = `<button data-issuetransfer="${t.id}">تصدير التحويل</button>`;
+  } else if (t.status === "in_transit") {
+    action = `<span class="hint">في الطريق للفرع - في انتظار استلامه</span>`;
+  }
+  return `<div class="expandbox"><div><b>تحويل #${t.id}</b> <span class="badge IN_TRANSIT">${label}</span></div><div style="margin-top:8px">${action}</div></div>`;
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role) && isCentralKitchenActor(auth.user)) bootSafely();
+  else {
+    document.getElementById("accessDenied").style.display = "block";
+    document.getElementById("accessDenied").textContent = "الشاشة دي مخصوصة لموظفي السنتر كيتشن أو الأدمن بس - لو انت مدير فرع عادي استخدم شاشة \"طلبيات الفرع\".";
+  }
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>
