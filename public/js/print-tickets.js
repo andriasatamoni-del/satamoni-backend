@@ -127,7 +127,7 @@
       if (Number(full.vat_amount) > 0) totalsRows.push(`<tr><td>منها ضريبة قيمة مضافة</td><td>${money(full.vat_amount)}</td></tr>`);
       totalsRows.push(`<tr><td>الإجمالي</td><td>${money(full.total)}</td></tr>`);
       body.innerHTML = `
-        <h2>ساتاموني</h2>
+        <h2>ستاموني</h2>
         <div class="meta">إيصال طلب #${full.id} — ${esc(labels.orderTypeLabel || full.order_type)}</div>
         <div class="meta">${labels.branchLabel ? esc(labels.branchLabel) + " — " : ""}${new Date(full.created_at).toLocaleString("ar-EG")}</div>
         ${full.customer_name || full.customer_phone ? `<div class="meta">العميل: ${esc(full.customer_name) || "—"} — ${esc(full.customer_phone) || "—"}</div>` : ""}

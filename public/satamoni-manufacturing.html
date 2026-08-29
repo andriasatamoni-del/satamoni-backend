@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ساتاموني — التصنيع والتعبئة</title>
+<title>ستاموني — التصنيع والتعبئة</title>
 <style>
   :root {
     --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
@@ -136,7 +136,7 @@
 <body>
 
 <div id="topbar">
-  <div class="brand">🏭 ساتاموني — التصنيع والتعبئة</div>
+  <div class="brand">🏭 ستاموني — التصنيع والتعبئة</div>
   <div id="userInfo">
     <span id="userName"></span>
     <button id="logoutBtn">خروج</button>
@@ -1403,7 +1403,7 @@ function printProductionBatchLabel() {
   const outputBatch = (order?.batches || []).find(b => b.role === "output");
   if (!outputBatch) return;
   window.SatamoniPrint.openCustomPrint("ملصق دفعة تصنيع", buildBatchLabelHtml({
-    title: "دفعة تصنيع - ساتاموني", product: order.product_name, batchNumber: outputBatch.batch_number,
+    title: "دفعة تصنيع - ستاموني", product: order.product_name, batchNumber: outputBatch.batch_number,
     quantity: order.actual_quantity, unit: order.yield_unit, productionDate: order.production_date,
     expiryDate: order.expiry_date, operator: order.completed_by_name || order.operator_name,
   }));
@@ -1413,7 +1413,7 @@ function printPackagingBatchLabel() {
   const outputBatch = (order?.batches || []).find(b => b.role === "output");
   if (!outputBatch) return;
   window.SatamoniPrint.openCustomPrint("ملصق دفعة تعبئة", buildBatchLabelHtml({
-    title: "دفعة تعبئة - ساتاموني", product: order.output_item_name, batchNumber: outputBatch.batch_number,
+    title: "دفعة تعبئة - ستاموني", product: order.output_item_name, batchNumber: outputBatch.batch_number,
     quantity: order.actual_output_quantity, unit: itemUnitSafe(order.output_item_id), productionDate: order.packaging_date,
     expiryDate: order.expiry_date, operator: order.completed_by_name,
   }));

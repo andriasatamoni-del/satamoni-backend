@@ -14,7 +14,7 @@ async function maybeSendOrderConfirmation({ orderId, orderType, customerPhone, t
     const settings = await pool.query("SELECT sms_confirmations_enabled FROM pos_settings WHERE id = 1");
     if (!settings.rows[0]?.sms_confirmations_enabled) return;
 
-    const message = `ساتاموني - اتسجل طلبك رقم #${orderId} بمبلغ ${Number(total).toFixed(2)} ج.م. شكرًا لثقتك!`;
+    const message = `ستاموني - اتسجل طلبك رقم #${orderId} بمبلغ ${Number(total).toFixed(2)} ج.م. شكرًا لثقتك!`;
     const result = await sendMessage({ phone: customerPhone, message });
 
     await pool.query(

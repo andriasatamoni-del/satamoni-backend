@@ -123,7 +123,7 @@ function headerMeta(order, { orderTypeLabel, branchLabel, extraTitle } = {}) {
 // 1) إيصال العميل (تيك أواي/صالة عادي) - فيها سعر، بتتسلّم للعميل وقت تأكيد الطلب
 function buildCustomerReceipt({ order, items, paymentMethodLabel, branchLabel, orderTypeLabel }) {
   const body = `
-    <h1>ساتاموني</h1>
+    <h1>ستاموني</h1>
     ${headerMeta(order, { orderTypeLabel, branchLabel })}
     <div class="sep"></div>
     ${itemsTableWithPrice(items)}
@@ -170,7 +170,7 @@ function buildDeliverySummary({ order, items, branchLabel }) {
 // 5) إيصال دليفري نهائي - فيها سعر، بتتطبع لحظة تسليم الطلب للسائق (هو اللي بيسلّمها للعميل)
 function buildDeliveryFinalReceipt({ order, items, paymentMethodLabel, branchLabel }) {
   const body = `
-    <h1>ساتاموني</h1>
+    <h1>ستاموني</h1>
     ${headerMeta(order, { orderTypeLabel: "دليفري", branchLabel })}
     <div class="sep"></div>
     ${itemsTableWithPrice(items)}
@@ -184,7 +184,7 @@ function buildDeliveryFinalReceipt({ order, items, paymentMethodLabel, branchLab
 // 6) فاتورة صالة (Bill) - فيها سعر، بتتطبع بناءً على طلب الجرسون قبل الدفع
 function buildDineInBill({ order, items, branchLabel }) {
   const body = `
-    <h1>ساتاموني</h1>
+    <h1>ستاموني</h1>
     ${headerMeta(order, { orderTypeLabel: "صالة", branchLabel })}
     <div class="sep"></div>
     ${itemsTableWithPrice(items)}
@@ -197,7 +197,7 @@ function buildDineInBill({ order, items, branchLabel }) {
 // 7) طباعة تجريبية - بتتطبع من شاشة إدارة الطابعات (زرار "Test Print") للتأكد إن الطابعة متوصلة ومتظبطة صح
 function buildTestPrint({ printerName, branchLabel }) {
   const body = `
-    <h1>ساتاموني</h1>
+    <h1>ستاموني</h1>
     <h2 class="center bold">طباعة تجريبية</h2>
     <div class="meta center">${esc(printerName || "")}</div>
     <div class="meta center">${branchLabel ? esc(branchLabel) : ""}</div>

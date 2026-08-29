@@ -33,6 +33,6 @@ test("8G: إيصال الكاشير - نافذة الطباعة بتتفتح ف�
   ]);
   await popup.waitForLoadState("domcontentloaded");
   const content = await popup.content();
-  expect(content).toContain("ساتاموني");
+  expect(content).toContain("ستاموني");
   expect(content).toContain(`#${orderId}`);
 });

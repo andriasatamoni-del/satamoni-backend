@@ -4,7 +4,7 @@ const { app, request, pool, seedUser, login, authed } = require("./helpers");
 
 let branchId, otherBranchId;
 let adminToken, managerToken, otherManagerToken;
-let cheeseId; // KG - وحدة تخزين = وحدة شراء عند أغلب الموردين (الحالة الشائعة فعليًا في بيانات ساتاموني)
+let cheeseId; // KG - وحدة تخزين = وحدة شراء عند أغلب الموردين (الحالة الشائعة فعليًا في بيانات ستاموني)
 let supplierAId, supplierBId, supplierCId, supplierBlockedId;
 
 beforeAll(async () => {

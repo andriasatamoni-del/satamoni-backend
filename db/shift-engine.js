@@ -100,7 +100,7 @@ async function computeShiftFinancials(client, { shiftId, branchId, openedAt, toT
 
 // المعادلة الرسمية الوحيدة لحساب الكاش المتوقع - نفس الصيغة في كل مكان (معاينة، قفل، تقرير)
 // ملحوظة: "سحوبات كاش" و"حركات كاش معتمدة تانية" مذكورة في مواصفة المرحلة دي بس معندهاش أي تمثيل
-// في نموذج بيانات ساتاموني الحالي (مفيش جدول/مفهوم "سحب كاش" مستقل) - اتسجّلت كقيد معروف في التقرير
+// في نموذج بيانات ستاموني الحالي (مفيش جدول/مفهوم "سحب كاش" مستقل) - اتسجّلت كقيد معروف في التقرير
 // النهائي بدل ما تتخترع كيانات جديدة من غير أساس حقيقي في النظام
 function calcExpectedCash({ openingCash, cashSales, cashRefunds, cashExpensesTotal, cashPurchasesTotal = 0 }) {
   return Number(openingCash) + cashSales - cashRefunds - cashExpensesTotal - cashPurchasesTotal;

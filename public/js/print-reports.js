@@ -191,7 +191,7 @@
     const meta = buildMeta(panelEl);
     const body = win.document.getElementById("body");
     body.innerHTML = `
-      <div class="brand">🍕 ساتاموني</div>
+      <div class="brand">🍕 ستاموني</div>
       <h1>${esc(title || "تقرير")}</h1>
       ${meta ? `<div class="meta">${esc(meta)}</div>` : ""}
       ${sections.length
@@ -216,7 +216,7 @@
     const win = openPrintWindow(title || "تقرير");
     if (!win) return null;
     win.document.getElementById("body").innerHTML = `
-      <div class="brand">🍕 ساتاموني</div>
+      <div class="brand">🍕 ستاموني</div>
       <h1>${esc(title || "تقرير")}</h1>
       ${bodyHtml}
       <div class="footer">طُبع بواسطة ${esc(currentUserName())} — ${new Date().toLocaleString("ar-EG")}</div>

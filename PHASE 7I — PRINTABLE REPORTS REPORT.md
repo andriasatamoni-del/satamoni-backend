@@ -64,7 +64,7 @@ prints whatever tab is currently open. No per-tab wiring was needed anywhere thi
   reuse as a text data source.
 - **Company header**: no company name, logo, or tax-registration-number setting exists anywhere in
   the schema (checked `pos_settings` and `branches` — neither has one). The print header uses the
-  fixed string "🍕 ساتاموني", identical to the Phase 7G cashier receipt — a consistency decision, not
+  fixed string "🍕 ستاموني", identical to the Phase 7G cashier receipt — a consistency decision, not
   an oversight. A formal tax-registration number on printed reports, if ever needed, is a small,
   independent follow-up (a new settings field), not something this phase invented a workaround for.
 

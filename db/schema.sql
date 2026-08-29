@@ -1868,7 +1868,7 @@ ALTER TABLE fiscal_year_closings ADD CONSTRAINT fk_fiscal_year_closings_journal_
 -- المرحلة 6: kitchen_transfers معرّف قبل كدة في الملف - الـFK بتتضاف هنا
 ALTER TABLE kitchen_transfers ADD CONSTRAINT fk_kitchen_transfers_journal_entry FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id);
 
--- شجرة الحسابات الافتراضية لساتاموني - حسابات مشتركة على مستوى الشركة (branch_id = NULL). حسابات الكاش
+-- شجرة الحسابات الافتراضية لستاموني - حسابات مشتركة على مستوى الشركة (branch_id = NULL). حسابات الكاش
 -- الفرعية (1100-N لكل فرع) بتتنشئ تلقائيًا أول مرة تتحتاج (db/accounting-engine.js) مش هنا، لأن الفروع
 -- ديناميكية. ON CONFLICT DO NOTHING عشان السكريبت ده آمن يتشغّل تاني على قاعدة فيها الحسابات دي بالفعل
 INSERT INTO accounts (code, name, account_type, is_system_account) VALUES

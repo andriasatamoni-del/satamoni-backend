@@ -1835,7 +1835,7 @@ router.get("/purchases-by-item", requireAuth, canSeePurchasing, async (req, res)
 });
 
 // ==================== المرحلة 4.1: مقارنة موردين + توصيات شراء ====================
-// وحدة الشراء (purchase_unit) بتختلف عن وحدة تخزين الصنف أحيانًا بس - أغلب أصناف ساتاموني وحدة الشراء
+// وحدة الشراء (purchase_unit) بتختلف عن وحدة تخزين الصنف أحيانًا بس - أغلب أصناف ستاموني وحدة الشراء
 // عندهم = وحدة التخزين بالظبط (زي ما اتأكدنا من البيانات الفعلية)، فمفيش أي تحويل مطلوب في الحالة دي.
 // بيستخدم نفس محرك التحويل الموجود (db/unit-conversion.js) - مفيش منطق تحويل جديد أو Unit Master جديد.
 async function normalizedSupplierCost(client, supplierItem, stockUnit) {
