@@ -69,7 +69,10 @@ async function resolveOrderItems(client, items, source) {
       );
       if (combo.rows.length === 0) throw new Error("العرض ده مش موجود أو متوقف حاليًا");
       const unitPrice = Number(combo.rows[0].price);
-      resolved.push({ comboId: it.comboId, itemId: null, variantId: null, quantity: it.quantity, unitPrice, lineTotal: unitPrice * it.quantity, modifiers: [] });
+      resolved.push({
+        comboId: it.comboId, itemId: null, variantId: null, quantity: it.quantity, unitPrice,
+        lineTotal: unitPrice * it.quantity, modifiers: [], notes: null, excludedIngredientItemIds: [],
+      });
       continue;
     }
 
@@ -107,8 +110,28 @@ async function resolveOrderItems(client, items, source) {
       modifierTotal += delta;
     }
 
+    // المرحلة 8.10: "بدون <مكوّن>" بيتولّد تلقائيًا من مكوّنات وصفة الصنف نفسها وقت الطلب - مفيش مرفق
+    // مسمّى محتاج الأدمن يجهّزه مقدّمًا (زي المرحلة 8.9). بنتحقق من كل ID مبعوت من الواجهة إنه فعلًا
+    // مكوّن حقيقي في وصفة الحجم (variant) ده بالظبط - مش أي صنف مخزون عشوائي (نفس مبدأ عدم تصديق
+    // الواجهة اللي المرفقات بتتفحص بيه فوق بالظبط)
+    const excludedIngredientItemIds = [];
+    for (const rawId of it.excludedIngredientItemIds || []) {
+      const ingId = Number(rawId);
+      const check = await client.query(
+        "SELECT 1 FROM menu_item_variant_ingredients WHERE variant_id = $1 AND inventory_item_id = $2",
+        [it.variantId, ingId]
+      );
+      if (check.rows.length === 0) throw new Error("مكوّن الاستبعاد ده مش جزء من وصفة الصنف ده");
+      excludedIngredientItemIds.push(ingId);
+    }
+    // ملاحظة حرة (عجينة رفيعة، مستوى تحمير زيادة...) - نص عرض بس، بتتقصّ لحد 500 حرف كشبكة أمان
+    const notes = typeof it.notes === "string" && it.notes.trim() ? it.notes.trim().slice(0, 500) : null;
+
     const unitPrice = basePrice + modifierTotal;
-    resolved.push({ comboId: null, itemId: it.itemId, variantId: it.variantId, quantity: it.quantity, unitPrice, lineTotal: unitPrice * it.quantity, modifiers });
+    resolved.push({
+      comboId: null, itemId: it.itemId, variantId: it.variantId, quantity: it.quantity, unitPrice,
+      lineTotal: unitPrice * it.quantity, modifiers, notes, excludedIngredientItemIds,
+    });
   }
   return resolved;
 }
@@ -385,10 +408,10 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     // it.modifiers هنا كلها متأكد منها من المنيو الحقيقي (resolveOrderItems فوق)، مش من الواجهة مباشرة
     for (const it of items) {
       const inserted = await client.query(
-        `INSERT INTO order_items (order_id, item_id, variant_id, combo_id, quantity, unit_price, line_total)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        `INSERT INTO order_items (order_id, item_id, variant_id, combo_id, quantity, unit_price, line_total, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
         [orderId, it.comboId ? null : it.itemId, it.comboId ? null : it.variantId, it.comboId || null,
-         it.quantity, it.unitPrice, it.lineTotal]
+         it.quantity, it.unitPrice, it.lineTotal, it.notes || null]
       );
       const orderItemId = inserted.rows[0].id;
       for (const mod of it.modifiers || []) {
@@ -396,6 +419,13 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
           `INSERT INTO order_item_modifiers (order_item_id, modifier_id, name_at_sale, price_at_sale, excluded_ingredient_item_id)
            VALUES ($1,$2,$3,$4,$5)`,
           [orderItemId, mod.id, mod.name, mod.priceDelta || 0, mod.excludedIngredientItemId || null]
+        );
+      }
+      // المرحلة 8.10: استبعاد مكوّن مباشر (بدون مرفق مسمّى) - كل مكوّن الكاشير اختاره "بدون" من وصفة الصنف
+      for (const ingId of it.excludedIngredientItemIds || []) {
+        await client.query(
+          `INSERT INTO order_item_excluded_ingredients (order_item_id, inventory_item_id) VALUES ($1,$2)`,
+          [orderItemId, ingId]
         );
       }
     }
@@ -427,6 +457,10 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
              AND NOT EXISTS (
                SELECT 1 FROM order_item_modifiers oim
                WHERE oim.order_item_id = oi2.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM order_item_excluded_ingredients oiei
+               WHERE oiei.order_item_id = oi2.id AND oiei.inventory_item_id = mvi.inventory_item_id
              )
            LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
            WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL
@@ -468,6 +502,10 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
              SELECT 1 FROM order_item_modifiers oim
              WHERE oim.order_item_id = oi2.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
            )
+           AND NOT EXISTS (
+             SELECT 1 FROM order_item_excluded_ingredients oiei
+             WHERE oiei.order_item_id = oi2.id AND oiei.inventory_item_id = mvi.inventory_item_id
+           )
          JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
          WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL`,
         [orderId]
@@ -504,10 +542,14 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
           variantsToDeduct = [{ variantId: it.variantId, multiplier: it.quantity }];
         }
 
-        // المرحلة 8.9: مرفقات "بدون" المختارة على السطر ده بتستبعد مكوّناتها من الاستهلاك هنا - نفس
+        // المرحلة 8.9/8.10: مرفقات "بدون" المختارة، وكمان أي مكوّن اتستبعد مباشرة (بدون مرفق مسمّى -
+        // مختار من قايمة مكوّنات الوصفة نفسها وقت الطلب) بتستبعد مكوّناتها من الاستهلاك هنا - نفس
         // الاستبعاد اللي بيتطبّق على cost_at_sale/order_item_ingredient_costs تحت (نفس مصدر الاستثناء
         // بالظبط، مفيش حساب مزدوج)
-        const excludedIngredientIds = new Set((it.modifiers || []).map((m) => m.excludedIngredientItemId).filter(Boolean));
+        const excludedIngredientIds = new Set([
+          ...(it.modifiers || []).map((m) => m.excludedIngredientItemId).filter(Boolean),
+          ...(it.excludedIngredientItemIds || []),
+        ]);
         for (const v of variantsToDeduct) {
           const recipe = await client.query(
             "SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1",
@@ -718,6 +760,15 @@ router.get(
          WHERE oi.order_id = $1`,
         [req.params.id]
       );
+      // المرحلة 8.10: أسماء المكوّنات المستبعدة مباشرة لكل سطر (للعرض في التذكرة/الإيصال - "بدون: طماطم، بصل")
+      const excludedIngredients = await pool.query(
+        `SELECT oiei.order_item_id, oiei.inventory_item_id, ii.name
+         FROM order_item_excluded_ingredients oiei
+         JOIN order_items oi ON oi.id = oiei.order_item_id
+         JOIN inventory_items ii ON ii.id = oiei.inventory_item_id
+         WHERE oi.order_id = $1`,
+        [req.params.id]
+      );
       const statusLog = await pool.query(
         `SELECT l.*, u.name AS changed_by_name
          FROM order_status_log l
@@ -729,6 +780,9 @@ router.get(
       const itemsWithModifiers = items.rows.map((it) => ({
         ...it,
         modifiers: modifiers.rows.filter((m) => m.order_item_id === it.id),
+        excludedIngredients: excludedIngredients.rows
+          .filter((e) => e.order_item_id === it.id)
+          .map((e) => ({ inventoryItemId: e.inventory_item_id, name: e.name })),
       }));
 
       res.json({ ...o, items: itemsWithModifiers, statusLog: statusLog.rows });
@@ -1043,6 +1097,10 @@ router.post(
               SELECT 1 FROM order_item_modifiers oim
               WHERE oim.order_item_id = oi.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
             )
+            AND NOT EXISTS (
+              SELECT 1 FROM order_item_excluded_ingredients oiei
+              WHERE oiei.order_item_id = oi.id AND oiei.inventory_item_id = mvi.inventory_item_id
+            )
           WHERE oi.order_id = $1 AND oi.variant_id IS NOT NULL
           UNION ALL
           SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi.quantity::numeric AS qty
@@ -1232,6 +1290,10 @@ router.put(
               SELECT 1 FROM order_item_modifiers oim
               WHERE oim.order_item_id = oi.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
             )
+            AND NOT EXISTS (
+              SELECT 1 FROM order_item_excluded_ingredients oiei
+              WHERE oiei.order_item_id = oi.id AND oiei.inventory_item_id = mvi.inventory_item_id
+            )
           WHERE oi.order_id = $1 AND oi.variant_id IS NOT NULL
           UNION ALL
           SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi.quantity::numeric AS qty
@@ -1281,17 +1343,23 @@ router.put(
       // ---- تطبيق الأصناف الجديدة - نفس منطق POST / بالظبط ----
       for (const it of items) {
         const inserted = await client.query(
-          `INSERT INTO order_items (order_id, item_id, variant_id, combo_id, quantity, unit_price, line_total)
-           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+          `INSERT INTO order_items (order_id, item_id, variant_id, combo_id, quantity, unit_price, line_total, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
           [order.id, it.comboId ? null : it.itemId, it.comboId ? null : it.variantId, it.comboId || null,
-           it.quantity, it.unitPrice, it.lineTotal]
+           it.quantity, it.unitPrice, it.lineTotal, it.notes || null]
         );
         const orderItemId = inserted.rows[0].id;
         for (const mod of it.modifiers || []) {
           await client.query(
-            `INSERT INTO order_item_modifiers (order_item_id, modifier_id, name_at_sale, price_at_sale)
-             VALUES ($1,$2,$3,$4)`,
-            [orderItemId, mod.id, mod.name, mod.priceDelta || 0]
+            `INSERT INTO order_item_modifiers (order_item_id, modifier_id, name_at_sale, price_at_sale, excluded_ingredient_item_id)
+             VALUES ($1,$2,$3,$4,$5)`,
+            [orderItemId, mod.id, mod.name, mod.priceDelta || 0, mod.excludedIngredientItemId || null]
+          );
+        }
+        for (const ingId of it.excludedIngredientItemIds || []) {
+          await client.query(
+            `INSERT INTO order_item_excluded_ingredients (order_item_id, inventory_item_id) VALUES ($1,$2)`,
+            [orderItemId, ingId]
           );
         }
       }
@@ -1318,6 +1386,10 @@ router.put(
                AND NOT EXISTS (
                  SELECT 1 FROM order_item_modifiers oim
                  WHERE oim.order_item_id = oi2.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM order_item_excluded_ingredients oiei
+                 WHERE oiei.order_item_id = oi2.id AND oiei.inventory_item_id = mvi.inventory_item_id
                )
              LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
              WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL
@@ -1354,6 +1426,10 @@ router.put(
                SELECT 1 FROM order_item_modifiers oim
                WHERE oim.order_item_id = oi2.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
              )
+             AND NOT EXISTS (
+               SELECT 1 FROM order_item_excluded_ingredients oiei
+               WHERE oiei.order_item_id = oi2.id AND oiei.inventory_item_id = mvi.inventory_item_id
+             )
            JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
            WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL`,
           [order.id]
@@ -1388,8 +1464,12 @@ router.put(
             variantsToDeduct = [{ variantId: it.variantId, multiplier: it.quantity }];
           }
 
-          // المرحلة 8.9: نفس منطق POST / بالظبط - استبعاد مكوّنات مرفقات "بدون" المختارة على السطر ده
-          const excludedIngredientIds = new Set((it.modifiers || []).map((m) => m.excludedIngredientItemId).filter(Boolean));
+          // المرحلة 8.9/8.10: نفس منطق POST / بالظبط - استبعاد مكوّنات مرفقات "بدون" المختارة، وكمان
+          // أي مكوّن اتستبعد مباشرة (من غير مرفق مسمّى) على السطر ده
+          const excludedIngredientIds = new Set([
+            ...(it.modifiers || []).map((m) => m.excludedIngredientItemId).filter(Boolean),
+            ...(it.excludedIngredientItemIds || []),
+          ]);
           for (const v of variantsToDeduct) {
             const recipe = await client.query(
               "SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1",

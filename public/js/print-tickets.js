@@ -56,6 +56,16 @@
       .join("<br/>")}</div>`;
   }
 
+  // المرحلة 8.10: ملاحظة حرة على السطر + مكوّنات مستبعدة مباشرة من ريسبي الصنف ("بدون") - بتتطبع
+  // تحت كل صنف في التذكرة/الإيصال زي المرفقات بالظبط
+  function noteAndExclusionRows(it) {
+    const excluded = (it.excludedIngredients || []).filter(Boolean);
+    const parts = [];
+    if (excluded.length) parts.push(`<div class="mods">بدون: ${excluded.map(esc).join("، ")}</div>`);
+    if (it.notes) parts.push(`<div class="mods">ملاحظة: ${esc(it.notes)}</div>`);
+    return parts.join("");
+  }
+
   function itemsRows(items) {
     return items.map((it) => {
       const name = it.item_name || it.combo_name || "صنف";
@@ -65,7 +75,7 @@
         .join("، ");
       return `
         <tr>
-          <td>${esc(name)}${variant}${mods ? `<div class="mods">${mods}</div>` : ""}${comboComponentsRows(it)}</td>
+          <td>${esc(name)}${variant}${mods ? `<div class="mods">${mods}</div>` : ""}${noteAndExclusionRows(it)}${comboComponentsRows(it)}</td>
           <td>× ${it.quantity}</td>
         </tr>`;
     }).join("");
@@ -80,7 +90,7 @@
         .join("، ");
       return `
         <tr>
-          <td>${esc(name)}${variant} × ${it.quantity}${mods ? `<div class="mods">${mods}</div>` : ""}${comboComponentsRows(it)}</td>
+          <td>${esc(name)}${variant} × ${it.quantity}${mods ? `<div class="mods">${mods}</div>` : ""}${noteAndExclusionRows(it)}${comboComponentsRows(it)}</td>
           <td>${money(it.line_total)}</td>
         </tr>`;
     }).join("");

@@ -44,6 +44,14 @@ router.get("/orders", requirePermission("kitchen.view"), async (req, res) => {
                    'modifiers', COALESCE((
                      SELECT json_agg(oim.name_at_sale ORDER BY oim.id)
                      FROM order_item_modifiers oim WHERE oim.order_item_id = oi.id
+                   ), '[]'::json),
+                   -- المرحلة 8.10: ملاحظة حرة على السطر + أسماء المكوّنات المستبعدة مباشرة من ريسبي الصنف
+                   'notes', oi.notes,
+                   'excludedIngredients', COALESCE((
+                     SELECT json_agg(ii.name ORDER BY ii.id)
+                     FROM order_item_excluded_ingredients oiei
+                     JOIN inventory_items ii ON ii.id = oiei.inventory_item_id
+                     WHERE oiei.order_item_id = oi.id
                    ), '[]'::json)
                  ) ORDER BY oi.id)
                  FROM order_items oi

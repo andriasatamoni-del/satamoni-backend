@@ -348,7 +348,9 @@ router.post("/waste", requireAuth, stockManagers, async (req, res) => {
 });
 
 // GET /api/inventory/recipe/:variantId - وصفة صنف (المكونات وكمياتها)
-router.get("/recipe/:variantId", requireAuth, staffRoles, async (req, res) => {
+// المرحلة 8.10: الكول سنتر كمان محتاج يقرا الوصفة عشان يبني اختيارات "بدون <مكوّن>" وقت الطلب - نفس
+// اللي الكاشير بيعمله في satamoni-pos.html بالظبط (staffRoles الأصلية مكنتش شايلة callcenter خالص)
+router.get("/recipe/:variantId", requireAuth, requireRole("admin", "branch_manager", "accountant", "cashier", "callcenter"), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT mvi.inventory_item_id, ii.name, ii.unit, mvi.quantity_per_unit

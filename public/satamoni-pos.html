@@ -392,6 +392,12 @@
       <div class="section-label">مرفقات (اختياري)</div>
       <div id="itemModalModifiers"></div>
     </div>
+    <div id="itemModalExclusionsWrap" style="display:none">
+      <div class="section-label">بدون (اختياري)</div>
+      <div id="itemModalExclusions"></div>
+    </div>
+    <div class="section-label">ملاحظة (اختياري)</div>
+    <textarea id="itemModalNotes" placeholder="مثال: عجينة رفيعة، تحمير زيادة..." style="width:100%;background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:10px;font-size:14px;min-height:56px;margin-bottom:10px;resize:vertical"></textarea>
     <button id="itemModalAdd"></button>
     <button id="itemModalCancel">إلغاء</button>
   </div>
@@ -705,30 +711,48 @@ function renderGrid() {
       </div>`;
   }).join("");
   grid.querySelectorAll(".item-card").forEach(el => {
+    // المرحلة 8.10: المودال بقى بيفتح لكل صنف عادي (مش بس لو فيه أكتر من حجم أو مرفقات) - عشان الكاشير
+    // يقدر يضيف ملاحظة حرة أو "بدون <مكوّن من الريسبي>" لأي صنف وقت الطلب نفسه
     el.onclick = () => {
       const item = JSON.parse(el.dataset.item.replace(/&apos;/g, "'"));
-      const hasModifiers = (item.modifiers || []).length > 0;
-      if (item.variants.length > 1 || hasModifiers) {
-        openItemModal(item);
-      } else {
-        addToCart(item, item.variants[0], []);
-      }
+      openItemModal(item);
     };
   });
 }
 
-// ---------------- مودال اختيار الحجم والمرفقات ----------------
-const modalState = { item: null, variant: null, modifierIds: new Set() };
+// ---------------- مودال اختيار الحجم والمرفقات والملاحظة/الاستبعاد ----------------
+// المرحلة 8.10: excludedIds بتتولّد من ريسبي الحجم المختار فعليًا (fetch وقت فتح المودال/تغيير الحجم) -
+// مش مرفق مسمّى الأدمن يجهّزه مقدّمًا زي مرفقات "بدون" (المرحلة 8.9)، دي استبعاد مباشر ديناميكي لسطر الطلب ده بس
+const modalState = { item: null, variant: null, modifierIds: new Set(), excludedIds: new Set(), notes: "", recipe: [], recipeVariantId: null };
 
 function openItemModal(item) {
   modalState.item = item;
   modalState.variant = item.variants[0];
   modalState.modifierIds = new Set();
+  modalState.excludedIds = new Set();
+  modalState.notes = "";
+  modalState.recipe = [];
+  modalState.recipeVariantId = null;
+  document.getElementById("itemModalNotes").value = "";
   renderItemModal();
   document.getElementById("itemModalOverlay").classList.add("show");
+  loadRecipeForModal();
 }
 function closeItemModal() {
   document.getElementById("itemModalOverlay").classList.remove("show");
+}
+async function loadRecipeForModal() {
+  const variantId = modalState.variant.id;
+  try {
+    const rows = await ordersApi(`/api/inventory/recipe/${variantId}`);
+    // لو المستخدم غيّر الحجم أو قفل المودال قبل ما الطلب يرجع، ماتلعبش في حالة قديمة
+    if (!modalState.item || modalState.variant.id !== variantId) return;
+    modalState.recipe = rows;
+    modalState.recipeVariantId = variantId;
+    renderItemModal();
+  } catch (e) {
+    modalState.recipe = [];
+  }
 }
 function renderItemModal() {
   const item = modalState.item;
@@ -741,8 +765,15 @@ function renderItemModal() {
     </div>`).join("");
   variantsWrap.querySelectorAll("[data-variant]").forEach(el => {
     el.onclick = () => {
-      modalState.variant = item.variants.find(v => String(v.id) === el.dataset.variant);
-      renderItemModal();
+      const newVariant = item.variants.find(v => String(v.id) === el.dataset.variant);
+      if (newVariant.id !== modalState.variant.id) {
+        modalState.variant = newVariant;
+        modalState.excludedIds = new Set();
+        modalState.recipe = [];
+        modalState.recipeVariantId = null;
+        renderItemModal();
+        loadRecipeForModal();
+      }
     };
   });
 
@@ -765,6 +796,22 @@ function renderItemModal() {
     };
   });
 
+  const exclWrap = document.getElementById("itemModalExclusionsWrap");
+  const recipe = modalState.recipeVariantId === modalState.variant.id ? modalState.recipe : [];
+  exclWrap.style.display = recipe.length ? "block" : "none";
+  document.getElementById("itemModalExclusions").innerHTML = recipe.map(ing => `
+    <div class="modal-opt ${modalState.excludedIds.has(ing.inventory_item_id) ? "active" : ""}" data-exclude="${ing.inventory_item_id}">
+      <span>بدون ${ing.name}</span>
+    </div>`).join("");
+  document.getElementById("itemModalExclusions").querySelectorAll("[data-exclude]").forEach(el => {
+    el.onclick = () => {
+      const id = Number(el.dataset.exclude);
+      if (modalState.excludedIds.has(id)) modalState.excludedIds.delete(id);
+      else modalState.excludedIds.add(id);
+      renderItemModal();
+    };
+  });
+
   const selectedMods = resolvedSelectedModifiers(item, modalState.variant.id, modalState.modifierIds);
   const total = priceFor(modalState.variant) + selectedMods.reduce((s, m) => s + Number(m.priceDelta), 0);
   document.getElementById("itemModalAdd").textContent = `إضافة للسلة (${money(total)})`;
@@ -783,19 +830,29 @@ document.getElementById("itemModalCancel").onclick = closeItemModal;
 document.getElementById("itemModalAdd").onclick = () => {
   const item = modalState.item;
   const selectedMods = resolvedSelectedModifiers(item, modalState.variant.id, modalState.modifierIds);
-  addToCart(item, modalState.variant, selectedMods);
+  const notes = document.getElementById("itemModalNotes").value.trim();
+  const recipe = modalState.recipeVariantId === modalState.variant.id ? modalState.recipe : [];
+  const excludedIngredients = recipe.filter(ing => modalState.excludedIds.has(ing.inventory_item_id));
+  addToCart(item, modalState.variant, selectedMods, notes, excludedIngredients);
   closeItemModal();
 };
 
-function addToCart(item, variant, modifiers = []) {
+function addToCart(item, variant, modifiers = [], notes = "", excludedIngredients = []) {
+  // المرحلة 8.10: notes/excludedIngredientItemIds بقوا جزء من مفتاح السلة - سطرين لنفس الصنف بملاحظات/
+  // استبعادات مختلفة لازم يفضلوا سطرين منفصلين في التذكرة، مش يتجمعوا في كمية واحدة تفقد التفاصيل
+  const excludedIds = excludedIngredients.map(e => e.inventory_item_id).sort((a, b) => a - b);
   const modKey = modifiers.map(m => m.id).sort().join("-");
-  const key = `${item.id}__${variant.id}__${modKey}`;
+  const exclKey = excludedIds.join("-");
+  const key = `${item.id}__${variant.id}__${modKey}__${exclKey}__${notes}`;
   const existing = state.cart[key];
   const modifierTotal = modifiers.reduce((s, m) => s + Number(m.priceDelta), 0);
   state.cart[key] = {
     itemId: item.id, variantId: variant.id, name: item.name,
     label: variant.label, price: priceFor(variant) + modifierTotal,
-    modifiers, qty: (existing?.qty || 0) + 1,
+    modifiers, notes: notes || null,
+    excludedIngredientItemIds: excludedIds,
+    excludedIngredientNames: excludedIngredients.map(e => e.name),
+    qty: (existing?.qty || 0) + 1,
   };
   renderCart();
 }
@@ -851,7 +908,7 @@ function renderCart() {
       <div class="cart-row">
         <div class="info">
           <div class="n">${v.comboId ? "🎁 " : ""}${v.name}</div>
-          <div class="l">${v.label} × ${money(v.price)}${(v.modifiers || []).length ? "<br/>+ " + v.modifiers.map(m => m.name).join("، +") : ""}</div>
+          <div class="l">${v.label} × ${money(v.price)}${(v.modifiers || []).length ? "<br/>+ " + v.modifiers.map(m => m.name).join("، +") : ""}${(v.excludedIngredientNames || []).length ? `<br/>بدون: ${v.excludedIngredientNames.join("، ")}` : ""}${v.notes ? `<br/>ملاحظة: ${v.notes}` : ""}</div>
         </div>
         <div class="qty-ctrl">
           <button data-key="${key}" data-d="-1">−</button>
@@ -1510,7 +1567,10 @@ document.getElementById("submitBtn").onclick = async () => {
       discountApprovedBy: !isTalabat && state.discountApproval ? state.discountApproval.approverId : null,
       items: Object.values(state.cart).map(v => v.comboId
         ? { comboId: v.comboId, unitPrice: v.price, quantity: v.qty }
-        : { itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty, modifiers: v.modifiers || [] }
+        : {
+            itemId: v.itemId, variantId: v.variantId, unitPrice: v.price, quantity: v.qty, modifiers: v.modifiers || [],
+            notes: v.notes || null, excludedIngredientItemIds: v.excludedIngredientItemIds || [],
+          }
       ),
       idempotencyKey: getOrderAttemptKey(),
     };

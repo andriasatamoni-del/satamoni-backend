@@ -338,7 +338,10 @@ CREATE TABLE order_items (
   -- التاريخية، منفصل عن cost_at_sale (اللي هو التكلفة الفعلية المحسوبة وقتها). NULL على الطلبات اللي
   -- اتسجلت قبل المرحلة 3 (محرك الوصفات لسه ما كانش موجود وقتها). الـFK متضاف بـALTER TABLE تحت بعد ما
   -- جدول recipe_versions نفسه يتعرّف (recipe_versions معرّف بعد كدة في الملف)
-  recipe_version_id        INTEGER
+  recipe_version_id        INTEGER,
+  -- المرحلة 8.10: ملاحظة حرة على السطر (عجينة رفيعة، مستوى تحمير زيادة...) - نص عرض بس للمطبخ/الإيصال،
+  -- مفيش أي تأثير على المخزون أو التكلفة. للتأثير الفعلي على الاستهلاك استخدم order_item_excluded_ingredients تحت
+  notes                     TEXT
 );
 
 -- المرفقات المختارة فعليًا في سطر الطلب - بتتسجل بسعرها واسمها وقت البيع (snapshot) عشان لو اتغير
@@ -353,6 +356,18 @@ CREATE TABLE order_item_modifiers (
   -- المرفق بمكوّن اتغيّر بعدين، الطلب القديم يفضل بيعكس المكوّن اللي كان مستبعد فعليًا وقتها.
   -- بدون REFERENCES هنا عمدًا (نفس السبب فوق) - الـFK متضاف بـALTER TABLE بعد inventory_items
   excluded_ingredient_item_id INTEGER
+);
+
+-- المرحلة 8.10: استبعاد مكوّن مباشر لسطر طلب معيّن - بديل أسرع/أمرن من order_item_modifiers.
+-- الكاشير بيختار "بدون <مكوّن>" من قايمة مكوّنات وصفة الصنف نفسها (متولّدة تلقائيًا وقت الطلب من
+-- menu_item_variant_ingredients، مش محتاجة الأدمن يجهّز مرفق مسمّى مقدّمًا لكل صنف). مفيش سعر مرتبط
+-- (زي المرفقات) - استبعاد بحت، بيتشال من حساب الاستهلاك والتكلفة لسطر الطلب ده بس (نفس آلية
+-- order_item_modifiers.excluded_ingredient_item_id بالظبط - الاتنين بيتفحصوا سوا في كل استعلام استهلاك/تكلفة)
+CREATE TABLE order_item_excluded_ingredients (
+  id                 SERIAL PRIMARY KEY,
+  order_item_id      INTEGER REFERENCES order_items(id) ON DELETE CASCADE,
+  inventory_item_id  INTEGER, -- بدون REFERENCES هنا عمدًا (نفس سبب الأعمدة فوق) - الـFK متضاف بـALTER TABLE بعد inventory_items
+  UNIQUE(order_item_id, inventory_item_id)
 );
 
 -- ---------------- الكاش اليومي لكل فرع (بديل شيت الفرع) ----------------
@@ -626,6 +641,8 @@ ALTER TABLE menu_item_modifiers ADD CONSTRAINT fk_menu_item_modifiers_excluded_i
   FOREIGN KEY (excluded_ingredient_item_id) REFERENCES inventory_items(id);
 ALTER TABLE order_item_modifiers ADD CONSTRAINT fk_order_item_modifiers_excluded_ingredient
   FOREIGN KEY (excluded_ingredient_item_id) REFERENCES inventory_items(id);
+ALTER TABLE order_item_excluded_ingredients ADD CONSTRAINT fk_order_item_excluded_ingredients_item
+  FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id);
 
 -- المرحلة 8.6: بنود مشترى الكاشير النقدي (اختيارية) - كل بند بيربط بمادة خام موجودة فعلاً في
 -- inventory_items بس (الكاشير میقدرش ينشئ صنف جديد، مجرد اختيار من الكتالوج الموجود). الترحيل الفعلي

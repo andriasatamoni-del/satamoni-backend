@@ -194,6 +194,10 @@ function waitLabel(createdAt) {
   return mins <= 0 ? "دلوقتي" : `${mins} د`;
 }
 
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 function renderCard(o) {
   const col = COLUMNS.find(c => c.key === o.kitchen_status);
   const items = (o.items || []).map(it => {
@@ -202,11 +206,15 @@ function renderCard(o) {
     // تحضيرها - components (لو موجودة) بترجع جاهزة من الباك إند (نفس combo_items اللي خصم
     // المخزون بيستخدمها أصلًا)
     const components = (it.components || []);
+    // المرحلة 8.10: ملاحظة حرة على السطر + مكوّنات مستبعدة مباشرة من الريسبي ("بدون")
+    const excluded = (it.excludedIngredients || []).filter(Boolean);
     return `
       <div class="line">
         ${it.name}${it.variant ? ` (${it.variant})` : ""} × ${it.quantity}
         ${components.length ? `<div class="mods">${components.map(c => `${c.name}${c.variant ? ` (${c.variant})` : ""} × ${c.quantity}`).join("<br/>")}</div>` : ""}
         ${mods.length ? `<div class="mods">${mods.map(m => "+ " + m).join("، ")}</div>` : ""}
+        ${excluded.length ? `<div class="mods">بدون: ${excluded.map(escapeHtml).join("، ")}</div>` : ""}
+        ${it.notes ? `<div class="mods">ملاحظة: ${escapeHtml(it.notes)}</div>` : ""}
       </div>`;
   }).join("") || `<div class="line">—</div>`;
 
