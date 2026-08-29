@@ -1435,7 +1435,21 @@ document.getElementById("tableInput").addEventListener("input", updateSubmitStat
 // عميل متسجل: بياناته المحفوظة (اسم/عنوان/منطقة/علامة) بتتملى تلقائي من غير ما تمسح أي حاجة الكاشير
 // كتبها بإيده. عميل جديد: الحقول تفضل فاضية والكاشير لازم يسجلها بنفسه قبل ما يقدر يبعت الطلب
 let posPhoneLookupTimer = null;
+let lastCustomerLookupPhone = null;
 function applyCustomerLookup(phone, p) {
+  // المرحلة 8.13: باج - لما الكاشير يبدّل لرقم موبايل مختلف عن العميل اللي كان محمّل قبل كده، بيانات
+  // العميل القديم (اسم/عنوان/علامة مميزة/منطقة توصيل) كانت بتفضل ظاهرة زي ما هي - الشروط تحت بتملى
+  // الحقل بس لو فاضي (عشان مايمسحش حاجة الكاشير كاتبها بإيده لنفس العميل)، بس ده كان بيمنع بيانات
+  // العميل الجديد من الظهور خالص. التصفير هنا بيحصل بس لما الرقم يتغيّر فعليًا عن آخر عميل اتحمّل
+  if (lastCustomerLookupPhone !== null && lastCustomerLookupPhone !== phone) {
+    document.getElementById("nameInput").value = "";
+    document.getElementById("phone2Input").value = "";
+    document.getElementById("addressInput").value = "";
+    document.getElementById("markInput").value = "";
+    state.selectedAreaId = "";
+    renderAreaSelect();
+  }
+  lastCustomerLookupPhone = phone;
   document.getElementById("phoneInput").value = phone;
   const statusEl = document.getElementById("customerStatus");
   if (p.isRegistered && p.isBlocked) {
