@@ -2482,6 +2482,55 @@ router.get("/ap-aging", requireAuth, canSeeSupplierAccounting, async (req, res) 
   }
 });
 
+// PART 9 (Full System Audit): GET /api/reports/supplier-statement?supplierId=&from=&to= - كشف حساب
+// مورد واحد: رصيد افتتاحي (كل ما قبل from) + كل حركة في المدى (GRN/فرق فاتورة/سداد - أي سطر
+// reference_type='supplier' لنفس المورد) بترتيب التاريخ مع رصيد جاري بعد كل حركة + رصيد ختامي - كله
+// من journal_entry_lines/journal_entries مباشرة (نفس مصدر supplier-balances/ap-aging فوق بالظبط)،
+// مفيش حساب محاسبي مستقل أو مصدر بيانات موازٍ. jel.credit يزوّد المستحق للمورد (GRN/فرق سالب)،
+// jel.debit ينقصه (سداد/فرق موجب) - نفس اتجاه الحساب 2100 (Accounts Payable) في كل مكان تاني بالنظام
+router.get("/supplier-statement", requireAuth, canSeeSupplierAccounting, async (req, res) => {
+  const supplierId = Number(req.query.supplierId);
+  if (!supplierId) return res.status(400).json({ error: "لازم تحدد supplierId", code: "INVALID_PARAMETER" });
+  const to = req.query.to || new Date().toISOString().slice(0, 10);
+  const from = req.query.from || "1970-01-01";
+  try {
+    const supplierRes = await pool.query("SELECT id, name FROM suppliers WHERE id = $1", [supplierId]);
+    if (supplierRes.rows.length === 0) return res.status(404).json({ error: "المورد مش موجود" });
+
+    const openingRes = await pool.query(
+      `SELECT COALESCE(SUM(jel.credit) - SUM(jel.debit), 0) AS balance
+       FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
+       WHERE jel.reference_type = 'supplier' AND jel.reference_id = $1 AND je.status <> 'DRAFT' AND je.entry_date < $2`,
+      [supplierId, from]
+    );
+    const openingBalance = Number(openingRes.rows[0].balance);
+
+    const linesRes = await pool.query(
+      `SELECT je.entry_date, je.entry_number, je.source_type, je.source_id,
+              COALESCE(jel.description, je.description) AS description, jel.debit, jel.credit
+       FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
+       WHERE jel.reference_type = 'supplier' AND jel.reference_id = $1 AND je.status <> 'DRAFT'
+         AND je.entry_date BETWEEN $2 AND $3
+       ORDER BY je.entry_date, je.id, jel.id`,
+      [supplierId, from, to]
+    );
+    let running = openingBalance;
+    const lines = linesRes.rows.map((r) => {
+      running += Number(r.credit) - Number(r.debit);
+      return {
+        date: r.entry_date, entryNumber: r.entry_number, sourceType: r.source_type, sourceId: r.source_id,
+        description: r.description, debit: Number(r.debit), credit: Number(r.credit), runningBalance: running,
+      };
+    });
+    res.json({
+      supplierId, supplierName: supplierRes.rows[0].name, from, to,
+      openingBalance, lines, closingBalance: running,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/reports/accounting-expense-report?from=&to=&year=&month=&branchId= - المصروفات (EXPENSE)
 // من دفتر الأستاذ مجمّعة حسب الحساب - نسخة محاسبية من /expenses-report التشغيلي فوق (ده مصدره جدول
 // expenses مباشرة، ده مصدره القيود المرحّلة بس، وبيشمل أي قيد مصروف حتى لو معمول يدوي)

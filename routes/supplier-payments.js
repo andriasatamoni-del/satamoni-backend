@@ -54,7 +54,7 @@ router.post("/", requireAuth, requirePermission("purchasing.create", "accounting
       if (Number(invoice.supplier_id) !== Number(supplierId)) throw Object.assign(new Error("الفاتورة دي تابعة لمورد تاني"), { code: "INVOICE_PAYMENT_VALIDATION" });
       if (Number(invoice.branch_id) !== Number(branchId)) throw Object.assign(new Error("الفاتورة دي تابعة لفرع تاني"), { code: "INVOICE_PAYMENT_VALIDATION" });
       if (!PAYABLE_INVOICE_STATUSES.includes(invoice.status)) {
-        throw Object.assign(new Error("الفاتورة دي مش في حالة قابلة للسداد (لازم تكون معتمدة الأول)"), { code: "INVOICE_PAYMENT_VALIDATION" });
+        throw Object.assign(new Error("الفاتورة دي مش في حالة قابلة للسداد (لازم تكون معتمدة الأول)"), { code: "INVALID_STATE" });
       }
       const paidRes = await client.query(
         "SELECT COALESCE(SUM(amount), 0) AS paid FROM supplier_payments WHERE supplier_invoice_id = $1", [supplierInvoiceId]
@@ -63,7 +63,7 @@ router.post("/", requireAuth, requirePermission("purchasing.create", "accounting
       if (alreadyPaid + Number(amount) > Number(invoice.total) + INVOICE_TOLERANCE) {
         throw Object.assign(
           new Error(`المبلغ أكبر من المتبقي على الفاتورة (المتبقي ${(Number(invoice.total) - alreadyPaid).toFixed(2)})`),
-          { code: "INVOICE_PAYMENT_VALIDATION" }
+          { code: "PAYMENT_EXCEEDS_OUTSTANDING" }
         );
       }
     }
@@ -124,7 +124,10 @@ router.post("/", requireAuth, requirePermission("purchasing.create", "accounting
     res.status(201).json({ ...payment.rows[0], journal_entry_id: je.entry.id, duplicate: false });
   } catch (err) {
     await client.query("ROLLBACK");
-    if (err.code === "INVOICE_PAYMENT_VALIDATION") return res.status(400).json({ error: err.message });
+    // الأكواد المعروفة اللي بترمى فوق صراحة (validation) لازم ترجع 400 مع الـcode نفسه - مش تتلخّم
+    // كلها تحت INVOICE_PAYMENT_VALIDATION عام زي ما كان قبل كده (كود Postgres الخام أرقام، مش الشكل ده)
+    const KNOWN_VALIDATION_CODES = ["INVOICE_PAYMENT_VALIDATION", "INVALID_STATE", "PAYMENT_EXCEEDS_OUTSTANDING"];
+    if (KNOWN_VALIDATION_CODES.includes(err.code)) return res.status(400).json({ error: err.message, code: err.code });
     res.status(500).json({ error: err.message });
   } finally {
     client.release();

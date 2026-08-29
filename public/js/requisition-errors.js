@@ -15,6 +15,12 @@ const REQUISITION_ERROR_MESSAGES = {
   // PHASE UI-3: رموز التصنيع/التعبئة - نفس الملف المشترك برضو (نفس مبدأ UI-2)
   VARIANCE_REASON_REQUIRED: (msg) => msg,
   PRODUCTION_VALIDATION: (msg) => msg,
+  // مهمة التدقيق النهائي: كود عام لأي محاولة انتقال حالة غير مسموحة (زي DRAFT->APPROVED أو COMPLETED->
+  // IN_PROGRESS) عبر كل الـstate machines (تحويلات/تصنيع/تعبئة/طلبيات/استلام/فواتير/سداد) - رسالة السيرفر
+  // نفسها موجودة أصلًا وواضحة، الكود هنا بس عشان الفرونت إند يقدر يميّزها لو احتاج (زي عرض زرار "حدّث
+  // الصفحة" تلقائيًا)
+  INVALID_STATE: (msg) => msg,
+  PAYMENT_EXCEEDS_OUTSTANDING: (msg) => msg,
 };
 
 // بيرجع {message, code} جاهزة للعرض - مبني على شكل الخطأ اللي بيرميه helper الـapi() في كل صفحة (Error

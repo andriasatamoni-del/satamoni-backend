@@ -201,7 +201,7 @@ router.patch("/:id", requireAuth, requireRole("admin", "branch_manager"), async 
       return res.status(403).json({ error: "معندكش صلاحية تلغي طلبية فرع تاني" });
     }
     if (existing.rows[0].status !== "pending") {
-      return res.status(400).json({ error: "الطلبية دي اتنفذت أو اتلغت بالفعل" });
+      return res.status(400).json({ error: "الطلبية دي اتنفذت أو اتلغت بالفعل", code: "INVALID_STATE" });
     }
     const result = await pool.query(
       "UPDATE kitchen_orders SET status = 'cancelled' WHERE id = $1 RETURNING *",
@@ -279,7 +279,7 @@ router.post("/:id/submit", requireAuth, requireRole("admin", "branch_manager"), 
     }
     if (existing.rows[0].status !== "DRAFT") {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "التقديم متاح بس من حالة DRAFT" });
+      return res.status(400).json({ error: "التقديم متاح بس من حالة DRAFT", code: "INVALID_STATE" });
     }
     const itemCount = await client.query("SELECT COUNT(*)::int AS n FROM kitchen_order_items WHERE kitchen_order_id = $1", [req.params.id]);
     if (itemCount.rows[0].n === 0) {
@@ -315,7 +315,7 @@ router.post("/:id/approve", requireAuth, requireRole("admin", "branch_manager"),
     if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلبية مش موجودة" }); }
     if (existing.rows[0].status !== "SUBMITTED") {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "الاعتماد متاح بس من حالة SUBMITTED" });
+      return res.status(400).json({ error: "الاعتماد متاح بس من حالة SUBMITTED", code: "INVALID_STATE" });
     }
     const updated = await client.query(
       `UPDATE kitchen_orders SET status = 'APPROVED', approved_by = $1, approved_at = now() WHERE id = $2 RETURNING *`,
@@ -347,7 +347,7 @@ router.post("/:id/reject", requireAuth, requireRole("admin", "branch_manager"), 
     if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلبية مش موجودة" }); }
     if (existing.rows[0].status !== "SUBMITTED") {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "الرفض متاح بس من حالة SUBMITTED" });
+      return res.status(400).json({ error: "الرفض متاح بس من حالة SUBMITTED", code: "INVALID_STATE" });
     }
     const updated = await client.query(
       `UPDATE kitchen_orders SET status = 'REJECTED', rejected_by = $1, rejected_at = now(), rejection_reason = $2 WHERE id = $3 RETURNING *`,
@@ -382,7 +382,7 @@ router.post("/:id/cancel", requireAuth, requireRole("admin", "branch_manager"), 
     }
     if (!CANCELLABLE_WORKFLOW_STATUSES.includes(existing.rows[0].status)) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "الطلبية دي مش في حالة قابلة للإلغاء (بدأ تحضيرها أو خلصت بالفعل)" });
+      return res.status(400).json({ error: "الطلبية دي مش في حالة قابلة للإلغاء (بدأ تحضيرها أو خلصت بالفعل)", code: "INVALID_STATE" });
     }
     const updated = await client.query(
       `UPDATE kitchen_orders SET status = 'cancelled', cancelled_by = $1, cancelled_at = now(), cancellation_reason = $2 WHERE id = $3 RETURNING *`,
@@ -412,7 +412,7 @@ router.post("/:id/start-preparing", requireAuth, requireRole("admin", "branch_ma
     if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلبية مش موجودة" }); }
     if (existing.rows[0].status !== "APPROVED") {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "بدء التحضير متاح بس من حالة APPROVED" });
+      return res.status(400).json({ error: "بدء التحضير متاح بس من حالة APPROVED", code: "INVALID_STATE" });
     }
     const updated = await client.query(
       `UPDATE kitchen_orders SET status = 'PREPARING', preparing_started_by = $1, preparing_started_at = now() WHERE id = $2 RETURNING *`,
@@ -553,7 +553,7 @@ router.post("/:id/ready", requireAuth, requireRole("admin", "branch_manager"), a
     if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلبية مش موجودة" }); }
     if (existing.rows[0].status !== "PREPARING") {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "التجهيز متاح بس من حالة PREPARING" });
+      return res.status(400).json({ error: "التجهيز متاح بس من حالة PREPARING", code: "INVALID_STATE" });
     }
     const updated = await client.query(
       `UPDATE kitchen_orders SET status = 'READY', ready_by = $1, ready_at = now() WHERE id = $2 RETURNING *`,

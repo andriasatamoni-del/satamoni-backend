@@ -1750,11 +1750,65 @@ async function showSupplierDetails(id) {
       ${currentItems.length ? `<table><thead><tr><th>الصنف</th><th>السعر</th><th>الوحدة</th></tr></thead><tbody>
         ${currentItems.map(it => `<tr><td data-label="الصنف">${it.item_name}</td><td data-label="السعر">${fmtMoney(it.unit_price)}</td><td data-label="الوحدة">${it.purchase_unit || it.item_unit}</td></tr>`).join("")}
       </tbody></table>` : `<div class="hint">مفيش أسعار مسجّلة لهذا المورد</div>`}
+
+      <h2>كشف حساب المورد</h2>
+      <div class="row" style="align-items:flex-end;gap:8px">
+        <div><label>من</label><br><input type="date" id="stmtFrom"></div>
+        <div><label>إلى</label><br><input type="date" id="stmtTo"></div>
+        <button id="stmtLoadBtn">عرض الكشف</button>
+        <button class="secondary" id="stmtPrintBtn" style="display:none">طباعة</button>
+      </div>
+      <div id="stmtBox" style="margin-top:8px"></div>
     `;
     content.querySelectorAll("[data-openpo]").forEach(btn => { btn.onclick = (e) => { switchToTab("po"); showPoDetails(e.target.dataset.openpo); }; });
     content.querySelectorAll("[data-openinv]").forEach(btn => { btn.onclick = (e) => { switchToTab("invoices"); showInvDetails(e.target.dataset.openinv); }; });
+    const today = new Date().toISOString().slice(0, 10);
+    const firstOfYear = today.slice(0, 4) + "-01-01";
+    document.getElementById("stmtFrom").value = firstOfYear;
+    document.getElementById("stmtTo").value = today;
+    document.getElementById("stmtLoadBtn").onclick = () => loadSupplierStatement(id);
   } catch (e) {
     content.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+// PART 9 (Full System Audit): كشف حساب المورد - رصيد افتتاحي + كل الحركات في المدى بترتيب التاريخ +
+// رصيد جاري بعد كل حركة + رصيد ختامي. مفيش حساب محاسبي في الواجهة خالص - كله جايّ جاهز من
+// GET /api/reports/supplier-statement (نفس مصدر supplier-balances/ap-aging الموجودين بالضبط)
+async function loadSupplierStatement(supplierId) {
+  const box = document.getElementById("stmtBox");
+  const printBtn = document.getElementById("stmtPrintBtn");
+  printBtn.style.display = "none";
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    const from = document.getElementById("stmtFrom").value;
+    const to = document.getElementById("stmtTo").value;
+    const stmt = await api(`/api/reports/supplier-statement?supplierId=${supplierId}&from=${from}&to=${to}`);
+    box.innerHTML = `
+      <div class="row" style="justify-content:space-between;font-size:13px;margin-bottom:6px">
+        <div>الرصيد الافتتاحي (${fmtDate(from)}): <b>${fmtMoney(stmt.openingBalance)}</b></div>
+        <div>الرصيد الختامي (${fmtDate(to)}): <b>${fmtMoney(stmt.closingBalance)}</b></div>
+      </div>
+      ${stmt.lines.length ? `<table><thead><tr><th>التاريخ</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد الجاري</th></tr></thead><tbody>
+        ${stmt.lines.map(l => `<tr>
+          <td data-label="التاريخ">${fmtDate(l.date)}</td>
+          <td data-label="البيان">${l.description || l.sourceType}</td>
+          <td data-label="مدين">${l.debit > 0 ? fmtMoney(l.debit) : "-"}</td>
+          <td data-label="دائن">${l.credit > 0 ? fmtMoney(l.credit) : "-"}</td>
+          <td data-label="الرصيد الجاري">${fmtMoney(l.runningBalance)}</td>
+        </tr>`).join("")}
+      </tbody></table>` : `<div class="hint">مفيش حركات على المورد ده في المدى ده</div>`}
+    `;
+    printBtn.style.display = "inline-block";
+    printBtn.onclick = () => {
+      const rowsHtml = stmt.lines.map(l => `<tr><td>${fmtDate(l.date)}</td><td>${l.description || l.sourceType}</td><td>${l.debit > 0 ? fmtMoney(l.debit) : "-"}</td><td>${l.credit > 0 ? fmtMoney(l.credit) : "-"}</td><td>${fmtMoney(l.runningBalance)}</td></tr>`).join("");
+      window.SatamoniPrint.openCustomPrint(`كشف حساب ${stmt.supplierName}`, `
+        <div style="font-size:13px;margin-bottom:10px">من ${fmtDate(stmt.from)} إلى ${fmtDate(stmt.to)} — الرصيد الافتتاحي: ${fmtMoney(stmt.openingBalance)}</div>
+        <table style="width:100%;border-collapse:collapse"><thead><tr><th>التاريخ</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد الجاري</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+        <div style="margin-top:10px;font-weight:800">الرصيد الختامي: ${fmtMoney(stmt.closingBalance)}</div>
+      `);
+    };
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
   }
 }
 document.getElementById("supDetailsCloseBtn").onclick = () => { document.getElementById("supDetailsBox").style.display = "none"; };

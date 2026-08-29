@@ -387,7 +387,7 @@ router.post("/:id/approve", requireAuth, requireRole("admin"), async (req, res) 
     const existing = await pool.query("SELECT * FROM kitchen_transfers WHERE id = $1", [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ error: "التحويل مش موجود" });
     const t = existing.rows[0];
-    if (t.status !== "requested") return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للاعتماد" });
+    if (t.status !== "requested") return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للاعتماد", code: "INVALID_STATE" });
     const result = await pool.query(
       `UPDATE kitchen_transfers SET status = 'approved', approved_by = $1, approved_at = now() WHERE id = $2 RETURNING *`,
       [req.user.id, t.id]
@@ -413,7 +413,7 @@ router.post("/:id/issue", requireAuth, stockManagers, async (req, res) => {
     const existing = await client.query("SELECT * FROM kitchen_transfers WHERE id = $1 FOR UPDATE", [req.params.id]);
     if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "التحويل مش موجود" }); }
     const t = existing.rows[0];
-    if (t.status !== "approved") { await client.query("ROLLBACK"); return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للإصدار" }); }
+    if (t.status !== "approved") { await client.query("ROLLBACK"); return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للإصدار", code: "INVALID_STATE" }); }
     if (!assertOwnBranch(req.user, t.from_branch_id)) {
       await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية تصدّر من الفرع ده" });
@@ -462,7 +462,7 @@ router.post("/:id/receive", requireAuth, stockManagers, async (req, res) => {
     const existing = await client.query("SELECT * FROM kitchen_transfers WHERE id = $1 FOR UPDATE", [req.params.id]);
     if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "التحويل مش موجود" }); }
     const t = existing.rows[0];
-    if (t.status !== "in_transit") { await client.query("ROLLBACK"); return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للاستلام" }); }
+    if (t.status !== "in_transit") { await client.query("ROLLBACK"); return res.status(400).json({ error: "التحويل ده مش في حالة قابلة للاستلام", code: "INVALID_STATE" }); }
     if (!assertOwnBranch(req.user, t.to_branch_id)) {
       await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية تستلم في الفرع ده" });
@@ -678,7 +678,7 @@ router.post("/:id/discrepancies/:discrepancyId/resolve", requireAuth, requireRol
     const disc = discRes.rows[0];
     if (disc.status !== "OPEN" && disc.status !== "ACKNOWLEDGED") {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "الفرق ده اتراجع بالفعل (RESOLVED أو REJECTED)" });
+      return res.status(400).json({ error: "الفرق ده اتراجع بالفعل (RESOLVED أو REJECTED)", code: "INVALID_STATE" });
     }
     const transferRes = await client.query("SELECT to_branch_id, business_date FROM kitchen_transfers WHERE id = $1", [req.params.id]);
     const toBranchId = transferRes.rows[0].to_branch_id;

@@ -111,7 +111,7 @@ router.post("/:id/approve", requireAuth, requireRole("admin"), requirePermission
   try {
     const existing = await pool.query("SELECT * FROM packaging_orders WHERE id = $1", [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ error: "أمر التعبئة مش موجود" });
-    if (existing.rows[0].status !== "DRAFT") return res.status(400).json({ error: "أمر التعبئة ده مش في حالة قابلة للاعتماد" });
+    if (existing.rows[0].status !== "DRAFT") return res.status(400).json({ error: "أمر التعبئة ده مش في حالة قابلة للاعتماد", code: "INVALID_STATE" });
     const result = await pool.query(
       `UPDATE packaging_orders SET status = 'APPROVED', approved_by = $1, approved_at = now() WHERE id = $2 RETURNING *`,
       [req.user.id, req.params.id]
@@ -136,7 +136,7 @@ router.post("/:id/start", requireAuth, requirePermission("production.create"), a
     const existing = await client.query("SELECT * FROM packaging_orders WHERE id = $1 FOR UPDATE", [req.params.id]);
     if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "أمر التعبئة مش موجود" }); }
     const order = existing.rows[0];
-    if (order.status !== "APPROVED") { await client.query("ROLLBACK"); return res.status(400).json({ error: "أمر التعبئة ده مش في حالة قابلة للبدء" }); }
+    if (order.status !== "APPROVED") { await client.query("ROLLBACK"); return res.status(400).json({ error: "أمر التعبئة ده مش في حالة قابلة للبدء", code: "INVALID_STATE" }); }
     if (!assertOwnBranch(req.user, order.branch_id)) {
       await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية تشغّل تعبئة في الفرع ده" });
@@ -238,7 +238,7 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
     const existing = await client.query("SELECT * FROM packaging_orders WHERE id = $1 FOR UPDATE", [req.params.id]);
     if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "أمر التعبئة مش موجود" }); }
     const order = existing.rows[0];
-    if (order.status !== "IN_PROGRESS") { await client.query("ROLLBACK"); return res.status(400).json({ error: "أمر التعبئة ده مش في حالة قابلة للإكمال" }); }
+    if (order.status !== "IN_PROGRESS") { await client.query("ROLLBACK"); return res.status(400).json({ error: "أمر التعبئة ده مش في حالة قابلة للإكمال", code: "INVALID_STATE" }); }
     if (!assertOwnBranch(req.user, order.branch_id)) {
       await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية تكمّل تعبئة في الفرع ده" });
@@ -338,7 +338,7 @@ router.post("/:id/cancel", requireAuth, requirePermission("production.cancel"), 
     const order = existing.rows[0];
     if (order.status === "COMPLETED" || order.status === "CANCELLED") {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "أمر التعبئة ده اكتمل أو اتلغى بالفعل" });
+      return res.status(400).json({ error: "أمر التعبئة ده اكتمل أو اتلغى بالفعل", code: "INVALID_STATE" });
     }
     if (!assertOwnBranch(req.user, order.branch_id)) {
       await client.query("ROLLBACK");

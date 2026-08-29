@@ -204,7 +204,7 @@ router.post("/:id/post", requireAuth, requirePermission("purchasing.create", "pu
     }
     if (grn.rows[0].status !== "DRAFT") {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "سند الاستلام ده مش في حالة قابلة للترحيل" });
+      return res.status(400).json({ error: "سند الاستلام ده مش في حالة قابلة للترحيل", code: "INVALID_STATE" });
     }
 
     const itemsRes = await client.query(

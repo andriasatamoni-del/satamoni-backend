@@ -6,8 +6,8 @@
 // discrepancies" - مش بس كل جزء لوحده (ده مغطّى فعلًا في ملفات STEP المنفصلة).
 const { app, request, pool, seedUser, login, authed } = require("./helpers");
 
-let ckBranchId, ibrahimiaBranchId;
-let adminToken, ckManagerToken, branchManagerToken, accountantToken;
+let ckBranchId, ibrahimiaBranchId, thirdBranchId;
+let adminToken, ckManagerToken, branchManagerToken, accountantToken, thirdManagerToken;
 let supplierId;
 let rawMeatId, sausageBulkId, sausagePortionId;
 let businessDate;
@@ -26,14 +26,18 @@ beforeAll(async () => {
   ckBranchId = ck.rows[0].id;
   const br = await pool.query("INSERT INTO branches (name) VALUES ('فرع الإبراهيمية-E2E-جست') RETURNING id");
   ibrahimiaBranchId = br.rows[0].id;
+  const br3 = await pool.query("INSERT INTO branches (name) VALUES ('فرع تالت غريب-E2E-جست') RETURNING id");
+  thirdBranchId = br3.rows[0].id;
 
   await seedUser({ name: "أدمن-E2E", email: "admin-e2e@jest.test", role: "admin" });
   await seedUser({ branchId: ckBranchId, name: "مدير سنتر كيتشن-E2E", email: "ck-e2e@jest.test", role: "branch_manager" });
   await seedUser({ branchId: ibrahimiaBranchId, name: "مدير فرع الإبراهيمية-E2E", email: "branch-e2e@jest.test", role: "branch_manager" });
+  await seedUser({ branchId: thirdBranchId, name: "مدير فرع تالت غريب-E2E", email: "third-e2e@jest.test", role: "branch_manager" });
   await seedUser({ name: "محاسب-E2E", email: "accountant-e2e@jest.test", role: "accountant" });
   adminToken = await login("admin-e2e@jest.test");
   ckManagerToken = await login("ck-e2e@jest.test");
   branchManagerToken = await login("branch-e2e@jest.test");
+  thirdManagerToken = await login("third-e2e@jest.test");
   accountantToken = await login("accountant-e2e@jest.test");
 
   const supplier = await request(app).post("/api/suppliers").set(authed(adminToken)).send({ name: "مورد لحوم-E2E-جست" });
@@ -338,5 +342,105 @@ describe("STEP L-audit Audit 16: محاكاة عمل كاملة من المور�
       const expectedClosingStock = openingStock + ledgerDeltaSinceOpening;
       expect(Number(stock.rows[0].quantity)).toBeCloseTo(expectedClosingStock, 5);
     }
+  });
+
+  // MASTER MISSION 2 (Part 23 - E2E المتصل): الخطوات دي مكمّلة لنفس السيناريو المتصل فوق (نفس المورد/
+  // الفاتورة/التحويل/أوامر التصنيع)، مش سيناريو جديد منفصل - بيغطوا بالظبط الأجزاء اللي كانت ناقصة من
+  // الـ35 خطوة المطلوبة (سداد، رصيد مورد متبقي، عزل صلاحيات، تزامن حقيقي، تخطيط تصنيع، اتساق نهائي).
+  // multi-source raw consumption وproduction variance وpartial-receive مغطاة فعليًا بسيناريوهات حقيقية
+  // منفصلة (tests/batch-traceability.test.js: تصنيع من دفعتين معًا؛ tests/phase5-integration.test.js:
+  // عجز نقل جزئي) - مكرّرتهاش هنا تفاديًا لتكرار setup ضخم لنفس الإثبات بالظبط.
+  test("10) السداد: سداد كامل قيمة الفاتورة (9000) - الفاتورة بتتحول PAID", async () => {
+    const invBefore = await request(app).get(`/api/supplier-invoices/${invoiceId}`).set(authed(adminToken));
+    expect(invBefore.body.invoice.status).toBe("APPROVED");
+    expect(Number(invBefore.body.invoice.total)).toBeCloseTo(9000, 2);
+
+    const payment = await request(app).post("/api/supplier-payments").set(authed(adminToken)).send({
+      supplierId, branchId: ckBranchId, amount: 9000, supplierInvoiceId: invoiceId,
+    });
+    expect(payment.status).toBe(201);
+
+    const invAfter = await request(app).get(`/api/supplier-invoices/${invoiceId}`).set(authed(adminToken));
+    expect(invAfter.body.invoice.status).toBe("PAID");
+  });
+
+  test("11) رصيد المورد المتبقي: بعد السداد الكامل - صفر في الرصيد وفي كشف الحساب", async () => {
+    const balance = await request(app).get(`/api/supplier-payments/balance/${supplierId}`).set(authed(adminToken));
+    expect(Number(balance.body.balance)).toBeCloseTo(0, 2);
+
+    const statement = await request(app).get(`/api/reports/supplier-statement?supplierId=${supplierId}&from=1970-01-01`).set(authed(adminToken));
+    expect(statement.status).toBe(200);
+    expect(Number(statement.body.closingBalance)).toBeCloseTo(0, 2);
+    // القيد الأخير (السداد) لازم يكون هو اللي صفّر الرصيد الجاري
+    const lastLine = statement.body.lines[statement.body.lines.length - 1];
+    expect(lastLine.sourceType).toBe("supplier_payment");
+    expect(Number(lastLine.runningBalance)).toBeCloseTo(0, 2);
+  });
+
+  test("12) عزل الصلاحيات: فرع تالت غريب ممنوع يشوف أي حاجة من سلسلة السنتر كيتشن/فرع الإبراهيمية دي", async () => {
+    const invRes = await request(app).get(`/api/supplier-invoices/${invoiceId}`).set(authed(thirdManagerToken));
+    expect(invRes.status).toBe(403);
+
+    const transferRes = await request(app).get(`/api/kitchen-transfers/${transferId}/discrepancies`).set(authed(thirdManagerToken));
+    expect(transferRes.status).toBe(403);
+
+    const koListRes = await request(app).get(`/api/kitchen-orders?branchId=${ibrahimiaBranchId}&page=1&limit=50`).set(authed(thirdManagerToken));
+    // مدير فرع تالت مايقدرش يحدد فرع مش بتاعه صراحة - مرفوض 403 (مفيش تسريب بيانات ولا حتى فلترة صامتة)
+    expect(koListRes.status).toBe(403);
+    expect(koListRes.body.code).toBe("FORBIDDEN_BRANCH");
+
+    const prodRes = await request(app).post("/api/production").set(authed(thirdManagerToken)).send({
+      branchId: ckBranchId, recipeId: 1, plannedQuantity: 1,
+    });
+    expect(prodRes.status).toBe(403); // مايقدرش يصنّع لفرع (السنتر كيتشن) مش بتاعه
+  });
+
+  test("13) سباق تزامن حقيقي على نفس الفاتورة: محاولة سداد تاني بعد ما اتقفلت خالص - كله لازم يترفض", async () => {
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => request(app).post("/api/supplier-payments").set(authed(adminToken)).send({
+        supplierId, branchId: ckBranchId, amount: 100, supplierInvoiceId: invoiceId,
+      }))
+    );
+    for (const r of results) {
+      expect(r.status).toBe(400);
+      expect(r.body.code).toBe("INVALID_STATE"); // الفاتورة PAID بالفعل، مش APPROVED/PARTIALLY_PAID
+    }
+    const balance = await request(app).get(`/api/supplier-payments/balance/${supplierId}`).set(authed(adminToken));
+    expect(Number(balance.body.balance)).toBeCloseTo(0, 2); // لسه صفر، مفيش سداد زيادة اتسرّب
+  });
+
+  test("14) تخطيط التصنيع: بعد ما الطلب اتلبى بالكامل وانتقل للفرع - المطلوب تصنيعه دلوقتي صفر (مفيش طلب متبقي وهمي)", async () => {
+    const plan = await request(app).get(
+      `/api/production-planning/plan?ckBranchId=${ckBranchId}&fromDate=${businessDate}&toDate=${businessDate}`
+    ).set(authed(ckManagerToken));
+    expect(plan.status).toBe(200);
+    const portionRow = plan.body.plan.find((p) => p.inventoryItemId === sausagePortionId);
+    // الطلب المعتمد (50) بقى بالكامل RECEIVED مش APPROVED/PREPARING/READY فمش داخل في approvedDemand تاني -
+    // ده اللي بيمنع اقتراح تصنيع "شبح" لطلب اتلبى فعليًا بالفعل
+    expect(portionRow ? portionRow.approvedDemand : 0).toBe(0);
+  });
+
+  test("15) اتساق النظام النهائي: كل حالة نهائية في السلسلة متوافقة مع بعض - مفيش أي جزء واقف في نص الطريق", async () => {
+    const invoice = await request(app).get(`/api/supplier-invoices/${invoiceId}`).set(authed(adminToken));
+    expect(invoice.body.invoice.status).toBe("PAID");
+
+    const transfer = await pool.query("SELECT status FROM kitchen_transfers WHERE id = $1", [transferId]);
+    expect(["received", "partially_received"]).toContain(transfer.rows[0].status);
+
+    const discrepancy = await pool.query("SELECT status FROM transfer_discrepancies WHERE id = $1", [discrepancyId]);
+    expect(discrepancy.rows[0].status).toBe("RESOLVED");
+
+    const kitchenOrder = await pool.query("SELECT status FROM kitchen_orders WHERE id = $1", [kitchenOrderId]);
+    expect(kitchenOrder.rows[0].status).toBe("RECEIVED");
+
+    const productionOrders = await pool.query(
+      "SELECT status FROM production_orders WHERE id = ANY($1::int[])", [[bulkOrderId]]
+    );
+    expect(productionOrders.rows.every((o) => o.status === "COMPLETED")).toBe(true);
+
+    const packagingOrders = await pool.query(
+      "SELECT status FROM packaging_orders WHERE id = ANY($1::int[])", [[portionOrderId]]
+    );
+    expect(packagingOrders.rows.every((o) => o.status === "COMPLETED")).toBe(true);
   });
 });
