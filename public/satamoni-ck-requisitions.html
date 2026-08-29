@@ -569,7 +569,18 @@ function renderTransferActions(t) {
   } else if (t.status === "in_transit") {
     action = `<span class="hint">في الطريق للفرع - في انتظار استلامه</span>`;
   }
-  return `<div class="expandbox"><div><b>تحويل #${t.id}</b> <span class="badge IN_TRANSIT">${label}</span></div><div style="margin-top:8px">${action}</div></div>`;
+  const issuedInfo = t.issued_at ? `<div style="font-size:12px;color:var(--faint);margin-top:4px">وقت التصدير: ${new Date(t.issued_at).toLocaleString("ar-EG")}</div>` : "";
+  const showBatchDetails = ["issued", "in_transit", "received", "partially_received", "completed"].includes(t.status);
+  const itemsInfo = showBatchDetails && Array.isArray(t.items) && t.items.length
+    ? `<div style="font-size:12px;color:var(--faint);margin-top:6px">${t.items.map(it => {
+        const sent = it.quantity_sent != null ? Number(it.quantity_sent).toFixed(2) : Number(it.quantity).toFixed(2);
+        const batchStr = Array.isArray(it.batches) && it.batches.length
+          ? ` [دفعات: ${it.batches.map(b => `${b.batch_number} (${Number(b.quantity).toFixed(2)})`).join("، ")}]`
+          : "";
+        return `${it.name}: مُرسل ${sent} ${it.unit}${batchStr}`;
+      }).join("<br>")}</div>`
+    : "";
+  return `<div class="expandbox"><div><b>تحويل #${t.id}</b> <span class="badge IN_TRANSIT">${label}</span></div>${issuedInfo}${itemsInfo}<div style="margin-top:8px">${action}</div></div>`;
 }
 
 if (auth.token && auth.user) {

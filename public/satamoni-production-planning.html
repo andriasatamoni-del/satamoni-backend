@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — تخطيط التصنيع</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1320px; margin: 0 auto; padding: 20px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+  h2 { font-size: 14px; color: var(--faint); margin: 18px 0 8px; }
+  h3 { font-size: 13px; color: var(--ink); margin: 14px 0 6px; }
+
+  #tabs { display: flex; gap: 6px; margin: 16px 0; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select { flex: 1; min-width: 130px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; font-family: inherit; }
+  .formbox label.field-label { flex: 0; white-space: nowrap; font-size: 12px; color: var(--faint); }
+  button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+  button.good { background: var(--green); }
+  button.presetbtn { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); font-weight: 700; padding: 7px 12px; font-size: 12px; }
+  button.presetbtn.active { background: var(--gold); border-color: var(--gold); color: #1a1a1a; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+  .hint { color: var(--faint); font-size: 12px; margin-bottom: 8px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .badge.READY { background: rgba(63,163,77,.18); color: var(--green); }
+  .badge.AVAILABLE { background: rgba(63,163,77,.12); color: var(--green); }
+  .badge.IN_PROGRESS { background: rgba(203,161,53,.25); color: var(--gold-bright); }
+  .badge.PARTIAL { background: rgba(203,161,53,.25); color: var(--gold-bright); }
+  .badge.SHORTAGE { background: rgba(194,42,36,.18); color: #F08A83; }
+
+  .cardrow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .statcard { flex: 1; min-width: 170px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .statcard .num { font-size: 26px; font-weight: 800; color: var(--gold-bright); }
+  .statcard .lbl { font-size: 12px; color: var(--faint); margin-top: 4px; }
+  .statcard.alert .num { color: #F08A83; }
+
+  .expandbox { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-top: 8px; }
+
+  #bootStatus { max-width: 1320px; margin: 20px auto; padding: 0 16px; }
+  #bootStatus .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; text-align: center; }
+  #bootStatus .box.error { border-color: var(--red); }
+  #bootStatus button { margin-top: 10px; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; font-size: 15px; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+
+  @media (max-width: 720px) {
+    table, thead, tbody, th, td, tr { display: block; }
+    thead tr { display: none; }
+    td { border: none; padding: 4px 0; }
+    td::before { content: attr(data-label); font-weight: 700; color: var(--faint); display: inline-block; min-width: 130px; }
+    tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+    .cardrow { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">📋 ساتاموني — تخطيط التصنيع</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>📋 تسجيل الدخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div class="formbox">
+    <div class="row">
+      <label class="field-label">فرع السنتر كيتشن:</label>
+      <select id="ckBranchSelect"></select>
+      <label class="field-label">من:</label>
+      <input type="date" id="fromDateInput" />
+      <label class="field-label">إلى:</label>
+      <input type="date" id="toDateInput" />
+      <button id="applyWindowBtn">تطبيق</button>
+    </div>
+    <div class="row">
+      <button class="presetbtn" data-preset="today">اليوم</button>
+      <button class="presetbtn" data-preset="tomorrow">بكرة</button>
+      <button class="presetbtn" data-preset="thursday">الخميس الجاي</button>
+      <button class="presetbtn" data-preset="friday">الجمعة الجاية</button>
+      <button class="presetbtn" data-preset="week">الأسبوع الجاي (7 أيام)</button>
+    </div>
+    <div class="hint" id="windowHint"></div>
+  </div>
+
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="dashboard">لوحة التخطيط</div>
+    <div class="tabbtn" data-tab="demand">الطلب</div>
+    <div class="tabbtn" data-tab="plan">خطة التصنيع</div>
+    <div class="tabbtn" data-tab="reports">تقارير التشغيل</div>
+  </div>
+
+  <div class="panel active" id="panel-dashboard">
+    <h1>لوحة تخطيط التصنيع</h1>
+    <div id="dashboardBox"><div class="hint">جاري التحميل...</div></div>
+  </div>
+
+  <div class="panel" id="panel-demand">
+    <h1>الطلب من الفروع</h1>
+    <div class="hint">الطلب المعتمد فعليًا من الفروع (APPROVED/PREPARING/READY) في نافذة التغطية المحددة فوق - نفس بيانات طلبيات الفروع بالظبط (kitchen_orders)، من غير أي حساب مستقل.</div>
+    <div id="demandBox"><div class="hint">جاري التحميل...</div></div>
+  </div>
+
+  <div class="panel" id="panel-plan">
+    <h1>خطة التصنيع</h1>
+    <div class="hint">المطلوب تصنيعه = الطلب المعتمد - المتاح في السنتر كيتشن - المخطط/الجاري تنفيذه بالفعل. الأرقام كلها بتتحسب في السيرفر وقت كل تحديث - مفيش حساب في المتصفح.</div>
+    <div class="row">
+      <button id="createSelectedBtn" class="good" disabled>إنشاء أوامر تصنيع للمحدد</button>
+      <span id="selectedCountLbl" class="hint"></span>
+    </div>
+    <div id="planBox"><div class="hint">جاري التحميل...</div></div>
+    <div id="createResultBox"></div>
+  </div>
+
+  <div class="panel" id="panel-reports">
+    <h1>تقارير التشغيل</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">التقرير:</label>
+        <select id="reportPicker">
+          <option value="daily-production">الإنتاج اليومي (مخطط/منتج فعلي/فرق)</option>
+          <option value="ck-stock-movement">حركة مخزون السنتر كيتشن (افتتاحي/مستلم/منتج/محوّل/هالك/ختامي)</option>
+          <option value="branch-demand">طلب الفروع</option>
+          <option value="transfer-fulfillment">تحقيق التحويلات (مطلوب→مجهّز→مُصدَّر→مُستلَم→فرق)</option>
+        </select>
+        <button id="loadReportBtn">تحميل</button>
+        <button class="secondary" id="printReportBtn">🖨️ طباعة</button>
+      </div>
+    </div>
+    <div id="reportResultBox"><div class="hint">اختر تقرير واضغط تحميل.</div></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
+<div id="bootStatus" style="display:none"></div>
+
+<script src="js/requisition-errors.js"></script>
+<script src="js/print-reports.js"></script>
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || "حصل خطأ");
+    err.code = data.code || null;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+function apiErrorMessage(err) { return describeRequisitionError(err, err && err.status).message; }
+function fmtQty(n) { return Number(n || 0).toLocaleString("ar-EG", { minimumFractionDigits: 0, maximumFractionDigits: 3 }); }
+function fmtDate(d) { return d ? String(d).slice(0, 10) : "-"; }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function addDays(dateStr, n) { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+// اليوم القادم اللي رقمه weekday (0=أحد...4=خميس...5=جمعة) - JS Date.getUTCDay() بس، حساب تقويم عادي
+// (تحديد "امتى الخميس/الجمعة الجاية" مش قرار عمل - القرار العملي "قد ايه استهلاك يوم الخميس" ده اللي جاي
+// حصريًا من averageWeekdayConsumption في db/requisition-suggestion.js، مش من هنا)
+function nextWeekday(weekday) {
+  const d = new Date(`${todayStr()}T00:00:00Z`);
+  const diff = (weekday - d.getUTCDay() + 7) % 7 || 7;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    hideLogin();
+    if (!allowedRoles.includes(data.user.role)) {
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    bootSafely();
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+async function bootSafely() {
+  const statusBox = document.getElementById("bootStatus");
+  const mainBox = document.getElementById("main");
+  statusBox.style.display = "block";
+  mainBox.style.display = "none";
+  statusBox.innerHTML = `<div class="box">جاري تحميل البيانات...</div>`;
+  try {
+    await boot();
+    statusBox.style.display = "none";
+  } catch (e) {
+    mainBox.style.display = "none";
+    const isNetworkFailure = e instanceof TypeError;
+    const message = isNetworkFailure
+      ? "تعذّر الاتصال بالسيرفر - تأكد من الإنترنت أو حاول تاني بعد شوية"
+      : `حصل خطأ أثناء تحميل البيانات: ${apiErrorMessage(e)}`;
+    statusBox.innerHTML = `<div class="box error"><div>${message}</div><button id="bootRetryBtn">إعادة المحاولة</button></div>`;
+    document.getElementById("bootRetryBtn").onclick = bootSafely;
+    console.error("boot() failed:", e);
+  }
+}
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    if (btn.dataset.tab === "dashboard") loadDashboard();
+    if (btn.dataset.tab === "demand") loadDemand();
+    if (btn.dataset.tab === "plan") loadPlan();
+  };
+});
+
+let ckBranchId = null;
+let currentWindow = { fromDate: todayStr(), toDate: todayStr() };
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  const branches = await api("/api/branches/all").catch(() => api("/api/branches"));
+  const ckBranches = branches.filter(b => b.is_central_kitchen);
+  const sel = document.getElementById("ckBranchSelect");
+  if (auth.user.role === "branch_manager") {
+    ckBranchId = auth.user.branchId;
+    const own = ckBranches.find(b => b.id === ckBranchId) || branches.find(b => b.id === ckBranchId);
+    sel.innerHTML = `<option value="${ckBranchId}">${esc(own ? own.name : ("فرع #" + ckBranchId))}</option>`;
+    sel.disabled = true;
+  } else {
+    sel.innerHTML = ckBranches.map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join("");
+    ckBranchId = ckBranches[0]?.id || null;
+  }
+  sel.onchange = () => { ckBranchId = Number(sel.value); refreshActiveTab(); };
+
+  document.getElementById("fromDateInput").value = currentWindow.fromDate;
+  document.getElementById("toDateInput").value = currentWindow.toDate;
+  updateWindowHint();
+
+  if (!ckBranchId) {
+    document.getElementById("dashboardBox").innerHTML = `<div class="err">مفيش فرع سنتر كيتشن متاح لحسابك.</div>`;
+    return;
+  }
+  await loadDashboard();
+}
+
+function refreshActiveTab() {
+  const active = document.querySelector(".tabbtn.active")?.dataset.tab || "dashboard";
+  if (active === "dashboard") loadDashboard();
+  if (active === "demand") loadDemand();
+  if (active === "plan") loadPlan();
+}
+
+function updateWindowHint() {
+  const days = Math.round((new Date(currentWindow.toDate) - new Date(currentWindow.fromDate)) / 86400000) + 1;
+  document.getElementById("windowHint").textContent = `نافذة التغطية الحالية: ${currentWindow.fromDate} → ${currentWindow.toDate} (${days} يوم)`;
+}
+document.getElementById("applyWindowBtn").onclick = () => {
+  const fromDate = document.getElementById("fromDateInput").value;
+  const toDate = document.getElementById("toDateInput").value;
+  if (!fromDate || !toDate || toDate < fromDate) { alert("تأكد من التواريخ - إلى لازم يكون بعد أو يساوي من"); return; }
+  currentWindow = { fromDate, toDate };
+  updateWindowHint();
+  refreshActiveTab();
+};
+document.querySelectorAll(".presetbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".presetbtn").forEach(b => b.classList.toggle("active", b === btn));
+    const preset = btn.dataset.preset;
+    let fromDate = todayStr(), toDate = todayStr();
+    if (preset === "tomorrow") { fromDate = addDays(todayStr(), 1); toDate = fromDate; }
+    else if (preset === "thursday") { fromDate = nextWeekday(4); toDate = fromDate; }
+    else if (preset === "friday") { fromDate = nextWeekday(5); toDate = fromDate; }
+    else if (preset === "week") { fromDate = todayStr(); toDate = addDays(todayStr(), 6); }
+    currentWindow = { fromDate, toDate };
+    document.getElementById("fromDateInput").value = fromDate;
+    document.getElementById("toDateInput").value = toDate;
+    updateWindowHint();
+    refreshActiveTab();
+  };
+});
+
+function windowQS() { return `ckBranchId=${ckBranchId}&fromDate=${currentWindow.fromDate}&toDate=${currentWindow.toDate}`; }
+
+// ==================== لوحة التخطيط ====================
+async function loadDashboard() {
+  if (!ckBranchId) return;
+  const box = document.getElementById("dashboardBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    const d = await api(`/api/production-planning/dashboard?${windowQS()}`);
+    box.innerHTML = `
+      <div class="cardrow">
+        <div class="statcard"><div class="num">${d.totalApprovedDemandItems}</div><div class="lbl">أصناف عليها طلب معتمد</div></div>
+        <div class="statcard"><div class="num">${d.totalRequiredProductionItems}</div><div class="lbl">مطلوب تصنيعه</div></div>
+        <div class="statcard"><div class="num">${d.readyForDistributionItems}</div><div class="lbl">جاهز للتوزيع (مغطّى بالكامل)</div></div>
+        <div class="statcard"><div class="num">${d.inProgressItems}</div><div class="lbl">تحت التصنيع/التعبئة بالفعل</div></div>
+      </div>
+      <div class="cardrow">
+        <div class="statcard ${d.rawMaterialShortageItems ? 'alert' : ''}"><div class="num">${d.rawMaterialShortageItems}</div><div class="lbl">نقص خامات</div></div>
+        <div class="statcard"><div class="num">${d.transfersInTransit}</div><div class="lbl">تحويلات صادرة In Transit</div></div>
+      </div>
+      <div class="row">
+        <button class="secondary" onclick="switchTab('plan')">فتح خطة التصنيع</button>
+        <button class="secondary" onclick="window.SatamoniPrint.printPanel(document.getElementById('panel-dashboard'), {title:'لوحة تخطيط التصنيع'})">🖨️ طباعة اللوحة</button>
+      </div>
+    `;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+function switchTab(tab) { document.querySelector(`[data-tab="${tab}"]`).click(); }
+
+// ==================== الطلب ====================
+async function loadDemand() {
+  if (!ckBranchId) return;
+  const box = document.getElementById("demandBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    const d = await api(`/api/production-planning/demand?${windowQS()}`);
+    const rows = d.approved;
+    if (rows.length === 0 && d.pending.length === 0) { box.innerHTML = `<div class="hint">مفيش طلب في النافذة دي.</div>`; return; }
+    let html = `<table><thead><tr><th>الصنف</th><th>الفرع</th><th>التاريخ المطلوب</th><th>المطلوب</th><th>الجاري تجهيزه</th><th>تم شحنه</th><th>In Transit</th><th>المتبقي</th></tr></thead><tbody>
+      ${rows.map(r => {
+        const dispatched = r.quantity_dispatched != null ? Number(r.quantity_dispatched) : 0;
+        const remaining = Math.max(0, Number(r.quantity_requested) - dispatched);
+        return `<tr>
+          <td data-label="الصنف">${esc(r.itemName)}</td>
+          <td data-label="الفرع">${esc(r.branch_name)}</td>
+          <td data-label="التاريخ">${fmtDate(r.needed_date)}</td>
+          <td data-label="المطلوب">${fmtQty(r.quantity_requested)}</td>
+          <td data-label="الجاري تجهيزه">${r.quantity_to_prepare != null ? fmtQty(r.quantity_to_prepare) : "-"}</td>
+          <td data-label="تم شحنه">${r.quantity_dispatched != null ? fmtQty(r.quantity_dispatched) : "-"}</td>
+          <td data-label="In Transit">${fmtQty(r.in_transit_quantity)}</td>
+          <td data-label="المتبقي">${fmtQty(remaining)}</td>
+        </tr>`;
+      }).join("")}
+    </tbody></table>`;
+    if (d.pending.length > 0) {
+      html += `<h2>طلبات لسه في انتظار اعتماد السنتر كيتشن (استرشادي - مش داخل في حساب "المطلوب تصنيعه")</h2>
+      <table><thead><tr><th>الصنف</th><th>الفرع</th><th>التاريخ</th><th>المطلوب</th></tr></thead><tbody>
+        ${d.pending.map(r => `<tr>
+          <td data-label="الصنف">${esc(r.itemName)}</td>
+          <td data-label="الفرع">${esc(r.branch_name)}</td>
+          <td data-label="التاريخ">${fmtDate(r.needed_date)}</td>
+          <td data-label="المطلوب">${fmtQty(r.quantity_requested)}</td>
+        </tr>`).join("")}
+      </tbody></table>`;
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+// ==================== خطة التصنيع ====================
+let currentPlanRows = [];
+async function loadPlan() {
+  if (!ckBranchId) return;
+  const box = document.getElementById("planBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  document.getElementById("createResultBox").innerHTML = "";
+  try {
+    const d = await api(`/api/production-planning/plan?${windowQS()}`);
+    currentPlanRows = d.plan;
+    const needsAction = currentPlanRows.filter(r => r.requiredProduction > 0);
+    // نجيب احتياج الخام بس للصفوف اللي فعلًا محتاجة تصنيع وليها وصفة مباشرة - مش لكل الأصناف (تفادي N+1)
+    const rawByItem = new Map();
+    await Promise.all(needsAction.filter(r => r.recipeVersionId).map(async (r) => {
+      try {
+        const raw = await api(`/api/production-planning/raw-materials?ckBranchId=${ckBranchId}&inventoryItemId=${r.inventoryItemId}&quantity=${r.requiredProduction}&recipeVersionId=${r.recipeVersionId}`);
+        rawByItem.set(r.inventoryItemId, raw);
+      } catch (e) { /* لو فشل صنف واحد، الباقي يفضل شغال */ }
+    }));
+
+    if (currentPlanRows.length === 0) { box.innerHTML = `<div class="hint">مفيش أصناف مصنّعة مسجّلة.</div>`; return; }
+    box.innerHTML = `<table><thead><tr>
+        <th><input type="checkbox" id="selectAllChk" /></th>
+        <th>المنتج</th><th>المطلوب</th><th>المتاح</th><th>تحت التصنيع/التعبئة</th><th>المطلوب إنتاجه</th><th>حالة الخامات</th><th></th>
+      </tr></thead><tbody>
+      ${currentPlanRows.map(r => {
+        const raw = rawByItem.get(r.inventoryItemId);
+        const status = computeRowStatus(r, raw);
+        const selectable = r.requiredProduction > 0 && r.recipeVersionId;
+        return `<tr>
+          <td data-label=""><input type="checkbox" class="plan-row-chk" data-item="${r.inventoryItemId}" ${selectable ? "" : "disabled"} /></td>
+          <td data-label="المنتج">${esc(r.itemName)} ${r.plannedOrInProgress > 0 ? '<span class="badge IN_PROGRESS">تحت التنفيذ بالفعل</span>' : ''}</td>
+          <td data-label="المطلوب">${fmtQty(r.approvedDemand)} ${esc(r.unit)}</td>
+          <td data-label="المتاح">${fmtQty(r.availableStock)}</td>
+          <td data-label="تحت التصنيع/التعبئة">${fmtQty(r.plannedOrInProgress)}</td>
+          <td data-label="المطلوب إنتاجه">${fmtQty(r.requiredProduction)}</td>
+          <td data-label="حالة الخامات"><span class="badge ${status}">${statusLabel(status)}</span></td>
+          <td><button class="linkbtn" onclick="showRawDetails(${r.inventoryItemId})">تفاصيل</button></td>
+        </tr>
+        <tr id="rawdetails-${r.inventoryItemId}" style="display:none"><td colspan="8"><div class="expandbox">${renderRawDetails(r, raw)}</div></td></tr>`;
+      }).join("")}
+    </tbody></table>`;
+
+    document.getElementById("selectAllChk").onchange = (e) => {
+      document.querySelectorAll(".plan-row-chk:not(:disabled)").forEach(chk => { chk.checked = e.target.checked; });
+      updateSelectedCount();
+    };
+    document.querySelectorAll(".plan-row-chk").forEach(chk => { chk.onchange = updateSelectedCount; });
+    updateSelectedCount();
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+function statusLabel(s) {
+  return { READY: "جاهز", AVAILABLE: "الخامات متاحة", IN_PROGRESS: "تحت التنفيذ", PARTIAL: "نقص جزئي", SHORTAGE: "نقص خامات" }[s] || s;
+}
+function computeRowStatus(row, raw) {
+  if (row.requiredProduction <= 0) return "READY";
+  if (!raw || !raw.hasRecipe) return row.plannedOrInProgress > 0 ? "IN_PROGRESS" : "AVAILABLE";
+  const shortageIngredients = raw.raw.filter(r => r.shortage > 0);
+  if (shortageIngredients.length === 0) return "AVAILABLE";
+  if (raw.raw.every(r => r.available <= 0)) return "SHORTAGE";
+  return "PARTIAL";
+}
+function renderRawDetails(row, raw) {
+  if (!row.hasActiveRecipe) {
+    return `<div class="hint">الصنف ده بيجي من أمر تعبئة، مش وصفة تصنيع مباشرة - افتح شاشة التعبئة (satamoni-manufacturing.html) لإنشاء أمر تعبئة له.</div>
+      ${raw && raw.packagingSource ? `<div class="hint">استنادًا لآخر عملية تعبئة: من "${esc(raw.packagingSource.input_item_name)}" (تقديري للاسترشاد بس، مش وصفة معتمدة).</div>` : ""}`;
+  }
+  if (!raw) return `<div class="hint">جاري التحميل...</div>`;
+  if (raw.raw.length === 0) return `<div class="hint">مفيش تفاصيل خامات (الكمية المطلوبة صفر).</div>`;
+  return `<table><thead><tr><th>الخامة</th><th>مطلوب</th><th>متاح</th><th>نقص</th></tr></thead><tbody>
+    ${raw.raw.map(r => `<tr>
+      <td data-label="الخامة">${esc(r.itemName)}</td>
+      <td data-label="مطلوب">${fmtQty(r.required)} ${esc(r.unit)}</td>
+      <td data-label="متاح">${fmtQty(r.available)}</td>
+      <td data-label="نقص">${r.shortage > 0 ? `<span style="color:#F08A83">${fmtQty(r.shortage)}</span>` : "-"}</td>
+    </tr>`).join("")}
+  </tbody></table>${raw.incomplete ? '<div class="hint">⚠ بيانات تكلفة/وصفة جزئية لبعض المكونات.</div>' : ""}`;
+}
+function showRawDetails(itemId) {
+  const row = document.getElementById(`rawdetails-${itemId}`);
+  row.style.display = row.style.display === "none" ? "table-row" : "none";
+}
+function updateSelectedCount() {
+  const count = document.querySelectorAll(".plan-row-chk:checked").length;
+  document.getElementById("selectedCountLbl").textContent = count > 0 ? `${count} صنف محدد` : "";
+  document.getElementById("createSelectedBtn").disabled = count === 0;
+}
+
+// UI-Mission Part 1: قبل الإنشاء، بنعيد جلب الخطة فريش ونستخدم requiredProduction الجديد (مش القديم من
+// وقت ما الشاشة اتفتحت) - عشان نتجنب إنشاء أمر بكمية بايتة لو حاجة اتغيّرت (أمر تصنيع تاني اتعمل، طلبية
+// اتلغت...). الإنشاء الفعلي بيعدّي بالكامل على POST /api/production الموجود (مفيش state machine جديدة)
+document.getElementById("createSelectedBtn").onclick = async () => {
+  const btn = document.getElementById("createSelectedBtn");
+  btn.disabled = true;
+  const selectedIds = [...document.querySelectorAll(".plan-row-chk:checked")].map(chk => Number(chk.dataset.item));
+  const resultBox = document.getElementById("createResultBox");
+  resultBox.innerHTML = `<div class="hint">جاري إعادة التأكد من الخطة قبل الإنشاء...</div>`;
+  try {
+    const fresh = await api(`/api/production-planning/plan?${windowQS()}`);
+    const freshById = new Map(fresh.plan.map(r => [r.inventoryItemId, r]));
+    const results = [];
+    for (const itemId of selectedIds) {
+      const freshRow = freshById.get(itemId);
+      if (!freshRow || freshRow.requiredProduction <= 0) {
+        results.push({ itemId, ok: false, message: "الكمية المطلوبة بقت صفر (اتغطّت من مكان تاني) - اتلغى الإنشاء لهذا الصنف" });
+        continue;
+      }
+      try {
+        const created = await api("/api/production", {
+          method: "POST",
+          body: JSON.stringify({
+            branchId: ckBranchId, recipeId: freshRow.recipeId, plannedQuantity: freshRow.requiredProduction,
+            productionDate: currentWindow.fromDate,
+            notes: `تم الإنشاء من شاشة تخطيط التصنيع - نافذة ${currentWindow.fromDate} إلى ${currentWindow.toDate}`,
+          }),
+        });
+        results.push({ itemId, ok: true, orderId: created.id, quantity: freshRow.requiredProduction, itemName: freshRow.itemName });
+      } catch (e) {
+        results.push({ itemId, ok: false, message: apiErrorMessage(e) });
+      }
+    }
+    // نحدّث الجدول الأول (بيمسح createResultBox كجزء من التحديث العادي)، وبعدين نكتب رسالة النتيجة فوقه -
+    // لو الترتيب اتعكس، رسالة النجاح كانت بتتمسح فورًا لحظة ما loadPlan() تكمل (باج حقيقي اتلاقى بالاختبار)
+    await loadPlan();
+    document.getElementById("createResultBox").innerHTML = `<div class="formbox">
+      <h3>نتيجة الإنشاء</h3>
+      ${results.map(r => r.ok
+        ? `<div class="ok">✓ ${esc(r.itemName)}: اتعمل أمر تصنيع #${r.orderId} بكمية ${fmtQty(r.quantity)}</div>`
+        : `<div class="err">✕ صنف #${r.itemId}: ${esc(r.message)}</div>`
+      ).join("")}
+      <div class="row" style="margin-top:10px">
+        <button class="secondary" onclick="switchTab('dashboard')">تحديث اللوحة</button>
+      </div>
+    </div>`;
+  } catch (e) {
+    resultBox.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// ==================== MASTER MISSION - PART 12: تقارير التشغيل ====================
+// كل تقرير هنا بينادي endpoint موجود فعليًا في routes/reports.js (نفس المصادر بالظبط) - مفيش حساب في
+// الواجهة، مجرد عرض جدولي بسيط قابل للطباعة عن طريق window.SatamoniPrint الموجودة أصلًا
+document.getElementById("loadReportBtn").onclick = loadReport;
+async function loadReport() {
+  const kind = document.getElementById("reportPicker").value;
+  const box = document.getElementById("reportResultBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    let rows, columns, title;
+    if (kind === "daily-production") {
+      rows = await api(`/api/reports/daily-production?from=${currentWindow.fromDate}&to=${currentWindow.toDate}&branchId=${ckBranchId}`);
+      columns = [["productionDate", "التاريخ", fmtDate], ["planned", "مخطط", fmtQty], ["produced", "منتج فعلي", fmtQty], ["variance", "الفرق", fmtQty], ["ordersCount", "عدد الأوامر", (n) => n]];
+      title = "الإنتاج اليومي";
+    } else if (kind === "ck-stock-movement") {
+      rows = await api(`/api/reports/ck-stock-movement?branchId=${ckBranchId}&from=${currentWindow.fromDate}&to=${currentWindow.toDate}`);
+      columns = [["itemName", "الصنف", (v) => v], ["opening", "افتتاحي", fmtQty], ["received", "مستلم", fmtQty], ["produced", "منتج", fmtQty], ["transferredOut", "محوّل للفروع", fmtQty], ["waste", "هالك", fmtQty], ["closing", "ختامي", fmtQty]];
+      title = "حركة مخزون السنتر كيتشن";
+    } else if (kind === "branch-demand") {
+      rows = await api(`/api/reports/branch-demand?from=${currentWindow.fromDate}&to=${currentWindow.toDate}`);
+      columns = [["branchName", "الفرع", (v) => v], ["itemName", "الصنف", (v) => v], ["demandDate", "التاريخ", fmtDate], ["requested", "مطلوب", fmtQty], ["approved", "معتمد", fmtQty], ["fulfilled", "تم شحنه", fmtQty], ["shortage", "نقص", fmtQty]];
+      title = "طلب الفروع";
+    } else {
+      rows = await api(`/api/reports/transfer-fulfillment?from=${currentWindow.fromDate}&to=${currentWindow.toDate}`);
+      columns = [["branchName", "الفرع", (v) => v], ["itemName", "الصنف", (v) => v], ["requested", "مطلوب", fmtQty], ["prepared", "مجهّز", (v) => v != null ? fmtQty(v) : "-"], ["dispatched", "مُصدَّر", (v) => v != null ? fmtQty(v) : "-"], ["received", "مُستلَم", fmtQty], ["discrepancy", "فرق", fmtQty]];
+      title = "تحقيق التحويلات";
+    }
+    if (rows.length === 0) { box.innerHTML = `<div class="hint">مفيش بيانات للنافذة والتقرير المحددين.</div>`; return; }
+    box.innerHTML = `<h2>${esc(title)}</h2><table><thead><tr>${columns.map(c => `<th>${esc(c[1])}</th>`).join("")}</tr></thead><tbody>
+      ${rows.map(r => `<tr>${columns.map(c => `<td data-label="${esc(c[1])}">${esc(String(c[2](r[c[0]]) ?? "-"))}</td>`).join("")}</tr>`).join("")}
+    </tbody></table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+document.getElementById("printReportBtn").onclick = () => {
+  window.SatamoniPrint.printPanel(document.getElementById("panel-reports"), { title: "تقارير تشغيل التصنيع" });
+};
+</script>
+</body>
+</html>

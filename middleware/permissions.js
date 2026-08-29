@@ -8,6 +8,10 @@ const ROLE_PERMISSIONS = {
     "inventory.view", "inventory.adjust", "inventory.count",
     "recipes.view", "recipes.create", "recipes.edit", "recipes.submit",
     "production.view", "production.create", "production.complete", "production.cancel",
+    // MASTER MISSION - تخطيط تصنيع السنتر كيتشن: نفس مين بيقدر ينشئ أمر تصنيع فعليًا (production.create)
+    // هو نفسه اللي منطقي يشوف/يستخدم شاشة التخطيط - مفيش صلاحية جديدة منفصلة عن production.* فعليًا،
+    // بس بنسميها بوضوح هنا عشان تبان صراحة في التدقيق (Part 14) بدل ما تتخبى تحت اسم production.* عام
+    "production_planning.view", "production_planning.create",
     "food_cost.view",
     "expenses.view", "purchases.view",
     // المرحلة 7K: مدير الفرع/المحاسب هما اللي بيراجعوا مصروفات/مشتريات الكاشير النقدية قبل ما تتحسب
@@ -41,7 +45,7 @@ const ROLE_PERMISSIONS = {
   ],
   accountant: [
     "inventory.view", "recipes.view",
-    "production.view",
+    "production.view", "production_planning.view",
     "food_cost.view", "food_cost.export",
     "expenses.view", "purchases.view",
     // المرحلة 7K: نفس صلاحية مراجعة مصروفات/مشتريات الكاشير النقدية اللي عند مدير الفرع

@@ -210,16 +210,30 @@ router.get(
       const transferIds = transfers.rows.map((t) => t.id);
       const items = transferIds.length
         ? (await pool.query(
-            `SELECT kti.kitchen_transfer_id, kti.inventory_item_id, kti.quantity, ii.name, ii.unit
+            `SELECT kti.id, kti.kitchen_transfer_id, kti.inventory_item_id, kti.quantity, kti.quantity_sent, kti.quantity_received, ii.name, ii.unit
              FROM kitchen_transfer_items kti
              JOIN inventory_items ii ON ii.id = kti.inventory_item_id
              WHERE kti.kitchen_transfer_id = ANY($1)`,
             [transferIds]
           )).rows
         : [];
+      // MASTER MISSION - PART 5/10: أرقام الدفعات لكل بند تحويل - كانت غير متاحة خالص لموظف السنتر كيتشن
+      // من غير ما يفتح تفاصيل كل دفعة لوحدها؛ الأصل موجود بالفعل في kitchen_transfer_item_batches
+      // (اتسجل وقت /issue) - جوين إضافي بس، مفيش أي حساب جديد أو تعديل على منطق التحويل نفسه
+      const itemIds = items.map((it) => it.id);
+      const batches = itemIds.length
+        ? (await pool.query(
+            `SELECT kitchen_transfer_item_id, batch_number, quantity, expiry_date, production_date
+             FROM kitchen_transfer_item_batches WHERE kitchen_transfer_item_id = ANY($1)`,
+            [itemIds]
+          )).rows
+        : [];
       const result = transfers.rows.map((t) => ({
         ...t,
-        items: items.filter((it) => it.kitchen_transfer_id === t.id),
+        items: items.filter((it) => it.kitchen_transfer_id === t.id).map((it) => ({
+          ...it,
+          batches: batches.filter((b) => b.kitchen_transfer_item_id === it.id),
+        })),
       }));
       res.json(result);
     } catch (err) {

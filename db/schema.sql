@@ -896,6 +896,10 @@ CREATE TABLE kitchen_orders (
   created_by    INTEGER REFERENCES users(id),
   created_at    TIMESTAMPTZ DEFAULT now()
 );
+-- MASTER MISSION - PART 26: جدول بيكبر يوميًا وبيتفلتر عليه بالمساواة على branch_id/status في كذا
+-- endpoint (list/picking/production-planning) - راجع db/migrations/0017_kitchen_orders_indexes.js
+CREATE INDEX idx_kitchen_orders_branch ON kitchen_orders(branch_id);
+CREATE INDEX idx_kitchen_orders_status ON kitchen_orders(status);
 
 CREATE TABLE kitchen_order_items (
   id                  SERIAL PRIMARY KEY,

@@ -138,6 +138,13 @@ router.post("/", requireAuth, requirePermission("purchasing.create"), async (req
         const existing = await client.query("SELECT * FROM supplier_invoices WHERE idempotency_key = $1", [idempotencyKey]);
         return res.status(200).json({ ...existing.rows[0], duplicate: true });
       }
+      // سباق حقيقي بين طلبين متزامنين لنفس رقم فاتورة نفس المورد - الفحص المسبق فوق (dup check) مش
+      // ذري لوحده (check-then-act)، لكن الـUNIQUE(supplier_id, supplier_invoice_number) في السكيمة بتمنع
+      // فعليًا أي سطرين مكررين ماديًا - هنا بس بنحوّل الاستثناء الخام لنفس رسالة/كود الفحص المسبق العادي
+      if (err.code === "23505" && err.constraint === "supplier_invoices_supplier_id_supplier_invoice_number_key") {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "رقم الفاتورة ده مسجّل بالفعل لنفس المورد", code: "DUPLICATE_INVOICE_NUMBER" });
+      }
       throw err;
     }
 

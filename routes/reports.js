@@ -5,6 +5,7 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { computeConsumptionBreakdown, aggregateBreakdown } = require("../db/food-cost-engine");
 const { convertQuantity } = require("../db/unit-conversion");
+const { computeProductionPlan, computeRawMaterialRequirement } = require("../db/production-planning");
 const {
   computeFingerprintPayroll,
   computeManualPayroll,
@@ -2942,6 +2943,221 @@ router.get("/supplier-invoice-variance", requireAuth, canSeeReports, requirePerm
         ...r, total_invoiced: Number(r.total_invoiced), total_variance: Number(r.total_variance),
       })),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// MASTER MISSION - PART 12: تقارير تخطيط التصنيع والعمليات - كل تقرير هنا بيعيد استخدام نفس المصادر
+// الموجودة فعليًا (production_orders/kitchen_orders/inventory_movements/db/production-planning.js) -
+// مفيش حساب أعمال جديد أو مصدر بيانات موازي لأي رقم موجود بالفعل
+// ============================================================
+
+// GET /api/reports/daily-production?from=&to=&branchId= - مخطط/منتج فعلي/فرق لكل يوم إنتاج - من
+// production_orders المكتملة مباشرة (نفس الحقول المستخدمة في تقرير production-variance الموجود، مجمّعة
+// يوميًا هنا بدل عرض كل أمر لوحده)
+router.get("/daily-production", requireAuth, canSeeReports, requirePermission("production_planning.view", "production.view"), async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `SELECT po.production_date,
+              COALESCE(SUM(po.planned_quantity), 0) AS planned,
+              COALESCE(SUM(po.actual_quantity), 0) AS produced,
+              COALESCE(SUM(po.actual_quantity - po.planned_quantity), 0) AS variance,
+              COUNT(*)::int AS orders_count
+       FROM production_orders po
+       WHERE po.status = 'COMPLETED' AND po.production_date BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR po.branch_id = $3)
+       GROUP BY po.production_date ORDER BY po.production_date`,
+      [range.from, range.to, branchId]
+    );
+    res.json(result.rows.map((r) => ({
+      productionDate: r.production_date, planned: Number(r.planned), produced: Number(r.produced),
+      variance: Number(r.variance), ordersCount: r.orders_count,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/production-requirement?ckBranchId=&fromDate=&toDate= - نفس شكل خطة التصنيع
+// (db/production-planning.js) لكن كتقرير قابل للطباعة/التصدير من مركز التقارير - مفيش حساب مستقل
+router.get("/production-requirement", requireAuth, canSeeReports, requirePermission("production_planning.view", "production.view"), async (req, res) => {
+  const ckBranchId = Number(req.query.ckBranchId);
+  const fromDate = req.query.fromDate, toDate = req.query.toDate || fromDate;
+  if (!ckBranchId || !fromDate) return res.status(400).json({ error: "لازم تحدد ckBranchId و fromDate", code: "INVALID_PARAMETER" });
+  if (req.user.role === "branch_manager" && req.user.branchId !== ckBranchId) {
+    return res.status(403).json({ error: "معندكش صلاحية تشوف خطة فرع تاني", code: "FORBIDDEN_BRANCH" });
+  }
+  try {
+    const plan = await computeProductionPlan(pool, { ckBranchId, fromDate, toDate });
+    res.json({ ckBranchId, fromDate, toDate, plan });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/raw-material-requirement?ckBranchId=&fromDate=&toDate= - احتياج الخام المجمّع لكل
+// الأصناف المطلوب تصنيعها في النافذة - بيستخدم محرك الوصفات عن طريق computeRawMaterialRequirement
+// الموجودة فعليًا، مفيش تفجير وصفة مستقل هنا
+router.get("/raw-material-requirement", requireAuth, canSeeReports, requirePermission("production_planning.view", "production.view"), async (req, res) => {
+  const ckBranchId = Number(req.query.ckBranchId);
+  const fromDate = req.query.fromDate, toDate = req.query.toDate || fromDate;
+  if (!ckBranchId || !fromDate) return res.status(400).json({ error: "لازم تحدد ckBranchId و fromDate", code: "INVALID_PARAMETER" });
+  if (req.user.role === "branch_manager" && req.user.branchId !== ckBranchId) {
+    return res.status(403).json({ error: "معندكش صلاحية تشوف خطة فرع تاني", code: "FORBIDDEN_BRANCH" });
+  }
+  try {
+    const plan = await computeProductionPlan(pool, { ckBranchId, fromDate, toDate });
+    const needRaw = plan.filter((p) => p.requiredProduction > 0 && p.recipeVersionId);
+    const perItemRaw = await Promise.all(needRaw.map((p) =>
+      computeRawMaterialRequirement(pool, { ckBranchId, inventoryItemId: p.inventoryItemId, quantity: p.requiredProduction, recipeVersionId: p.recipeVersionId })
+        .then((r) => ({ producedItem: p.itemName, ...r }))
+    ));
+    // تجميع كل الخامات المطلوبة (لو نفس الخامة داخلة في أكتر من منتج، بتتجمع في صف واحد - مفيد
+    // لأمر شراء واحد يغطي أكتر من أمر تصنيع)
+    const totalsByRawItem = new Map();
+    for (const entry of perItemRaw) {
+      for (const r of entry.raw) {
+        const existing = totalsByRawItem.get(r.inventoryItemId) || { inventoryItemId: r.inventoryItemId, itemName: r.itemName, unit: r.unit, required: 0, available: r.available, shortage: 0 };
+        existing.required += r.required;
+        existing.shortage = Math.max(0, existing.required - existing.available);
+        totalsByRawItem.set(r.inventoryItemId, existing);
+      }
+    }
+    res.json({
+      ckBranchId, fromDate, toDate,
+      byProduct: perItemRaw,
+      totals: [...totalsByRawItem.values()].sort((a, b) => b.shortage - a.shortage),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/ck-stock-movement?branchId=&from=&to= - افتتاحي/مستلم/منتج/محوّل/هالك/ختامي لكل صنف -
+// كله من inventory_movements مباشرة (quantity_before/quantity_after أول وآخر حركة في المدى = افتتاحي/
+// ختامي حقيقيين من الليدجر نفسه، مش رقم مُقدَّر) - مفيش مصدر بيانات موازٍ
+router.get("/ck-stock-movement", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  if (!branchId) return res.status(400).json({ error: "لازم تحدد branchId" });
+  try {
+    const result = await pool.query(
+      `SELECT im.inventory_item_id, ii.name AS item_name, ii.unit,
+              (ARRAY_AGG(im.quantity_before ORDER BY im.created_at ASC, im.id ASC))[1] AS opening,
+              (ARRAY_AGG(im.quantity_after ORDER BY im.created_at DESC, im.id DESC))[1] AS closing,
+              COALESCE(SUM(im.quantity) FILTER (WHERE im.movement_type IN ('PURCHASE_RECEIPT', 'TRANSFER_IN')), 0) AS received,
+              COALESCE(SUM(im.quantity) FILTER (WHERE im.movement_type = 'PRODUCTION_IN'), 0) AS produced,
+              COALESCE(-SUM(im.quantity) FILTER (WHERE im.movement_type IN ('TRANSFER_OUT', 'PRODUCTION_OUT')), 0) AS consumed_or_transferred_out,
+              COALESCE(-SUM(im.quantity) FILTER (WHERE im.movement_type IN ('WASTE', 'EXPIRY')), 0) AS waste,
+              COALESCE(SUM(im.quantity) FILTER (WHERE im.movement_type NOT IN ('PURCHASE_RECEIPT', 'TRANSFER_IN', 'PRODUCTION_IN', 'TRANSFER_OUT', 'PRODUCTION_OUT', 'WASTE', 'EXPIRY')), 0) AS other_adjustment
+       FROM inventory_movements im JOIN inventory_items ii ON ii.id = im.inventory_item_id
+       WHERE im.branch_id = $1 AND im.business_date BETWEEN $2 AND $3
+       GROUP BY im.inventory_item_id, ii.name, ii.unit ORDER BY ii.name`,
+      [branchId, range.from, range.to]
+    );
+    res.json(result.rows.map((r) => ({
+      inventoryItemId: r.inventory_item_id, itemName: r.item_name, unit: r.unit,
+      opening: Number(r.opening), closing: Number(r.closing), received: Number(r.received),
+      produced: Number(r.produced), transferredOut: Number(r.consumed_or_transferred_out),
+      waste: Number(r.waste), otherAdjustment: Number(r.other_adjustment),
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/branch-demand?from=&to=&branchId= - طلب كل فرع يوم بيوم - من kitchen_orders/
+// kitchen_order_items مباشرة (نفس مصدر UI-1 بالظبط)، الشورتدج = المطلوب - المُرسَل فعليًا (quantity_dispatched)
+router.get("/branch-demand", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  // مدير فرع عادي (مش سنتر كيتشن) بيشوف طلب فرعه هو بس (نفس منطق isCentralKitchenActor في
+  // routes/kitchen-orders.js) - مدير السنتر كيتشن بطبيعة دوره لازم يشوف طلب كل الفروع المتجهة له
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager" && !req.user.isCentralKitchen) branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `SELECT ko.branch_id, b.name AS branch_name, COALESCE(ko.required_date, ko.business_date) AS demand_date,
+              koi.inventory_item_id, ii.name AS item_name, ii.unit, ko.status,
+              koi.quantity_requested, koi.quantity_to_prepare, koi.quantity_dispatched
+       FROM kitchen_order_items koi
+       JOIN kitchen_orders ko ON ko.id = koi.kitchen_order_id
+       JOIN branches b ON b.id = ko.branch_id
+       JOIN inventory_items ii ON ii.id = koi.inventory_item_id
+       WHERE COALESCE(ko.required_date, ko.business_date) BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR ko.branch_id = $3)
+       ORDER BY demand_date DESC, b.name, ii.name`,
+      [range.from, range.to, branchId]
+    );
+    res.json(result.rows.map((r) => {
+      const dispatched = r.quantity_dispatched != null ? Number(r.quantity_dispatched) : 0;
+      return {
+        branchId: r.branch_id, branchName: r.branch_name, demandDate: r.demand_date,
+        inventoryItemId: r.inventory_item_id, itemName: r.item_name, unit: r.unit, status: r.status,
+        requested: Number(r.quantity_requested),
+        approved: ["APPROVED", "PREPARING", "READY", "DISPATCHED", "IN_TRANSIT", "RECEIVED"].includes(r.status) ? Number(r.quantity_requested) : 0,
+        fulfilled: dispatched,
+        shortage: Math.max(0, Number(r.quantity_requested) - dispatched),
+      };
+    }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/transfer-fulfillment?from=&to=&branchId= - المطلوب→المجهّز→المُصدَّر→المُستلَم→الفرق -
+// من kitchen_orders (الطلب/التجهيز) + kitchen_transfers/kitchen_transfer_items (الإصدار/الاستلام الفعلي) +
+// transfer_discrepancies (أي فرق اتسجل بعدين) - كلهم جداول موجودة، مفيش تجميع مواز
+router.get("/transfer-fulfillment", requireAuth, canSeeReports, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  // نفس منطق branch-demand فوق بالظبط - مدير السنتر كيتشن لازم يشوف تحقيق كل الفروع، مش فرعه بس
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager" && !req.user.isCentralKitchen) branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `SELECT ko.id AS kitchen_order_id, ko.branch_id, b.name AS branch_name,
+              COALESCE(ko.required_date, ko.business_date) AS demand_date, ko.status,
+              koi.inventory_item_id, ii.name AS item_name, ii.unit,
+              koi.quantity_requested, koi.quantity_to_prepare, koi.quantity_dispatched,
+              COALESCE(recv.received_quantity, 0) AS received_quantity,
+              COALESCE(disc.discrepancy_quantity, 0) AS discrepancy_quantity
+       FROM kitchen_order_items koi
+       JOIN kitchen_orders ko ON ko.id = koi.kitchen_order_id
+       JOIN branches b ON b.id = ko.branch_id
+       JOIN inventory_items ii ON ii.id = koi.inventory_item_id
+       LEFT JOIN LATERAL (
+         SELECT SUM(kti.quantity_received) AS received_quantity
+         FROM kitchen_transfer_items kti JOIN kitchen_transfers kt ON kt.id = kti.kitchen_transfer_id
+         WHERE kt.kitchen_order_id = ko.id AND kti.inventory_item_id = koi.inventory_item_id
+       ) recv ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT SUM(td.quantity) AS discrepancy_quantity
+         FROM transfer_discrepancies td JOIN kitchen_transfers kt ON kt.id = td.kitchen_transfer_id
+         WHERE kt.kitchen_order_id = ko.id AND td.inventory_item_id = koi.inventory_item_id AND td.status <> 'REJECTED'
+       ) disc ON TRUE
+       WHERE COALESCE(ko.required_date, ko.business_date) BETWEEN $1 AND $2
+         AND ($3::int IS NULL OR ko.branch_id = $3)
+       ORDER BY demand_date DESC, b.name, ii.name`,
+      [range.from, range.to, branchId]
+    );
+    res.json(result.rows.map((r) => ({
+      kitchenOrderId: r.kitchen_order_id, branchId: r.branch_id, branchName: r.branch_name,
+      demandDate: r.demand_date, status: r.status, inventoryItemId: r.inventory_item_id, itemName: r.item_name, unit: r.unit,
+      requested: Number(r.quantity_requested),
+      prepared: r.quantity_to_prepare != null ? Number(r.quantity_to_prepare) : null,
+      dispatched: r.quantity_dispatched != null ? Number(r.quantity_dispatched) : null,
+      received: Number(r.received_quantity),
+      discrepancy: Number(r.discrepancy_quantity),
+    })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

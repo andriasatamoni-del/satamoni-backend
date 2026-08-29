@@ -1000,6 +1000,7 @@ function renderProductionDetails(order) {
       <div class="lbl">الدفعة الناتجة</div>
       <div class="num">${esc(outputBatch.batch_number || "-")}</div>
       <button class="linkbtn" onclick="switchToTab('batches'); openBatchTrace(${outputBatch.batch_id})">فتح تتبّع الدفعة دي</button>
+      <button class="linkbtn" onclick="printProductionBatchLabel()">🏷️ طباعة ملصق الدفعة</button>
     </div>`;
   } else if (order.batch_number) {
     batchHero = `<div class="batchnum-hero"><div class="lbl">رقم الدفعة المحدد لهذا الأمر</div><div class="num">${esc(order.batch_number)}</div></div>`;
@@ -1316,6 +1317,7 @@ function renderPackagingDetails(order) {
       <div class="num">${esc(outputBatch.batch_number || "-")}</div>
       <div class="hint">من الدفعة السائبة: ${inputs[0]?.batch_number ? esc(inputs[0].batch_number) : "بدون دفعة محددة"}</div>
       <button class="linkbtn" onclick="switchToTab('batches'); openBatchTrace(${outputBatch.batch_id})">فتح تتبّع الدفعة دي</button>
+      <button class="linkbtn" onclick="printPackagingBatchLabel()">🏷️ طباعة ملصق الدفعة</button>
     </div>`;
   } else if (order.batch_number) {
     batchHero = `<div class="batchnum-hero"><div class="lbl">رقم الدفعة المحدد لهذا الأمر</div><div class="num">${esc(order.batch_number)}</div></div>`;
@@ -1377,6 +1379,47 @@ function renderPackagingDetails(order) {
     <div id="packActionErr" class="err"></div>
   `;
 }
+
+// MASTER MISSION - PART 11: ملصق دفعة (Batch Label) - نفس معمارية الطباعة الموجودة بالظبط
+// (window.SatamoniPrint.openCustomPrint، اللي بيفتح نافذة طباعة المتصفح العادية) - مفيش محرك طباعة جديد
+// ولا اتكاملنا مع طابور الطباعة الحرارية (db/print-templates.js/db/print-queue.js) لأنه معندوش قالب
+// ملصقات دفعات خالص حاليًا - fallback طباعة المتصفح موثّق هنا صراحة كفجوة حقيقية (مش حل نهائي)
+function buildBatchLabelHtml({ title, product, batchNumber, quantity, unit, productionDate, expiryDate, operator, portionSize }) {
+  return `<div style="font-family:'Segoe UI',Tahoma,Arial,sans-serif;direction:rtl;text-align:center;padding:14px;border:2px dashed #333;max-width:320px;margin:0 auto">
+    <div style="font-size:12px;color:#666">${esc(title)}</div>
+    <div style="font-size:18px;font-weight:800;margin:6px 0">${esc(product || "-")}</div>
+    ${portionSize ? `<div style="font-size:12px;color:#444">حجم العبوة: ${esc(portionSize)}</div>` : ""}
+    <div style="font-size:22px;font-weight:800;letter-spacing:1px;margin:10px 0;padding:8px;border:1px solid #999">${esc(batchNumber || "-")}</div>
+    <table style="width:100%;font-size:12px;text-align:right;border-collapse:collapse">
+      <tr><td style="padding:3px 0;color:#666">الكمية</td><td style="font-weight:700">${fmtQty(quantity)} ${esc(unit || "")}</td></tr>
+      <tr><td style="padding:3px 0;color:#666">تاريخ الإنتاج</td><td style="font-weight:700">${fmtDate(productionDate)}</td></tr>
+      <tr><td style="padding:3px 0;color:#666">تاريخ الصلاحية</td><td style="font-weight:700">${expiryDate ? fmtDate(expiryDate) : "-"}</td></tr>
+      <tr><td style="padding:3px 0;color:#666">المسؤول</td><td style="font-weight:700">${esc(operator || "-")}</td></tr>
+    </table>
+  </div>`;
+}
+function printProductionBatchLabel() {
+  const order = currentProdOrder;
+  const outputBatch = (order?.batches || []).find(b => b.role === "output");
+  if (!outputBatch) return;
+  window.SatamoniPrint.openCustomPrint("ملصق دفعة تصنيع", buildBatchLabelHtml({
+    title: "دفعة تصنيع - ساتاموني", product: order.product_name, batchNumber: outputBatch.batch_number,
+    quantity: order.actual_quantity, unit: order.yield_unit, productionDate: order.production_date,
+    expiryDate: order.expiry_date, operator: order.completed_by_name || order.operator_name,
+  }));
+}
+function printPackagingBatchLabel() {
+  const order = currentPackOrder;
+  const outputBatch = (order?.batches || []).find(b => b.role === "output");
+  if (!outputBatch) return;
+  window.SatamoniPrint.openCustomPrint("ملصق دفعة تعبئة", buildBatchLabelHtml({
+    title: "دفعة تعبئة - ساتاموني", product: order.output_item_name, batchNumber: outputBatch.batch_number,
+    quantity: order.actual_output_quantity, unit: itemUnitSafe(order.output_item_id), productionDate: order.packaging_date,
+    expiryDate: order.expiry_date, operator: order.completed_by_name,
+  }));
+}
+function itemUnitSafe(itemId) { const it = inventoryItems.find(i => i.id === Number(itemId)); return it ? it.unit : ""; }
+
 async function packOrderAction(id, action) {
   try {
     await api(`/api/packaging/${id}/${action}`, { method: "POST", body: JSON.stringify({}) });
