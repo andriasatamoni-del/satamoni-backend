@@ -234,15 +234,18 @@ router.delete("/variants/:id", requireAuth, requireRole("admin"), async (req, re
 // ---------------- مرفقات الصنف (إضافة موتزريلا / بدون طماطم ...) ----------------
 
 // GET /api/menu/items/:id/modifiers - كل مرفقات الصنف (نشطة وغير نشطة، لشاشة الإدارة)
-// كل مرفق بييجي بـ variantPrices: أسعار مخصوصة لأحجام معيّنة (لو موجودة) غير السعر الافتراضي
+// كل مرفق بييجي بـ variantPrices: أسعار مخصوصة لأحجام معيّنة (لو موجودة) غير السعر الافتراضي، وبـ
+// excludedIngredientName لو المرفق ده من نوع "بدون" مربوط بمكوّن من وصفة الصنف (المرحلة 8.9)
 router.get("/items/:id/modifiers", requireAuth, requireRole("admin"), async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT m.*, COALESCE(
+      `SELECT m.*, ii.name AS excluded_ingredient_name, COALESCE(
          (SELECT jsonb_object_agg(vp.variant_id, vp.price_delta) FROM menu_item_modifier_variant_prices vp WHERE vp.modifier_id = m.id),
          '{}'::jsonb
        ) AS variant_prices
-       FROM menu_item_modifiers m WHERE m.item_id = $1 ORDER BY m.id`,
+       FROM menu_item_modifiers m
+       LEFT JOIN inventory_items ii ON ii.id = m.excluded_ingredient_item_id
+       WHERE m.item_id = $1 ORDER BY m.id`,
       [req.params.id]
     );
     res.json(result.rows);
@@ -251,36 +254,81 @@ router.get("/items/:id/modifiers", requireAuth, requireRole("admin"), async (req
   }
 });
 
-// POST /api/menu/items/:id/modifiers - إضافة مرفق جديد للصنف
-router.post("/items/:id/modifiers", requireAuth, requireRole("admin"), async (req, res) => {
-  const { name, priceDelta = 0 } = req.body;
-  if (!name) return res.status(400).json({ error: "لازم اسم المرفق" });
+// GET /api/menu/items/:id/ingredients - مكوّنات وصفة الصنف (كل أحجامه مجمّعة، بدون تكرار) - عشان شاشة
+// إدارة المرفقات تقدر تعرض قايمة "استبعاد مكوّن" وقت إنشاء مرفق من نوع "بدون" (المرحلة 8.9)
+router.get("/items/:id/ingredients", requireAuth, requireRole("admin"), async (req, res) => {
   try {
     const result = await pool.query(
-      "INSERT INTO menu_item_modifiers (item_id, name, price_delta) VALUES ($1, $2, $3) RETURNING *",
-      [req.params.id, name, priceDelta]
+      `SELECT DISTINCT ii.id, ii.name, ii.unit
+       FROM menu_item_variant_ingredients mvi
+       JOIN menu_item_variants v ON v.id = mvi.variant_id
+       JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+       WHERE v.item_id = $1
+       ORDER BY ii.name`,
+      [req.params.id]
     );
-    res.status(201).json(result.rows[0]);
+    res.json(result.rows);
   } catch (err) {
-    if (err.code === "23505") return res.status(409).json({ error: "المرفق ده موجود بالفعل للصنف ده" });
     res.status(500).json({ error: err.message });
   }
 });
 
-// PATCH /api/menu/modifiers/:id - تعديل اسم/سعر/تفعيل مرفق
+// المرفق من نوع "بدون" لازم يستبعد مكوّن فعلي من وصفة نفس الصنف - مش أي صنف مخزون عشوائي (غلطة إدارية
+// أو محاولة تلاعب هتبوّظ حساب الاستهلاك/التكلفة بصمت). NULL (بدون استبعاد) دايمًا مسموح.
+async function assertIngredientBelongsToItem(itemId, excludedIngredientItemId) {
+  if (excludedIngredientItemId == null) return;
+  const check = await pool.query(
+    `SELECT 1 FROM menu_item_variant_ingredients mvi
+     JOIN menu_item_variants v ON v.id = mvi.variant_id
+     WHERE v.item_id = $1 AND mvi.inventory_item_id = $2 LIMIT 1`,
+    [itemId, excludedIngredientItemId]
+  );
+  if (check.rows.length === 0) {
+    throw Object.assign(new Error("المكوّن ده مش جزء من وصفة الصنف ده"), { code: "INVALID_PARAMETER" });
+  }
+}
+
+// POST /api/menu/items/:id/modifiers - إضافة مرفق جديد للصنف - excludedIngredientItemId اختياري
+// (المرحلة 8.9): لو محدد، لازم يكون مكوّن فعلي من وصفة الصنف ده
+router.post("/items/:id/modifiers", requireAuth, requireRole("admin"), async (req, res) => {
+  const { name, priceDelta = 0, excludedIngredientItemId = null } = req.body;
+  if (!name) return res.status(400).json({ error: "لازم اسم المرفق" });
+  try {
+    await assertIngredientBelongsToItem(req.params.id, excludedIngredientItemId);
+    const result = await pool.query(
+      `INSERT INTO menu_item_modifiers (item_id, name, price_delta, excluded_ingredient_item_id)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [req.params.id, name, priceDelta, excludedIngredientItemId]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ error: "المرفق ده موجود بالفعل للصنف ده" });
+    if (err.code === "INVALID_PARAMETER") return res.status(400).json({ error: err.message, code: err.code });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/menu/modifiers/:id - تعديل اسم/سعر/تفعيل مرفق - وكمان excludedIngredientItemId (المرحلة
+// 8.9): null صراحة بيشيل ربط الاستبعاد (يرجّعه مرفق عادي)، undefined (مش متبعوت) يسيبه زي ما هو
 router.patch("/modifiers/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { name, priceDelta, isActive } = req.body;
+  const { name, priceDelta, isActive, excludedIngredientItemId } = req.body;
   const fields = [];
   const values = [];
   let i = 1;
   if (name !== undefined) { fields.push(`name = $${i++}`); values.push(name); }
   if (priceDelta !== undefined) { fields.push(`price_delta = $${i++}`); values.push(priceDelta); }
   if (isActive !== undefined) { fields.push(`is_active = $${i++}`); values.push(isActive); }
+  if (excludedIngredientItemId !== undefined) { fields.push(`excluded_ingredient_item_id = $${i++}`); values.push(excludedIngredientItemId); }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
 
   values.push(id);
   try {
+    if (excludedIngredientItemId !== undefined) {
+      const existing = await pool.query("SELECT item_id FROM menu_item_modifiers WHERE id = $1", [id]);
+      if (existing.rows.length === 0) return res.status(404).json({ error: "المرفق مش موجود" });
+      await assertIngredientBelongsToItem(existing.rows[0].item_id, excludedIngredientItemId);
+    }
     const before = await pool.query("SELECT price_delta FROM menu_item_modifiers WHERE id = $1", [id]);
     const result = await pool.query(
       `UPDATE menu_item_modifiers SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`,
@@ -295,6 +343,7 @@ router.patch("/modifiers/:id", requireAuth, requireRole("admin"), async (req, re
     }
     res.json(result.rows[0]);
   } catch (err) {
+    if (err.code === "INVALID_PARAMETER") return res.status(400).json({ error: err.message, code: err.code });
     res.status(500).json({ error: err.message });
   }
 });

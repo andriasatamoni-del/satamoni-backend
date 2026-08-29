@@ -388,13 +388,17 @@ async function loadItems() {
         <div class="addvariant">
           <input class="lbl" placeholder="اسم المرفق" data-modname="${it.id}" />
           <input class="price" type="number" placeholder="سعر إضافي (0 لو مجاني)" data-modprice="${it.id}" value="0" />
+          <select data-modexclude="${it.id}" style="min-width:150px">
+            <option value="">بدون استبعاد مكوّن</option>
+          </select>
           <button data-addmodifier="${it.id}">+ مرفق</button>
         </div>
+        <div style="font-size:10px;color:var(--faint);margin-top:2px">لو مرفق "بدون" (زي بدون طماطم)، اختار المكوّن من وصفة الصنف عشان يتشال من حساب الاستهلاك/التكلفة وقت اختياره في الطلب - سيبه فاضي لمرفق إضافة عادي</div>
       </div>
     </div>
   `).join("") : `<div style="color:var(--faint);font-size:13px">لسه مفيش أصناف — ضيف قسم وصنف الأول</div>`;
 
-  items.forEach(it => loadModifiers(it.id, it.variants));
+  items.forEach(it => { loadModifiers(it.id, it.variants); loadIngredientOptions(it.id); });
 
   document.querySelectorAll("[data-toggle]").forEach(btn => {
     btn.onclick = async () => {
@@ -451,12 +455,15 @@ async function loadItems() {
       const itemId = btn.dataset.addmodifier;
       const name = document.querySelector(`[data-modname="${itemId}"]`).value.trim();
       const priceDelta = Number(document.querySelector(`[data-modprice="${itemId}"]`).value || 0);
+      const excludeSel = document.querySelector(`[data-modexclude="${itemId}"]`);
+      const excludedIngredientItemId = excludeSel && excludeSel.value ? Number(excludeSel.value) : null;
       if (!name) return alert("لازم اسم المرفق");
       try {
-        await api(`/api/menu/items/${itemId}/modifiers`, { method: "POST", body: JSON.stringify({ name, priceDelta }) });
+        await api(`/api/menu/items/${itemId}/modifiers`, { method: "POST", body: JSON.stringify({ name, priceDelta, excludedIngredientItemId }) });
         await loadModifiers(itemId);
         document.querySelector(`[data-modname="${itemId}"]`).value = "";
         document.querySelector(`[data-modprice="${itemId}"]`).value = "0";
+        if (excludeSel) excludeSel.value = "";
       } catch (e) { alert(e.message); }
     };
   });
@@ -486,17 +493,30 @@ document.getElementById("bulkActivateBtn").onclick = () => bulkSetActive(true);
 document.getElementById("bulkDeactivateBtn").onclick = () => bulkSetActive(false);
 
 // ---------------- مرفقات الصنف ----------------
+// مكوّنات وصفة الصنف (كل أحجامه) - لقائمة "استبعاد مكوّن" وقت إنشاء مرفق من نوع "بدون" (المرحلة 8.9)
+async function loadIngredientOptions(itemId) {
+  const sel = document.querySelector(`[data-modexclude="${itemId}"]`);
+  if (!sel) return;
+  try {
+    const ingredients = await api(`/api/menu/items/${itemId}/ingredients`);
+    sel.innerHTML = `<option value="">بدون استبعاد مكوّن</option>` +
+      ingredients.map(i => `<option value="${i.id}">استبعاد: ${i.name}</option>`).join("");
+  } catch (e) { /* الصنف ممكن يكون لسه من غير وصفة مسجّلة - القائمة تفضل بس "بدون استبعاد" */ }
+}
+
 // كل مرفق ليه سعر افتراضي، وممكن كمان سعر مخصوص لأي حجم من أحجام الصنف (★ يعني السعر ده مخصوص مش افتراضي)
+// ولو من نوع "بدون" مربوط بمكوّن (excluded_ingredient_name)، بيظهر بعلامة 🚫 (المرحلة 8.9)
 async function loadModifiers(itemId, variants = []) {
   const wrap = document.querySelector(`[data-modifierslist="${itemId}"]`);
   if (!wrap) return;
   const mods = await api(`/api/menu/items/${itemId}/modifiers`);
   wrap.innerHTML = mods.length ? mods.map(m => `
     <div class="variant-row">
-      <span class="lbl">${m.name}${m.is_active ? "" : " (معطّل)"}</span>
+      <span class="lbl">${m.name}${m.is_active ? "" : " (معطّل)"}${m.excluded_ingredient_name ? ` 🚫 (بيستبعد: ${m.excluded_ingredient_name})` : ""}</span>
       <span>${Number(m.price_delta) > 0 ? "+" + money(m.price_delta) : "مجاني"} (افتراضي)</span>
       <button class="linkbtn" data-togglemod="${m.id}" data-item2="${itemId}" data-active="${m.is_active}">${m.is_active ? "تعطيل" : "تفعيل"}</button>
       <button class="linkbtn" data-modpricehist="${m.id}" data-modname="${m.name}">📈</button>
+      ${m.excluded_ingredient_name ? `<button class="linkbtn" data-clearexclude="${m.id}" data-item4="${itemId}">إلغاء الاستبعاد</button>` : ""}
       <button class="linkbtn danger" data-delmod="${m.id}" data-item3="${itemId}">حذف</button>
     </div>
     ${variants.length > 1 ? `<div style="display:flex;gap:12px;flex-wrap:wrap;margin:2px 0 8px 20px;font-size:11px;color:var(--faint)">
@@ -520,6 +540,12 @@ async function loadModifiers(itemId, variants = []) {
     btn.onclick = async () => {
       await api(`/api/menu/modifiers/${btn.dataset.delmod}`, { method: "DELETE" });
       loadModifiers(btn.dataset.item3, variants);
+    };
+  });
+  wrap.querySelectorAll("[data-clearexclude]").forEach(btn => {
+    btn.onclick = async () => {
+      await api(`/api/menu/modifiers/${btn.dataset.clearexclude}`, { method: "PATCH", body: JSON.stringify({ excludedIngredientItemId: null }) });
+      loadModifiers(btn.dataset.item4, variants);
     };
   });
   wrap.querySelectorAll("[data-modpricehist]").forEach(btn => {

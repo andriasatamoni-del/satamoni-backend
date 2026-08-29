@@ -89,8 +89,10 @@ async function resolveOrderItems(client, items, source) {
     let modifierTotal = 0;
     for (const mod of it.modifiers || []) {
       // سعر المرفق ممكن يكون له سعر مخصوص للحجم (variant) ده تحديدًا - لو مفيش، السعر الافتراضي بتاع المرفق
+      // excluded_ingredient_item_id (المرحلة 8.9): لو موجود، ده معناه المرفق ده من نوع "بدون" وبيستبعد
+      // مكوّن معيّن من حساب الاستهلاك/التكلفة لسطر الطلب ده - مش من الواجهة أبدًا، من المنيو الحقيقي بس
       const modRow = await client.query(
-        `SELECT m.id, m.name, COALESCE(vp.price_delta, m.price_delta) AS price_delta
+        `SELECT m.id, m.name, COALESCE(vp.price_delta, m.price_delta) AS price_delta, m.excluded_ingredient_item_id
          FROM menu_item_modifiers m
          LEFT JOIN menu_item_modifier_variant_prices vp ON vp.modifier_id = m.id AND vp.variant_id = $3
          WHERE m.id = $1 AND m.item_id = $2 AND m.is_active = TRUE`,
@@ -98,7 +100,10 @@ async function resolveOrderItems(client, items, source) {
       );
       if (modRow.rows.length === 0) throw new Error("مرفق مش موجود أو متوقف حاليًا");
       const delta = Number(modRow.rows[0].price_delta);
-      modifiers.push({ id: modRow.rows[0].id, name: modRow.rows[0].name, priceDelta: delta });
+      modifiers.push({
+        id: modRow.rows[0].id, name: modRow.rows[0].name, priceDelta: delta,
+        excludedIngredientItemId: modRow.rows[0].excluded_ingredient_item_id,
+      });
       modifierTotal += delta;
     }
 
@@ -388,9 +393,9 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       const orderItemId = inserted.rows[0].id;
       for (const mod of it.modifiers || []) {
         await client.query(
-          `INSERT INTO order_item_modifiers (order_item_id, modifier_id, name_at_sale, price_at_sale)
-           VALUES ($1,$2,$3,$4)`,
-          [orderItemId, mod.id, mod.name, mod.priceDelta || 0]
+          `INSERT INTO order_item_modifiers (order_item_id, modifier_id, name_at_sale, price_at_sale, excluded_ingredient_item_id)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [orderItemId, mod.id, mod.name, mod.priceDelta || 0, mod.excludedIngredientItemId || null]
         );
       }
     }
@@ -419,6 +424,10 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
                   (COUNT(mvi.id) = 0 OR BOOL_OR(ii.unit_cost IS NULL)) AS incomplete
            FROM order_items oi2
            LEFT JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi2.variant_id
+             AND NOT EXISTS (
+               SELECT 1 FROM order_item_modifiers oim
+               WHERE oim.order_item_id = oi2.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
+             )
            LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
            WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL
            GROUP BY oi2.id
@@ -448,12 +457,17 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       // البيع بالظبط - نفس المصدر ونفس الـtransaction بالظبط اللي حسب cost_at_sale فوق (الجدول المسطّح +
       // unit_cost لحظة البيع)، مش حساب مستقل، عشان الاتنين يفضلوا متطابقين رياضيًا للأبد ومينفعش يختلفوا
       // بصمت. التقارير بعدين بتقرا من هنا بدل ما تعيد الحساب بسعر النهارده الحالي (كان الباج قبل كده)
+      // المرحلة 8.9: نفس استثناء مرفقات "بدون" فوق بالظبط - مكوّن مستبعد لسطر معيّن مبيدخلش هنا خالص
       await client.query(
         `INSERT INTO order_item_ingredient_costs (order_item_id, ingredient_item_id, quantity, unit_cost, total_cost)
          SELECT oi2.id, mvi.inventory_item_id, mvi.quantity_per_unit::numeric * oi2.quantity::numeric,
                 ii.unit_cost, mvi.quantity_per_unit::numeric * oi2.quantity::numeric * ii.unit_cost::numeric
          FROM order_items oi2
          JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi2.variant_id
+           AND NOT EXISTS (
+             SELECT 1 FROM order_item_modifiers oim
+             WHERE oim.order_item_id = oi2.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
+           )
          JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
          WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL`,
         [orderId]
@@ -490,12 +504,17 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
           variantsToDeduct = [{ variantId: it.variantId, multiplier: it.quantity }];
         }
 
+        // المرحلة 8.9: مرفقات "بدون" المختارة على السطر ده بتستبعد مكوّناتها من الاستهلاك هنا - نفس
+        // الاستبعاد اللي بيتطبّق على cost_at_sale/order_item_ingredient_costs تحت (نفس مصدر الاستثناء
+        // بالظبط، مفيش حساب مزدوج)
+        const excludedIngredientIds = new Set((it.modifiers || []).map((m) => m.excludedIngredientItemId).filter(Boolean));
         for (const v of variantsToDeduct) {
           const recipe = await client.query(
             "SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1",
             [v.variantId]
           );
           for (const ing of recipe.rows) {
+            if (excludedIngredientIds.has(ing.inventory_item_id)) continue;
             // الضرب بيحصل جوه Postgres (NUMERIC) عشان نتجنب أخطاء دقة الأرقام العشرية في JS
             const deduction = await client.query(
               "SELECT ($1::numeric * $2::numeric) AS qty", [ing.quantity_per_unit, v.multiplier]
@@ -1013,11 +1032,17 @@ router.post(
       );
 
       // إرجاع المخزون اللي كان اتخصم وقت البيع - نفس منطق خصم الـ BOM وقت إنشاء الطلب بالظبط بس بالعكس
+      // المرحلة 8.9: نفس استثناء مرفقات "بدون" - مكوّن اتستبعد وقت البيع (ملوش أصلًا) ميترجعش هنا، عشان
+      // مايتحطش رصيد زيادة وهمي في المخزون (double-credit)
       if (order.branch_id) {
         const reversalIngredients = `
           SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * oi.quantity::numeric AS qty
           FROM order_items oi
           JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi.variant_id
+            AND NOT EXISTS (
+              SELECT 1 FROM order_item_modifiers oim
+              WHERE oim.order_item_id = oi.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
+            )
           WHERE oi.order_id = $1 AND oi.variant_id IS NOT NULL
           UNION ALL
           SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi.quantity::numeric AS qty
@@ -1196,11 +1221,17 @@ router.put(
       }
 
       // ---- رجوع أثر الطلب القديم بالكامل (مخزون + نقاط ولاء + قيد محاسبي) - نفس منطق POST /:id/void ----
+      // المرحلة 8.9: نفس استثناء مرفقات "بدون" بتاع الـvoid فوق بالظبط - قبل ما نستبدل order_items
+      // القديمة بالجديدة، لازم نعرف بالظبط إيه اللي كان اتخصم فعليًا (مش اللي الوصفة كانت المفروض تخصمه)
       if (order.branch_id) {
         const reversalIngredients = `
           SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * oi.quantity::numeric AS qty
           FROM order_items oi
           JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi.variant_id
+            AND NOT EXISTS (
+              SELECT 1 FROM order_item_modifiers oim
+              WHERE oim.order_item_id = oi.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
+            )
           WHERE oi.order_id = $1 AND oi.variant_id IS NOT NULL
           UNION ALL
           SELECT mvi.inventory_item_id, mvi.quantity_per_unit::numeric * ci.quantity::numeric * oi.quantity::numeric AS qty
@@ -1284,6 +1315,10 @@ router.put(
                     (COUNT(mvi.id) = 0 OR BOOL_OR(ii.unit_cost IS NULL)) AS incomplete
              FROM order_items oi2
              LEFT JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi2.variant_id
+               AND NOT EXISTS (
+                 SELECT 1 FROM order_item_modifiers oim
+                 WHERE oim.order_item_id = oi2.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
+               )
              LEFT JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
              WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL
              GROUP BY oi2.id
@@ -1308,12 +1343,17 @@ router.put(
            WHERE oi.id = sub.order_item_id`,
           [order.id]
         );
+        // المرحلة 8.9: نفس استثناء مرفقات "بدون" بتاع POST / بالظبط
         await client.query(
           `INSERT INTO order_item_ingredient_costs (order_item_id, ingredient_item_id, quantity, unit_cost, total_cost)
            SELECT oi2.id, mvi.inventory_item_id, mvi.quantity_per_unit::numeric * oi2.quantity::numeric,
                   ii.unit_cost, mvi.quantity_per_unit::numeric * oi2.quantity::numeric * ii.unit_cost::numeric
            FROM order_items oi2
            JOIN menu_item_variant_ingredients mvi ON mvi.variant_id = oi2.variant_id
+             AND NOT EXISTS (
+               SELECT 1 FROM order_item_modifiers oim
+               WHERE oim.order_item_id = oi2.id AND oim.excluded_ingredient_item_id = mvi.inventory_item_id
+             )
            JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
            WHERE oi2.order_id = $1 AND oi2.variant_id IS NOT NULL`,
           [order.id]
@@ -1348,12 +1388,15 @@ router.put(
             variantsToDeduct = [{ variantId: it.variantId, multiplier: it.quantity }];
           }
 
+          // المرحلة 8.9: نفس منطق POST / بالظبط - استبعاد مكوّنات مرفقات "بدون" المختارة على السطر ده
+          const excludedIngredientIds = new Set((it.modifiers || []).map((m) => m.excludedIngredientItemId).filter(Boolean));
           for (const v of variantsToDeduct) {
             const recipe = await client.query(
               "SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1",
               [v.variantId]
             );
             for (const ing of recipe.rows) {
+              if (excludedIngredientIds.has(ing.inventory_item_id)) continue;
               const deduction = await client.query(
                 "SELECT ($1::numeric * $2::numeric) AS qty", [ing.quantity_per_unit, v.multiplier]
               );
