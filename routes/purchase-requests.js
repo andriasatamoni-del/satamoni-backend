@@ -82,8 +82,13 @@ router.get("/", requireAuth, requirePermission("purchasing.view"), async (req, r
 // GET /api/purchase-requests/:id
 router.get("/:id", requireAuth, requirePermission("purchasing.view"), async (req, res) => {
   try {
+    // UI-2D: تفاصيل الطلب لازم تعرض "مقدّم الطلب" بالاسم - كانت موجودة في القايمة بس، مش هنا (نفس
+    // فجوة created_by_name اللي اتصلحت قبل كده في kitchen-orders.js) - جوين إضافي بس، مفيش حقل اتشال
     const pr = await pool.query(
-      `SELECT pr.*, b.name AS branch_name FROM purchase_requests pr JOIN branches b ON b.id = pr.branch_id WHERE pr.id = $1`,
+      `SELECT pr.*, b.name AS branch_name, u.name AS requested_by_name
+       FROM purchase_requests pr JOIN branches b ON b.id = pr.branch_id
+       LEFT JOIN users u ON u.id = pr.requested_by
+       WHERE pr.id = $1`,
       [req.params.id]
     );
     if (pr.rows.length === 0) return res.status(404).json({ error: "طلب الشراء مش موجود" });

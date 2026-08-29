@@ -8,6 +8,10 @@ const REQUISITION_ERROR_MESSAGES = {
   FORBIDDEN_BRANCH: () => "معندكش صلاحية على فرع تاني.",
   INVALID_PARAMETER: (msg) => msg,
   PICKING_VALIDATION: (msg) => msg,
+  // PHASE UI-2: رموز المشتريات - نفس الملف المشترك (مطلوب صراحة إعادة استخدامه بدل عمل واحد جديد)
+  OVER_RECEIVE_NEEDS_APPROVAL: (msg) => msg,
+  DUPLICATE_INVOICE_NUMBER: () => "رقم الفاتورة ده مسجّل بالفعل لنفس المورد - تأكد من الرقم قبل ما تحفظ تاني.",
+  INVOICE_PAYMENT_VALIDATION: (msg) => msg,
 };
 
 // بيرجع {message, code} جاهزة للعرض - مبني على شكل الخطأ اللي بيرميه helper الـapi() في كل صفحة (Error

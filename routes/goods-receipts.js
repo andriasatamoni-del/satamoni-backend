@@ -156,9 +156,13 @@ router.get("/", requireAuth, requirePermission("purchasing.view"), async (req, r
 // GET /api/goods-receipts/:id
 router.get("/:id", requireAuth, requirePermission("purchasing.view"), async (req, res) => {
   try {
+    // UI-2I: تفاصيل سند الاستلام لازم تعرض "المستلِم" بالاسم - جوين إضافي بس، نفس نمط created_by_name
     const grn = await pool.query(
-      `SELECT gr.*, s.name AS supplier_name, b.name AS branch_name
-       FROM goods_receipts gr JOIN suppliers s ON s.id = gr.supplier_id JOIN branches b ON b.id = gr.branch_id
+      `SELECT gr.*, s.name AS supplier_name, b.name AS branch_name, u.name AS received_by_name
+       FROM goods_receipts gr
+       JOIN suppliers s ON s.id = gr.supplier_id
+       JOIN branches b ON b.id = gr.branch_id
+       LEFT JOIN users u ON u.id = gr.received_by
        WHERE gr.id = $1`,
       [req.params.id]
     );

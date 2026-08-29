@@ -1,0 +1,1773 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — المشتريات</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1200px; margin: 0 auto; padding: 20px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+  h2 { font-size: 14px; color: var(--faint); margin: 18px 0 8px; }
+
+  #tabs { display: flex; gap: 6px; margin: 16px 0; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 130px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; font-family: inherit; }
+  .formbox label.field-label { flex: 0; white-space: nowrap; font-size: 12px; color: var(--faint); }
+  button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+  button.good { background: var(--green); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+  .hint { color: var(--faint); font-size: 12px; margin-bottom: 8px; }
+
+  .pickrow { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .pickrow select { flex: 2; }
+  .pickrow input { flex: 1; }
+  .pickrow button { flex: 0; padding: 8px 10px; border: 1px solid var(--line); background: transparent; color: #F08A83; border-radius: 6px; cursor: pointer; }
+  .addrow-link { background: none; border: 1px dashed var(--line); color: var(--gold-bright); cursor: pointer; font-size: 12px; padding: 8px; border-radius: 6px; width: 100%; margin-bottom: 8px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; margin-left: 10px; }
+  .linkbtn.danger { color: #F08A83; }
+
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .badge.DRAFT { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .badge.SUBMITTED { background: rgba(203,161,53,.25); color: var(--gold-bright); }
+  .badge.APPROVED, .badge.MATCHED, .badge.POSTED, .badge.PAID { background: rgba(63,163,77,.12); color: var(--green); }
+  .badge.PARTIALLY_RECEIVED, .badge.PARTIALLY_PAID, .badge.VARIANCE_PENDING { background: rgba(203,161,53,.25); color: var(--gold-bright); }
+  .badge.FULLY_RECEIVED, .badge.CLOSED, .badge.CONVERTED_TO_PO { background: rgba(63,163,77,.15); color: var(--green); }
+  .badge.REJECTED, .badge.CANCELLED { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.variance-pos { background: rgba(203,161,53,.2); color: var(--gold-bright); }
+  .badge.variance-neg { background: rgba(63,163,77,.15); color: var(--green); }
+
+  .expandbox { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-top: 8px; }
+  .pager { display: flex; align-items: center; gap: 10px; justify-content: center; margin: 12px 0; font-size: 12px; color: var(--faint); }
+  .pager button { padding: 6px 14px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; font-size: 12px; }
+  .pager button:disabled { opacity: .4; cursor: not-allowed; }
+
+  .cardrow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .statcard { flex: 1; min-width: 180px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; cursor: pointer; }
+  .statcard:hover { border-color: var(--gold); }
+  .statcard .num { font-size: 26px; font-weight: 800; color: var(--gold-bright); }
+  .statcard .lbl { font-size: 12px; color: var(--faint); margin-top: 4px; }
+  .statcard .sub { font-size: 11px; color: var(--faint); margin-top: 2px; }
+
+  .docchain { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; margin: 10px 0; }
+  .docchain .linkbtn { text-decoration: underline; }
+
+  #bootStatus { max-width: 1200px; margin: 20px auto; padding: 0 16px; }
+  #bootStatus .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; text-align: center; }
+  #bootStatus .box.error { border-color: var(--red); }
+  #bootStatus button { margin-top: 10px; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; font-size: 15px; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+
+  /* UI-2S: ديسكتوب/تابلت هما الأساس، بس لازم تفضل قابلة للاستخدام على الموبايل - جداول تتحول لبطاقات */
+  @media (max-width: 720px) {
+    table, thead, tbody, th, td, tr { display: block; }
+    thead tr { display: none; }
+    td { border: none; padding: 4px 0; }
+    td::before { content: attr(data-label); font-weight: 700; color: var(--faint); display: inline-block; min-width: 120px; }
+    tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+    .cardrow { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🧾 ساتاموني — المشتريات</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🧾 تسجيل الدخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="dashboard">لوحة المشتريات</div>
+    <div class="tabbtn" data-tab="pr">طلبات الشراء</div>
+    <div class="tabbtn" data-tab="po">أوامر الشراء</div>
+    <div class="tabbtn" data-tab="grn">استلام المشتريات</div>
+    <div class="tabbtn" data-tab="invoices">فواتير الموردين</div>
+    <div class="tabbtn" data-tab="payments">سداد الموردين</div>
+    <div class="tabbtn" data-tab="suppliers">الموردون</div>
+  </div>
+
+  <!-- UI-2A: لوحة المشتريات -->
+  <div class="panel active" id="panel-dashboard">
+    <h1>لوحة المشتريات</h1>
+    <div id="dashboardBox"><div class="hint">جاري التحميل...</div></div>
+  </div>
+
+  <!-- UI-2B/C/D: طلبات الشراء -->
+  <div class="panel" id="panel-pr">
+    <h1>طلبات الشراء</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الحالة:</label>
+        <select id="prStatusFilter">
+          <option value="">الكل</option>
+          <option value="DRAFT">مسودة</option>
+          <option value="SUBMITTED">في انتظار الاعتماد</option>
+          <option value="APPROVED">معتمد</option>
+          <option value="REJECTED">مرفوض</option>
+          <option value="CONVERTED_TO_PO">تم تحويله لأمر شراء</option>
+          <option value="CANCELLED">ملغي</option>
+        </select>
+        <button id="prFilterBtn">فلترة</button>
+        <button class="secondary" id="prNewBtn">+ طلب شراء جديد</button>
+      </div>
+    </div>
+    <div id="prListBox"><div class="hint">جاري التحميل...</div></div>
+
+    <div id="prCreateBox" style="display:none">
+      <h2>طلب شراء جديد</h2>
+      <div class="formbox">
+        <div class="row">
+          <label class="field-label">الفرع:</label>
+          <select id="prBranchSelect"></select>
+          <label class="field-label">التاريخ المطلوب:</label>
+          <input id="prRequiredDate" type="date" />
+        </div>
+        <div class="row"><textarea id="prReason" placeholder="سبب الطلب (اختياري)" rows="2"></textarea></div>
+        <h2>الأصناف</h2>
+        <div id="prItemRows"></div>
+        <button class="addrow-link" id="prAddRowBtn">+ صنف</button>
+        <div class="row">
+          <button id="prSaveDraftBtn">حفظ مسودة</button>
+          <button class="secondary" id="prSaveSubmitBtn">حفظ وإرسال للاعتماد</button>
+          <button class="secondary" id="prCancelCreateBtn">إلغاء</button>
+        </div>
+        <div class="err" id="prCreateErr"></div>
+        <div class="ok" id="prCreateOk"></div>
+      </div>
+    </div>
+
+    <div id="prDetailsBox" style="display:none">
+      <h2>تفاصيل طلب الشراء</h2>
+      <div class="formbox" id="prDetailsContent"></div>
+      <button class="secondary" id="prDetailsCloseBtn">إغلاق</button>
+    </div>
+  </div>
+
+  <!-- UI-2E/F: أوامر الشراء -->
+  <div class="panel" id="panel-po">
+    <h1>أوامر الشراء</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الحالة:</label>
+        <select id="poStatusFilter">
+          <option value="">الكل</option>
+          <option value="DRAFT">مسودة</option>
+          <option value="SUBMITTED">في انتظار الاعتماد</option>
+          <option value="APPROVED">معتمد</option>
+          <option value="PARTIALLY_RECEIVED">مستلم جزئياً</option>
+          <option value="FULLY_RECEIVED">مستلم بالكامل</option>
+          <option value="CLOSED">مقفول</option>
+          <option value="CANCELLED">ملغي</option>
+        </select>
+        <label class="field-label">المورد:</label>
+        <select id="poSupplierFilter"><option value="">الكل</option></select>
+        <button id="poFilterBtn">فلترة</button>
+        <button class="secondary" id="poNewBtn">+ أمر شراء جديد</button>
+      </div>
+    </div>
+    <div id="poListBox"><div class="hint">جاري التحميل...</div></div>
+
+    <div id="poCreateBox" style="display:none">
+      <h2 id="poCreateTitle">أمر شراء جديد</h2>
+      <div class="formbox">
+        <div class="row">
+          <label class="field-label">المورد:</label>
+          <select id="poSupplierSelect"></select>
+          <label class="field-label">الفرع:</label>
+          <select id="poBranchSelect"></select>
+        </div>
+        <div class="row">
+          <label class="field-label">من طلب شراء معتمد (اختياري):</label>
+          <select id="poFromPrSelect"><option value="">بدون</option></select>
+          <label class="field-label">تاريخ التسليم المتوقع:</label>
+          <input id="poExpectedDelivery" type="date" />
+        </div>
+        <div class="row"><textarea id="poNotes" placeholder="ملاحظات (اختياري)" rows="2"></textarea></div>
+        <h2>الأصناف</h2>
+        <div id="poItemRows"></div>
+        <button class="addrow-link" id="poAddRowBtn">+ صنف</button>
+        <div class="row" style="justify-content:flex-end;font-size:13px">
+          <div>الإجمالي (للعرض بس - السيرفر هو المرجع النهائي): <b id="poTotalPreview">0.00</b></div>
+        </div>
+        <div class="row">
+          <button id="poSaveDraftBtn">حفظ مسودة</button>
+          <button class="secondary" id="poCancelCreateBtn">إلغاء</button>
+        </div>
+        <div class="err" id="poCreateErr"></div>
+        <div class="ok" id="poCreateOk"></div>
+      </div>
+    </div>
+
+    <div id="poDetailsBox" style="display:none">
+      <h2>تفاصيل أمر الشراء</h2>
+      <div class="formbox" id="poDetailsContent"></div>
+      <button class="secondary" id="poDetailsCloseBtn">إغلاق</button>
+    </div>
+  </div>
+
+  <!-- UI-2G/H/I: استلام المشتريات -->
+  <div class="panel" id="panel-grn">
+    <h1>استلام المشتريات</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الحالة:</label>
+        <select id="grnStatusFilter">
+          <option value="">الكل</option>
+          <option value="DRAFT">مسودة</option>
+          <option value="POSTED">مرحّل</option>
+          <option value="CANCELLED">ملغي</option>
+        </select>
+        <button id="grnFilterBtn">فلترة</button>
+        <button class="secondary" id="grnNewBtn">+ استلام جديد</button>
+      </div>
+    </div>
+    <div id="grnListBox"><div class="hint">جاري التحميل...</div></div>
+
+    <div id="grnCreateBox" style="display:none">
+      <h2>استلام مشتريات جديد</h2>
+      <div class="formbox">
+        <div class="row">
+          <label class="field-label">أمر الشراء:</label>
+          <select id="grnPoSelect"><option value="">اختار أمر شراء معتمد...</option></select>
+        </div>
+        <div id="grnPoInfo"></div>
+        <div id="grnItemsBox"></div>
+        <div class="row">
+          <label class="field-label">رقم مستند المورد (اختياري):</label>
+          <input id="grnSupplierDoc" placeholder="رقم فاتورة/إذن تسليم المورد" />
+        </div>
+        <div class="row"><textarea id="grnNotes" placeholder="ملاحظات (اختياري)" rows="2"></textarea></div>
+        <div class="row">
+          <button id="grnSaveBtn" disabled>حفظ الاستلام (مسودة)</button>
+          <button class="secondary" id="grnCancelCreateBtn">إلغاء</button>
+        </div>
+        <div class="err" id="grnCreateErr"></div>
+        <div class="ok" id="grnCreateOk"></div>
+      </div>
+    </div>
+
+    <div id="grnDetailsBox" style="display:none">
+      <h2>تفاصيل سند الاستلام</h2>
+      <div class="formbox" id="grnDetailsContent"></div>
+      <button class="secondary" id="grnDetailsCloseBtn">إغلاق</button>
+    </div>
+  </div>
+
+  <!-- UI-2J/K/L: فواتير الموردين -->
+  <div class="panel" id="panel-invoices">
+    <h1>فواتير الموردين</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الحالة:</label>
+        <select id="invStatusFilter">
+          <option value="">الكل</option>
+          <option value="MATCHED">مطابقة</option>
+          <option value="VARIANCE_PENDING">يوجد فرق</option>
+          <option value="APPROVED">معتمدة</option>
+          <option value="PARTIALLY_PAID">مدفوعة جزئياً</option>
+          <option value="PAID">مدفوعة بالكامل</option>
+          <option value="CANCELLED">ملغاة</option>
+        </select>
+        <button id="invFilterBtn">فلترة</button>
+        <button class="secondary" id="invNewBtn">+ فاتورة مورد جديدة</button>
+      </div>
+    </div>
+    <div id="invListBox"><div class="hint">جاري التحميل...</div></div>
+
+    <div id="invCreateBox" style="display:none">
+      <h2>فاتورة مورد جديدة</h2>
+      <div class="formbox">
+        <div class="row">
+          <label class="field-label">المورد:</label>
+          <select id="invSupplierSelect"></select>
+          <label class="field-label">الفرع:</label>
+          <select id="invBranchSelect"></select>
+        </div>
+        <div class="row">
+          <label class="field-label">رقم فاتورة المورد:</label>
+          <input id="invNumber" placeholder="رقم الفاتورة الأصلي من المورد" />
+          <label class="field-label">تاريخ الفاتورة:</label>
+          <input id="invDate" type="date" />
+        </div>
+        <div class="row">
+          <label class="field-label">أمر الشراء المرتبط (لعرض سندات الاستلام):</label>
+          <select id="invPoSelect"><option value="">اختار أمر شراء...</option></select>
+        </div>
+        <div class="hint">اختار سطر استلام (GRN) لكل صنف عشان تتربط الفاتورة بالاستلام الفعلي وتتحقق المطابقة تلقائيًا. لو بند مش مرتبط باستلام (زي شحن أو خدمة)، سيبه من غير GRN.</div>
+        <div id="invLineRows"></div>
+        <button class="addrow-link" id="invAddRowBtn">+ سطر</button>
+        <div class="row">
+          <label class="field-label">ضريبة (اختياري):</label>
+          <input id="invTax" type="number" min="0" step="any" value="0" />
+        </div>
+        <div class="row"><textarea id="invNotes" placeholder="ملاحظات (اختياري)" rows="2"></textarea></div>
+        <div class="row" style="justify-content:flex-end;font-size:13px">
+          <div>إجمالي السطور المُدخلة (للعرض بس): <b id="invSubtotalPreview">0.00</b></div>
+        </div>
+        <div class="row">
+          <button id="invSaveBtn">حفظ الفاتورة</button>
+          <button class="secondary" id="invCancelCreateBtn">إلغاء</button>
+        </div>
+        <div class="err" id="invCreateErr"></div>
+        <div class="ok" id="invCreateOk"></div>
+      </div>
+    </div>
+
+    <div id="invDetailsBox" style="display:none">
+      <h2>تفاصيل فاتورة المورد</h2>
+      <div class="formbox" id="invDetailsContent"></div>
+      <button class="secondary" id="invDetailsCloseBtn">إغلاق</button>
+    </div>
+  </div>
+
+  <!-- UI-2M: سداد الموردين -->
+  <div class="panel" id="panel-payments">
+    <h1>سداد الموردين</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">المورد:</label>
+        <select id="paySupplierFilter"><option value="">الكل</option></select>
+        <button id="payFilterBtn">فلترة</button>
+        <button class="secondary" id="payNewBtn">+ سداد جديد</button>
+      </div>
+    </div>
+    <div id="payListBox"><div class="hint">جاري التحميل...</div></div>
+
+    <div id="payCreateBox" style="display:none">
+      <h2>سداد مورد جديد</h2>
+      <div class="formbox">
+        <div class="row">
+          <label class="field-label">المورد:</label>
+          <select id="paySupplierSelect"></select>
+          <label class="field-label">الفرع:</label>
+          <select id="payBranchSelect"></select>
+        </div>
+        <div class="row">
+          <label class="field-label">فاتورة محددة (اختياري):</label>
+          <select id="payInvoiceSelect"><option value="">سداد على حساب المورد العام</option></select>
+        </div>
+        <div id="payInvoiceInfo"></div>
+        <div class="row">
+          <label class="field-label">المبلغ:</label>
+          <input id="payAmount" type="number" min="0" step="any" />
+          <label class="field-label">تاريخ السداد:</label>
+          <input id="payDate" type="date" />
+        </div>
+        <div class="row">
+          <label class="field-label">طريقة الدفع:</label>
+          <select id="payMethodSelect"><option value="">-</option></select>
+          <label class="field-label">رقم مرجعي (اختياري):</label>
+          <input id="payReference" placeholder="رقم شيك/تحويل" />
+        </div>
+        <div class="row"><textarea id="payNotes" placeholder="ملاحظات (اختياري)" rows="2"></textarea></div>
+        <div class="row">
+          <button id="paySaveBtn">تسجيل السداد</button>
+          <button class="secondary" id="payCancelCreateBtn">إلغاء</button>
+        </div>
+        <div class="err" id="payCreateErr"></div>
+        <div class="ok" id="payCreateOk"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- UI-2N: الموردون -->
+  <div class="panel" id="panel-suppliers">
+    <h1>الموردون</h1>
+    <div id="supListBox"><div class="hint">جاري التحميل...</div></div>
+    <div id="supDetailsBox" style="display:none">
+      <h2>ملف المورد</h2>
+      <div class="formbox" id="supDetailsContent"></div>
+      <button class="secondary" id="supDetailsCloseBtn">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
+<div id="bootStatus" style="display:none"></div>
+
+<script src="js/requisition-errors.js"></script>
+<script src="js/print-reports.js"></script>
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "accountant"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+// UI-2P: تسميات الحالة الموحّدة (نفس منظومة الشارات البصرية المستخدمة في UI-1)، مطابقة بالظبط للقيم
+// اللي بيرجّعها الـbackend (اتفحصت من db/schema.sql CHECK constraints + routes، مش تخمين)
+const PR_STATUS_LABELS = { DRAFT: "مسودة", SUBMITTED: "في انتظار الاعتماد", APPROVED: "معتمد", REJECTED: "مرفوض", CONVERTED_TO_PO: "تم تحويله لأمر شراء", CANCELLED: "ملغي" };
+const PO_STATUS_LABELS = { DRAFT: "مسودة", SUBMITTED: "في انتظار الاعتماد", APPROVED: "معتمد", PARTIALLY_RECEIVED: "مستلم جزئياً", FULLY_RECEIVED: "مستلم بالكامل", CLOSED: "مقفول", CANCELLED: "ملغي" };
+const GRN_STATUS_LABELS = { DRAFT: "مسودة (لسه ماترحّلش)", POSTED: "مرحّل", CANCELLED: "ملغي" };
+const INV_STATUS_LABELS = { DRAFT: "مسودة", MATCHED: "مطابقة", VARIANCE_PENDING: "يوجد فرق", APPROVED: "معتمدة", PARTIALLY_PAID: "مدفوعة جزئياً", PAID: "مدفوعة بالكامل", CANCELLED: "ملغاة" };
+const PR_WORKFLOW_STEPS = ["DRAFT", "SUBMITTED", "APPROVED", "CONVERTED_TO_PO"];
+const PO_WORKFLOW_STEPS = ["DRAFT", "SUBMITTED", "APPROVED", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "CLOSED"];
+
+// UI-2Q: نفس خريطة صلاحيات الأدوار الموجودة فعليًا في middleware/permissions.js - مش تخمين، منسوخة
+// حرفيًا من الـbackend عشان الواجهة تخفي/تظهر الأزرار صح، مع إن التفويض الحقيقي دايمًا من السيرفر
+const ROLE_PERMISSIONS = {
+  admin: ["*"],
+  branch_manager: ["purchasing.view", "purchasing.create", "purchasing.edit", "purchasing.submit", "purchasing.cancel", "accounting.create"],
+  accountant: ["purchasing.view", "purchasing.export", "accounting.view", "accounting.create"],
+};
+function hasPerm(...perms) {
+  const list = ROLE_PERMISSIONS[auth.user?.role] || [];
+  return list.includes("*") || perms.some((p) => list.includes(p));
+}
+function canApprove() { return auth.user?.role === "admin"; } // purchasing.approve أدمن بس فعليًا في كل الراوتس
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || "حصل خطأ");
+    err.code = data.code || null;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+function apiErrorMessage(err) { return describeRequisitionError(err, err && err.status).message; }
+function fmtMoney(n) { return Number(n || 0).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDate(d) { return d ? String(d).slice(0, 10) : "-"; }
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    hideLogin();
+    if (!allowedRoles.includes(data.user.role)) {
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    bootSafely();
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+async function bootSafely() {
+  const statusBox = document.getElementById("bootStatus");
+  const mainBox = document.getElementById("main");
+  statusBox.style.display = "block";
+  mainBox.style.display = "none";
+  statusBox.innerHTML = `<div class="box">جاري تحميل البيانات...</div>`;
+  try {
+    await boot();
+    statusBox.style.display = "none";
+  } catch (e) {
+    mainBox.style.display = "none";
+    const isNetworkFailure = e instanceof TypeError;
+    const message = isNetworkFailure
+      ? "تعذّر الاتصال بالسيرفر - تأكد من الإنترنت أو حاول تاني بعد شوية"
+      : `حصل خطأ أثناء تحميل البيانات: ${apiErrorMessage(e)}`;
+    statusBox.innerHTML = `<div class="box error"><div>${message}</div><button id="bootRetryBtn">إعادة المحاولة</button></div>`;
+    document.getElementById("bootRetryBtn").onclick = bootSafely;
+    console.error("boot() failed:", e);
+  }
+}
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    hideAllCreateAndDetailBoxes();
+    if (btn.dataset.tab === "dashboard") loadDashboard();
+    if (btn.dataset.tab === "pr") loadPrList();
+    if (btn.dataset.tab === "po") loadPoList();
+    if (btn.dataset.tab === "grn") loadGrnList();
+    if (btn.dataset.tab === "invoices") loadInvList();
+    if (btn.dataset.tab === "payments") loadPayList();
+    if (btn.dataset.tab === "suppliers") loadSupplierList();
+  };
+});
+function hideAllCreateAndDetailBoxes() {
+  ["prCreateBox", "prDetailsBox", "poCreateBox", "poDetailsBox", "grnCreateBox", "grnDetailsBox",
+   "invCreateBox", "invDetailsBox", "payCreateBox", "supDetailsBox"].forEach(id => {
+    document.getElementById(id).style.display = "none";
+  });
+}
+function switchToTab(tabName) {
+  document.querySelector(`[data-tab="${tabName}"]`).click();
+}
+
+let inventoryItems = [], allBranches = [], allSuppliers = [], paymentMethods = [];
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  const [items, branches, suppliers, config] = await Promise.all([
+    api("/api/inventory/items"),
+    api("/api/branches/all").catch(() => api("/api/branches")),
+    api("/api/suppliers"),
+    api("/api/config"),
+  ]);
+  inventoryItems = items;
+  allBranches = branches;
+  allSuppliers = suppliers;
+  paymentMethods = config.paymentMethods || [];
+
+  populateBranchSelects();
+  populateSupplierSelects();
+  populatePaymentMethodSelect();
+
+  await loadDashboard();
+}
+
+function itemOptions() { return inventoryItems.map(i => `<option value="${i.id}" data-unit="${i.unit}">${i.name} (${i.unit})</option>`).join(""); }
+function populateBranchSelects() {
+  const opts = allBranches.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
+  ["prBranchSelect", "poBranchSelect", "invBranchSelect", "payBranchSelect"].forEach(id => {
+    const el = document.getElementById(id);
+    el.innerHTML = opts;
+    if (auth.user.branchId) el.value = auth.user.branchId;
+  });
+}
+function populateSupplierSelects() {
+  const opts = allSuppliers.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
+  ["poSupplierSelect", "invSupplierSelect", "paySupplierSelect"].forEach(id => { document.getElementById(id).innerHTML = opts; });
+  ["poSupplierFilter", "paySupplierFilter"].forEach(id => {
+    document.getElementById(id).innerHTML = `<option value="">الكل</option>` + opts;
+  });
+}
+function populatePaymentMethodSelect() {
+  document.getElementById("payMethodSelect").innerHTML = `<option value="">نقدي (افتراضي)</option>` +
+    paymentMethods.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+}
+
+// ================= UI-2A: لوحة المشتريات =================
+// كل رقم هنا إما عدد صفوف راجعة من endpoint موجود بالفعل، أو قيمة جاهزة من تقرير backend (زي
+// totalOutstanding من /reports/supplier-balances) - مفيش أي حساب محاسبي بيتعمل هنا في الـJS
+async function loadDashboard() {
+  const box = document.getElementById("dashboardBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    const [prSubmitted, poApproved, poPartial, outstandingPos, invMatched, invVariance, invApproved, invPartial, supplierBalances] = await Promise.all([
+      api("/api/purchase-requests?status=SUBMITTED"),
+      api("/api/purchase-orders?status=APPROVED"),
+      api("/api/purchase-orders?status=PARTIALLY_RECEIVED"),
+      api("/api/reports/outstanding-purchase-orders"),
+      api("/api/supplier-invoices?status=MATCHED"),
+      api("/api/supplier-invoices?status=VARIANCE_PENDING"),
+      api("/api/supplier-invoices?status=APPROVED"),
+      api("/api/supplier-invoices?status=PARTIALLY_PAID"),
+      api("/api/reports/supplier-balances").catch(() => null),
+    ]);
+    const openPOs = poApproved.length + poPartial.length;
+    const pendingInvoiceApproval = invMatched.length + invVariance.length;
+    const dueInvoices = invApproved.length + invPartial.length;
+
+    box.innerHTML = `
+      <div class="cardrow">
+        <div class="statcard" data-goto="pr" data-status="SUBMITTED">
+          <div class="num">${prSubmitted.length}</div>
+          <div class="lbl">طلبات شراء جديدة (في انتظار الاعتماد)</div>
+        </div>
+        <div class="statcard" data-goto="po" data-status="">
+          <div class="num">${openPOs}</div>
+          <div class="lbl">أوامر شراء مفتوحة</div>
+          <div class="sub">معتمد: ${poApproved.length} — مستلم جزئياً: ${poPartial.length}</div>
+        </div>
+        <div class="statcard" data-goto="grn" data-status="">
+          <div class="num">${outstandingPos.length}</div>
+          <div class="lbl">مشتريات في انتظار الاستلام</div>
+          <div class="sub">قيمة متبقية: ${fmtMoney(outstandingPos.reduce((s, p) => s + Number(p.remaining_value), 0))}</div>
+        </div>
+        <div class="statcard" data-goto="invoices" data-status="">
+          <div class="num">${pendingInvoiceApproval}</div>
+          <div class="lbl">فواتير موردين في انتظار الاعتماد</div>
+          <div class="sub">مطابقة: ${invMatched.length} — بها فرق: ${invVariance.length}</div>
+        </div>
+        <div class="statcard" data-goto="invoices" data-status="">
+          <div class="num">${dueInvoices}</div>
+          <div class="lbl">فواتير مستحقة/غير مسددة</div>
+          ${supplierBalances ? `<div class="sub">إجمالي المستحق لكل الموردين: ${fmtMoney(supplierBalances.totalOutstanding)}</div>` : ""}
+        </div>
+      </div>
+      <h2>أوامر شراء مفتوحة تنتظر الاستلام</h2>
+      ${outstandingPos.length ? `
+        <table><thead><tr><th>أمر الشراء</th><th>المورد</th><th>الفرع</th><th>التسليم المتوقع</th><th>الكمية المتبقية</th><th>القيمة المتبقية</th></tr></thead><tbody>
+          ${outstandingPos.slice(0, 10).map(p => `<tr>
+            <td data-label="أمر الشراء"><button class="linkbtn" data-openpo="${p.id}">#${p.id}</button></td>
+            <td data-label="المورد">${p.supplier_name}</td>
+            <td data-label="الفرع">${p.branch_name}</td>
+            <td data-label="التسليم المتوقع">${fmtDate(p.expected_delivery_date)}</td>
+            <td data-label="الكمية المتبقية">${Number(p.remaining_quantity).toFixed(2)}</td>
+            <td data-label="القيمة المتبقية">${fmtMoney(p.remaining_value)}</td>
+          </tr>`).join("")}
+        </tbody></table>` : `<div class="hint">مفيش أوامر شراء منتظرة استلام دلوقتي</div>`}
+    `;
+    box.querySelectorAll("[data-goto]").forEach(card => {
+      card.onclick = () => {
+        switchToTab(card.dataset.goto);
+        if (card.dataset.status) {
+          const filterId = { pr: "prStatusFilter" }[card.dataset.goto];
+          if (filterId) { document.getElementById(filterId).value = card.dataset.status; document.getElementById("prFilterBtn").click(); }
+        }
+      };
+    });
+    box.querySelectorAll("[data-openpo]").forEach(btn => {
+      btn.onclick = () => { switchToTab("po"); showPoDetails(btn.dataset.openpo); };
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+// ================= UI-2B/C/D: طلبات الشراء =================
+document.getElementById("prFilterBtn").onclick = loadPrList;
+async function loadPrList() {
+  const box = document.getElementById("prListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  const status = document.getElementById("prStatusFilter").value;
+  try {
+    const qs = new URLSearchParams();
+    if (status) qs.set("status", status);
+    if (auth.user.role === "branch_manager") qs.set("branchId", auth.user.branchId);
+    const list = await api(`/api/purchase-requests?${qs.toString()}`);
+    box.innerHTML = list.length ? `
+      <table><thead><tr>
+        <th>رقم الطلب</th><th>مقدّم الطلب</th><th>الفرع</th><th>التاريخ</th><th>التاريخ المطلوب</th><th>عدد الأصناف</th><th>الحالة</th><th></th>
+      </tr></thead><tbody>
+        ${list.map(pr => `<tr>
+          <td data-label="رقم الطلب">#${pr.id}</td>
+          <td data-label="مقدّم الطلب">${pr.requested_by_name || "-"}</td>
+          <td data-label="الفرع">${pr.branch_name}</td>
+          <td data-label="التاريخ">${fmtDate(pr.requested_at)}</td>
+          <td data-label="التاريخ المطلوب">${fmtDate(pr.required_date)}</td>
+          <td data-label="عدد الأصناف">-</td>
+          <td data-label="الحالة"><span class="badge ${pr.status}">${PR_STATUS_LABELS[pr.status] || pr.status}</span></td>
+          <td data-label=""><button class="linkbtn" data-view="${pr.id}">تفاصيل</button></td>
+        </tr>`).join("")}
+      </tbody></table>
+    ` : `<div class="hint">مفيش طلبات شراء مطابقة</div>`;
+    box.querySelectorAll("[data-view]").forEach(btn => { btn.onclick = () => showPrDetails(btn.dataset.view); });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+document.getElementById("prNewBtn").onclick = () => {
+  hideAllCreateAndDetailBoxes();
+  document.getElementById("prCreateBox").style.display = "block";
+  document.getElementById("prItemRows").innerHTML = "";
+  addPrRow();
+  document.getElementById("prCreateErr").textContent = "";
+  document.getElementById("prCreateOk").textContent = "";
+  document.getElementById("prCreateBox").scrollIntoView({ behavior: "smooth" });
+};
+document.getElementById("prCancelCreateBtn").onclick = () => { document.getElementById("prCreateBox").style.display = "none"; };
+function addPrRow() {
+  const wrap = document.getElementById("prItemRows");
+  const row = document.createElement("div");
+  row.className = "pickrow";
+  row.innerHTML = `
+    <select class="pr-item">${itemOptions()}</select>
+    <input class="pr-qty" type="number" min="0" step="any" placeholder="الكمية" />
+    <input class="pr-notes" placeholder="ملاحظات (اختياري)" style="flex:1.5" />
+    <button type="button" class="pr-remove">×</button>
+  `;
+  row.querySelector(".pr-remove").onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+document.getElementById("prAddRowBtn").onclick = addPrRow;
+
+function collectPrItems() {
+  return [...document.querySelectorAll("#prItemRows .pickrow")].map(row => {
+    const sel = row.querySelector(".pr-item");
+    return {
+      inventoryItemId: Number(sel.value),
+      requestedQuantity: Number(row.querySelector(".pr-qty").value),
+      unit: sel.selectedOptions[0]?.dataset.unit || null,
+      notes: row.querySelector(".pr-notes").value.trim() || null,
+    };
+  }).filter(it => it.requestedQuantity > 0);
+}
+async function savePr(thenSubmit) {
+  const errBox = document.getElementById("prCreateErr");
+  const okBox = document.getElementById("prCreateOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const items = collectPrItems();
+  if (items.length === 0) { errBox.textContent = "لازم صنف واحد على الأقل بكمية أكبر من صفر"; return; }
+  try {
+    const created = await api("/api/purchase-requests", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId: Number(document.getElementById("prBranchSelect").value),
+        requiredDate: document.getElementById("prRequiredDate").value || null,
+        reason: document.getElementById("prReason").value.trim() || null,
+        items,
+      }),
+    });
+    if (thenSubmit) {
+      await api(`/api/purchase-requests/${created.id}/submit`, { method: "POST" });
+      okBox.textContent = `تم إنشاء الطلب #${created.id} وإرساله للاعتماد`;
+    } else {
+      okBox.textContent = `تم حفظ الطلب #${created.id} كمسودة`;
+    }
+    await loadPrList();
+    setTimeout(() => showPrDetails(created.id), 400);
+  } catch (e) { errBox.textContent = apiErrorMessage(e); }
+}
+document.getElementById("prSaveDraftBtn").onclick = () => savePr(false);
+document.getElementById("prSaveSubmitBtn").onclick = () => savePr(true);
+
+async function showPrDetails(id) {
+  hideAllCreateAndDetailBoxes();
+  const wrap = document.getElementById("prDetailsBox");
+  const content = document.getElementById("prDetailsContent");
+  wrap.style.display = "block";
+  content.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  wrap.scrollIntoView({ behavior: "smooth" });
+  try {
+    const { purchaseRequest: pr, items } = await api(`/api/purchase-requests/${id}`);
+    const isFinal = ["REJECTED", "CANCELLED"].includes(pr.status);
+    const activeIdx = PR_WORKFLOW_STEPS.indexOf(pr.status);
+    const stepper = isFinal
+      ? `<span class="badge ${pr.status}">${PR_STATUS_LABELS[pr.status]}</span>${pr.status === "REJECTED" && pr.rejection_reason ? `<div class="err" style="margin-top:6px">سبب الرفض: ${pr.rejection_reason}</div>` : ""}`
+      : `<div class="row" style="flex-wrap:wrap">${PR_WORKFLOW_STEPS.map((s, i) => `
+          <span class="badge ${i <= activeIdx ? (s === pr.status ? s : "APPROVED") : ""}" style="${i > activeIdx ? "opacity:.35" : ""}${s === pr.status ? "outline:2px solid var(--gold-bright)" : ""}">
+            ${PR_STATUS_LABELS[s]}${i < PR_WORKFLOW_STEPS.length - 1 ? " ←" : ""}
+          </span>`).join(" ")}</div>`;
+
+    const canSubmit = pr.status === "DRAFT" && hasPerm("purchasing.submit");
+    const canApproveReject = pr.status === "SUBMITTED" && canApprove();
+    const canCancel = !["CONVERTED_TO_PO", "CANCELLED", "REJECTED"].includes(pr.status) && hasPerm("purchasing.cancel");
+    const canConvert = pr.status === "APPROVED" && hasPerm("purchasing.create");
+
+    content.innerHTML = `
+      <div style="font-weight:800;font-size:15px">طلب شراء #${pr.id} - ${pr.branch_name}</div>
+      <div style="font-size:12px;color:var(--faint);margin:6px 0">
+        مقدّم الطلب: ${pr.requested_by_name || "-"} — تاريخ الطلب: ${fmtDate(pr.requested_at)} — التاريخ المطلوب: ${fmtDate(pr.required_date)}
+      </div>
+      ${pr.reason ? `<div style="font-size:12px;color:var(--faint)">السبب: ${pr.reason}</div>` : ""}
+      <div style="margin:14px 0">${stepper}</div>
+      <table><thead><tr><th>الصنف</th><th>الكمية المطلوبة</th><th>ملاحظات</th></tr></thead><tbody>
+        ${items.map(it => `<tr><td data-label="الصنف">${it.item_name}</td><td data-label="الكمية">${Number(it.requested_quantity).toFixed(2)} ${it.unit || it.item_unit}</td><td data-label="ملاحظات">${it.notes || "-"}</td></tr>`).join("")}
+      </tbody></table>
+      <div class="row" style="margin-top:12px">
+        ${canSubmit ? `<button data-submitpr="${pr.id}">إرسال للاعتماد</button>` : ""}
+        ${canApproveReject ? `<button class="good" data-approvepr="${pr.id}">اعتماد</button><button class="secondary" data-rejectpr="${pr.id}">رفض</button>` : ""}
+        ${canConvert ? `<button data-convertpr="${pr.id}">تحويل لأمر شراء</button>` : ""}
+        ${canCancel ? `<button class="secondary" data-cancelpr="${pr.id}">إلغاء</button>` : ""}
+      </div>
+      <div class="err" id="prActionErr"></div>
+    `;
+    const errBox = () => document.getElementById("prActionErr");
+    content.querySelector("[data-submitpr]")?.addEventListener("click", async () => {
+      try { await api(`/api/purchase-requests/${pr.id}/submit`, { method: "POST" }); await showPrDetails(pr.id); await loadPrList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-approvepr]")?.addEventListener("click", async () => {
+      if (!confirm(`تأكيد اعتماد طلب الشراء #${pr.id}؟`)) return;
+      try { await api(`/api/purchase-requests/${pr.id}/approve`, { method: "POST" }); await showPrDetails(pr.id); await loadPrList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-rejectpr]")?.addEventListener("click", async () => {
+      const reason = prompt("سبب الرفض (إلزامي):");
+      if (!reason || !reason.trim()) return;
+      try { await api(`/api/purchase-requests/${pr.id}/reject`, { method: "POST", body: JSON.stringify({ rejectionReason: reason }) }); await showPrDetails(pr.id); await loadPrList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-cancelpr]")?.addEventListener("click", async () => {
+      const reason = prompt("سبب الإلغاء (اختياري):") || undefined;
+      if (!confirm("تأكيد إلغاء طلب الشراء؟")) return;
+      try { await api(`/api/purchase-requests/${pr.id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }); await showPrDetails(pr.id); await loadPrList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-convertpr]")?.addEventListener("click", () => {
+      switchToTab("po");
+      openPoCreate({ purchaseRequestId: pr.id, branchId: pr.branch_id, items });
+    });
+  } catch (e) {
+    content.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+document.getElementById("prDetailsCloseBtn").onclick = () => { document.getElementById("prDetailsBox").style.display = "none"; };
+
+// ================= UI-2E/F: أوامر الشراء =================
+let approvedPrsCache = [];
+document.getElementById("poFilterBtn").onclick = loadPoList;
+async function loadPoList() {
+  const box = document.getElementById("poListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  const status = document.getElementById("poStatusFilter").value;
+  const supplierId = document.getElementById("poSupplierFilter").value;
+  try {
+    const qs = new URLSearchParams();
+    if (status) qs.set("status", status);
+    if (supplierId) qs.set("supplierId", supplierId);
+    if (auth.user.role === "branch_manager") qs.set("branchId", auth.user.branchId);
+    const list = await api(`/api/purchase-orders?${qs.toString()}`);
+    box.innerHTML = list.length ? `
+      <table><thead><tr>
+        <th>رقم الأمر</th><th>المورد</th><th>مرجع الطلب</th><th>تاريخ الأمر</th><th>التسليم المتوقع</th><th>الإجمالي</th><th>الحالة</th><th></th>
+      </tr></thead><tbody>
+        ${list.map(po => `<tr>
+          <td data-label="رقم الأمر">#${po.id}</td>
+          <td data-label="المورد">${po.supplier_name}</td>
+          <td data-label="مرجع الطلب">${po.purchase_request_id ? `طلب #${po.purchase_request_id}` : "-"}</td>
+          <td data-label="تاريخ الأمر">${fmtDate(po.order_date)}</td>
+          <td data-label="التسليم المتوقع">${fmtDate(po.expected_delivery_date)}</td>
+          <td data-label="الإجمالي">${fmtMoney(po.total)}</td>
+          <td data-label="الحالة"><span class="badge ${po.status}">${PO_STATUS_LABELS[po.status] || po.status}</span></td>
+          <td data-label=""><button class="linkbtn" data-view="${po.id}">تفاصيل</button></td>
+        </tr>`).join("")}
+      </tbody></table>
+    ` : `<div class="hint">مفيش أوامر شراء مطابقة</div>`;
+    box.querySelectorAll("[data-view]").forEach(btn => { btn.onclick = () => showPoDetails(btn.dataset.view); });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+document.getElementById("poNewBtn").onclick = () => openPoCreate({});
+async function openPoCreate({ purchaseRequestId, branchId, items }) {
+  hideAllCreateAndDetailBoxes();
+  document.getElementById("poCreateBox").style.display = "block";
+  document.getElementById("poCreateErr").textContent = "";
+  document.getElementById("poCreateOk").textContent = "";
+  document.getElementById("poItemRows").innerHTML = "";
+  if (branchId) document.getElementById("poBranchSelect").value = branchId;
+
+  try {
+    const branchForPr = branchId || Number(document.getElementById("poBranchSelect").value);
+    const qs = new URLSearchParams({ status: "APPROVED" });
+    if (auth.user.role === "branch_manager") qs.set("branchId", auth.user.branchId);
+    approvedPrsCache = await api(`/api/purchase-requests?${qs.toString()}`);
+  } catch (e) { approvedPrsCache = []; }
+  const prSelect = document.getElementById("poFromPrSelect");
+  prSelect.innerHTML = `<option value="">بدون</option>` + approvedPrsCache.map(pr => `<option value="${pr.id}">طلب #${pr.id} - ${pr.branch_name}</option>`).join("");
+
+  if (items && items.length) {
+    items.forEach(it => addPoRow(it.inventory_item_id, it.requested_quantity, it.unit || it.item_unit, null));
+    if (purchaseRequestId) prSelect.value = purchaseRequestId;
+  } else {
+    addPoRow();
+  }
+  updatePoTotalPreview();
+  document.getElementById("poCreateBox").scrollIntoView({ behavior: "smooth" });
+}
+document.getElementById("poCancelCreateBtn").onclick = () => { document.getElementById("poCreateBox").style.display = "none"; };
+
+document.getElementById("poFromPrSelect").onchange = (e) => {
+  const prId = Number(e.target.value);
+  if (!prId) return;
+  const pr = approvedPrsCache.find(p => p.id === prId);
+  if (pr) document.getElementById("poBranchSelect").value = pr.branch_id;
+  api(`/api/purchase-requests/${prId}`).then(({ items }) => {
+    document.getElementById("poItemRows").innerHTML = "";
+    items.forEach(it => addPoRow(it.inventory_item_id, it.requested_quantity, it.unit || it.item_unit, null));
+    updatePoTotalPreview();
+  }).catch(() => {});
+};
+
+function addPoRow(itemId, qty, unit, unitPrice) {
+  const wrap = document.getElementById("poItemRows");
+  const row = document.createElement("div");
+  row.className = "pickrow";
+  row.innerHTML = `
+    <select class="po-item">${itemOptions()}</select>
+    <input class="po-qty" type="number" min="0" step="any" placeholder="الكمية" value="${qty || ""}" />
+    <input class="po-price" type="number" min="0" step="any" placeholder="سعر الوحدة" value="${unitPrice != null ? unitPrice : ""}" />
+    <button type="button" class="po-remove">×</button>
+  `;
+  if (itemId) row.querySelector(".po-item").value = itemId;
+  row.querySelector(".po-remove").onclick = () => { row.remove(); updatePoTotalPreview(); };
+  row.querySelectorAll("input").forEach(inp => inp.oninput = updatePoTotalPreview);
+  wrap.appendChild(row);
+}
+document.getElementById("poAddRowBtn").onclick = () => addPoRow();
+// UI-2F: إجمالي للعرض بس (نفس الحساب البسيط اللي المستخدم بيكتبه بنفسه) - مش مصدر الحقيقة للحفظ،
+// السيرفر بيحسب subtotal/discount/tax/total الفعلية وقت POST ولا بيتأثر بالرقم ده خالص
+function updatePoTotalPreview() {
+  const total = [...document.querySelectorAll("#poItemRows .pickrow")].reduce((sum, row) => {
+    const qty = Number(row.querySelector(".po-qty").value) || 0;
+    const price = Number(row.querySelector(".po-price").value) || 0;
+    return sum + qty * price;
+  }, 0);
+  document.getElementById("poTotalPreview").textContent = fmtMoney(total);
+}
+
+document.getElementById("poSaveDraftBtn").onclick = async () => {
+  const errBox = document.getElementById("poCreateErr");
+  const okBox = document.getElementById("poCreateOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const items = [...document.querySelectorAll("#poItemRows .pickrow")].map(row => {
+    const sel = row.querySelector(".po-item");
+    return {
+      inventoryItemId: Number(sel.value),
+      orderedQuantity: Number(row.querySelector(".po-qty").value),
+      unit: sel.selectedOptions[0]?.dataset.unit || null,
+      unitPrice: Number(row.querySelector(".po-price").value),
+    };
+  }).filter(it => it.orderedQuantity > 0);
+  if (items.length === 0) { errBox.textContent = "لازم صنف واحد على الأقل بكمية وسعر صحيحين"; return; }
+  try {
+    const created = await api("/api/purchase-orders", {
+      method: "POST",
+      body: JSON.stringify({
+        supplierId: Number(document.getElementById("poSupplierSelect").value),
+        branchId: Number(document.getElementById("poBranchSelect").value),
+        purchaseRequestId: document.getElementById("poFromPrSelect").value || null,
+        expectedDeliveryDate: document.getElementById("poExpectedDelivery").value || null,
+        notes: document.getElementById("poNotes").value.trim() || null,
+        items,
+      }),
+    });
+    okBox.textContent = `تم إنشاء أمر الشراء #${created.id} كمسودة`;
+    await loadPoList();
+    setTimeout(() => showPoDetails(created.id), 400);
+  } catch (e) { errBox.textContent = apiErrorMessage(e); }
+};
+
+async function showPoDetails(id) {
+  hideAllCreateAndDetailBoxes();
+  const wrap = document.getElementById("poDetailsBox");
+  const content = document.getElementById("poDetailsContent");
+  wrap.style.display = "block";
+  content.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  wrap.scrollIntoView({ behavior: "smooth" });
+  try {
+    const { purchaseOrder: po, items } = await api(`/api/purchase-orders/${id}`);
+    const isFinal = po.status === "CANCELLED";
+    const activeIdx = PO_WORKFLOW_STEPS.indexOf(po.status);
+    const stepper = isFinal
+      ? `<span class="badge CANCELLED">ملغي</span>`
+      : `<div class="row" style="flex-wrap:wrap">${PO_WORKFLOW_STEPS.map((s, i) => `
+          <span class="badge ${i <= activeIdx ? (s === po.status ? s : "APPROVED") : ""}" style="${i > activeIdx ? "opacity:.35" : ""}${s === po.status ? "outline:2px solid var(--gold-bright)" : ""}">
+            ${PO_STATUS_LABELS[s]}${i < PO_WORKFLOW_STEPS.length - 1 ? " ←" : ""}
+          </span>`).join(" ")}</div>`;
+
+    const canSubmit = po.status === "DRAFT" && hasPerm("purchasing.submit");
+    const canApproveAction = po.status === "SUBMITTED" && canApprove();
+    const canCancel = !["FULLY_RECEIVED", "CLOSED", "CANCELLED"].includes(po.status) && hasPerm("purchasing.cancel");
+    const canReceive = ["APPROVED", "PARTIALLY_RECEIVED"].includes(po.status) && hasPerm("purchasing.create");
+    const canClose = po.status === "FULLY_RECEIVED" && hasPerm("purchasing.edit");
+
+    content.innerHTML = `
+      <div class="docchain">طلب شراء: ${po.purchase_request_id ? `<button class="linkbtn" data-openpr="${po.purchase_request_id}">#${po.purchase_request_id}</button>` : "بدون (أمر مباشر)"} ← <b>أمر شراء #${po.id}</b></div>
+      <div style="font-weight:800;font-size:15px">أمر شراء #${po.id} - ${po.supplier_name}</div>
+      <div style="font-size:12px;color:var(--faint);margin:6px 0">
+        الفرع: ${po.branch_name} — تاريخ الأمر: ${fmtDate(po.order_date)} — التسليم المتوقع: ${fmtDate(po.expected_delivery_date)}
+      </div>
+      ${po.notes ? `<div style="font-size:12px;color:var(--faint)">ملاحظات: ${po.notes}</div>` : ""}
+      <div style="margin:14px 0">${stepper}</div>
+      <table><thead><tr><th>الصنف</th><th>المطلوب</th><th>المستلم</th><th>المتبقي</th><th>السعر</th><th>سعر سابق</th><th>الفرق</th><th>الإجمالي</th></tr></thead><tbody>
+        ${items.map(it => `<tr>
+          <td data-label="الصنف">${it.item_name}</td>
+          <td data-label="المطلوب">${Number(it.ordered_quantity).toFixed(2)} ${it.unit || it.item_unit}</td>
+          <td data-label="المستلم">${Number(it.received_quantity).toFixed(2)}</td>
+          <td data-label="المتبقي">${Number(it.remainingQuantity).toFixed(2)}</td>
+          <td data-label="السعر">${fmtMoney(it.unit_price)}</td>
+          <td data-label="سعر سابق">${it.previousPrice != null ? fmtMoney(it.previousPrice) : "-"}</td>
+          <td data-label="الفرق">${it.differencePercent != null ? `<span class="badge ${it.difference > 0 ? "variance-pos" : "variance-neg"}">${it.difference > 0 ? "+" : ""}${it.differencePercent.toFixed(1)}%</span>` : "-"}</td>
+          <td data-label="الإجمالي">${fmtMoney(it.total)}</td>
+        </tr>`).join("")}
+      </tbody></table>
+      <div class="row" style="justify-content:flex-end;font-size:13px;margin-top:8px">
+        <div>الإجمالي: <b>${fmtMoney(po.total)}</b> (فرعي ${fmtMoney(po.subtotal)}، خصم ${fmtMoney(po.discount)}، ضريبة ${fmtMoney(po.tax)})</div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        ${canSubmit ? `<button data-submitpo="${po.id}">إرسال للاعتماد</button>` : ""}
+        ${canApproveAction ? `<button class="good" data-approvepo="${po.id}">اعتماد</button>` : ""}
+        ${canReceive ? `<button data-receivepo="${po.id}">استلام مشتريات</button>` : ""}
+        ${canClose ? `<button class="secondary" data-closepo="${po.id}">إقفال الأمر</button>` : ""}
+        ${canCancel ? `<button class="secondary" data-cancelpo="${po.id}">إلغاء</button>` : ""}
+        <button class="secondary" id="poPrintBtn">طباعة</button>
+      </div>
+      <div class="err" id="poActionErr"></div>
+    `;
+    const errBox = () => document.getElementById("poActionErr");
+    content.querySelector("[data-openpr]")?.addEventListener("click", (e) => { switchToTab("pr"); showPrDetails(e.target.dataset.openpr); });
+    content.querySelector("[data-submitpo]")?.addEventListener("click", async () => {
+      try { await api(`/api/purchase-orders/${po.id}/submit`, { method: "POST" }); await showPoDetails(po.id); await loadPoList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-approvepo]")?.addEventListener("click", async () => {
+      if (!confirm(`تأكيد اعتماد أمر الشراء #${po.id}؟`)) return;
+      try { await api(`/api/purchase-orders/${po.id}/approve`, { method: "POST" }); await showPoDetails(po.id); await loadPoList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-cancelpo]")?.addEventListener("click", async () => {
+      const reason = prompt("سبب الإلغاء (اختياري):") || undefined;
+      if (!confirm("تأكيد إلغاء أمر الشراء؟")) return;
+      try { await api(`/api/purchase-orders/${po.id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }); await showPoDetails(po.id); await loadPoList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-closepo]")?.addEventListener("click", async () => {
+      try { await api(`/api/purchase-orders/${po.id}/close`, { method: "POST" }); await showPoDetails(po.id); await loadPoList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-receivepo]")?.addEventListener("click", () => {
+      switchToTab("grn");
+      openGrnCreate(po.id);
+    });
+    document.getElementById("poPrintBtn").onclick = () => {
+      const rowsHtml = items.map(it => `<tr><td>${it.item_name}</td><td>${Number(it.ordered_quantity).toFixed(2)} ${it.unit || it.item_unit}</td><td>${fmtMoney(it.unit_price)}</td><td>${fmtMoney(it.total)}</td></tr>`).join("");
+      window.SatamoniPrint.openCustomPrint(`أمر شراء #${po.id}`, `
+        <div style="font-size:13px;margin-bottom:10px">المورد: ${po.supplier_name} — الفرع: ${po.branch_name} — تاريخ الأمر: ${fmtDate(po.order_date)} — التسليم المتوقع: ${fmtDate(po.expected_delivery_date)}</div>
+        <table style="width:100%;border-collapse:collapse"><thead><tr><th>الصنف</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+        <div style="margin-top:10px;font-weight:800">الإجمالي: ${fmtMoney(po.total)}</div>
+      `);
+    };
+  } catch (e) {
+    content.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+document.getElementById("poDetailsCloseBtn").onclick = () => { document.getElementById("poDetailsBox").style.display = "none"; };
+
+// ================= UI-2G/H/I: استلام المشتريات (GRN) =================
+document.getElementById("grnFilterBtn").onclick = loadGrnList;
+async function loadGrnList() {
+  const box = document.getElementById("grnListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  const status = document.getElementById("grnStatusFilter").value;
+  try {
+    const qs = new URLSearchParams();
+    if (status) qs.set("status", status);
+    if (auth.user.role === "branch_manager") qs.set("branchId", auth.user.branchId);
+    const list = await api(`/api/goods-receipts?${qs.toString()}`);
+    box.innerHTML = list.length ? `
+      <table><thead><tr>
+        <th>رقم السند</th><th>المورد</th><th>أمر الشراء</th><th>الفرع</th><th>تاريخ الاستلام</th><th>الحالة</th><th></th>
+      </tr></thead><tbody>
+        ${list.map(gr => `<tr>
+          <td data-label="رقم السند">#${gr.id}</td>
+          <td data-label="المورد">${gr.supplier_name}</td>
+          <td data-label="أمر الشراء">#${gr.purchase_order_id}</td>
+          <td data-label="الفرع">${gr.branch_name}</td>
+          <td data-label="تاريخ الاستلام">${fmtDate(gr.received_at)}</td>
+          <td data-label="الحالة"><span class="badge ${gr.status}">${GRN_STATUS_LABELS[gr.status] || gr.status}</span></td>
+          <td data-label=""><button class="linkbtn" data-view="${gr.id}">تفاصيل</button></td>
+        </tr>`).join("")}
+      </tbody></table>
+    ` : `<div class="hint">مفيش سندات استلام مطابقة</div>`;
+    box.querySelectorAll("[data-view]").forEach(btn => { btn.onclick = () => showGrnDetails(btn.dataset.view); });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+document.getElementById("grnNewBtn").onclick = () => openGrnCreate(null);
+async function openGrnCreate(preselectPoId) {
+  hideAllCreateAndDetailBoxes();
+  document.getElementById("grnCreateBox").style.display = "block";
+  document.getElementById("grnCreateErr").textContent = "";
+  document.getElementById("grnCreateOk").textContent = "";
+  document.getElementById("grnItemsBox").innerHTML = "";
+  document.getElementById("grnPoInfo").innerHTML = "";
+  document.getElementById("grnSaveBtn").disabled = true;
+
+  const qs = new URLSearchParams();
+  if (auth.user.role === "branch_manager") qs.set("branchId", auth.user.branchId);
+  const [approvedPos, partialPos] = await Promise.all([
+    api(`/api/purchase-orders?${qs.toString()}&status=APPROVED`).catch(() => []),
+    api(`/api/purchase-orders?${qs.toString()}&status=PARTIALLY_RECEIVED`).catch(() => []),
+  ]);
+  const receivablePos = [...approvedPos, ...partialPos];
+  const select = document.getElementById("grnPoSelect");
+  select.innerHTML = `<option value="">اختار أمر شراء معتمد...</option>` +
+    receivablePos.map(po => `<option value="${po.id}">أمر #${po.id} - ${po.supplier_name} (${po.branch_name})</option>`).join("");
+  select.value = preselectPoId || "";
+  if (preselectPoId) await onGrnPoSelected(preselectPoId);
+  document.getElementById("grnCreateBox").scrollIntoView({ behavior: "smooth" });
+}
+document.getElementById("grnCancelCreateBtn").onclick = () => { document.getElementById("grnCreateBox").style.display = "none"; };
+document.getElementById("grnPoSelect").onchange = (e) => onGrnPoSelected(e.target.value);
+
+let grnCurrentPo = null;
+async function onGrnPoSelected(poId) {
+  const itemsBox = document.getElementById("grnItemsBox");
+  const infoBox = document.getElementById("grnPoInfo");
+  if (!poId) { itemsBox.innerHTML = ""; infoBox.innerHTML = ""; document.getElementById("grnSaveBtn").disabled = true; return; }
+  itemsBox.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    const { purchaseOrder: po, items } = await api(`/api/purchase-orders/${poId}`);
+    grnCurrentPo = po;
+    infoBox.innerHTML = `<div class="hint">المورد: ${po.supplier_name} — التسليم المتوقع: ${fmtDate(po.expected_delivery_date)} — أدخل الكمية اللي وصلت فعليًا، وفرّق بوضوح بين المقبول والمرفوض.</div>`;
+    const receivable = items.filter(it => Number(it.remainingQuantity) > 0.0000001);
+    if (receivable.length === 0) {
+      itemsBox.innerHTML = `<div class="err">أمر الشراء ده مستلم بالكامل بالفعل - مفيش كمية متبقية تتستلم</div>`;
+      document.getElementById("grnSaveBtn").disabled = true;
+      return;
+    }
+    itemsBox.innerHTML = `
+      <table><thead><tr>
+        <th>الصنف</th><th>المطلوب</th><th>المتبقي</th><th>المستلم فعليًا</th><th>مقبول</th><th>مرفوض</th><th>سعر الوحدة</th>
+        <th>رقم الدفعة</th><th>تاريخ الإنتاج</th><th>تاريخ الصلاحية</th><th>سبب الرفض</th>
+      </tr></thead><tbody>
+        ${receivable.map(it => `<tr data-poitem="${it.id}">
+          <td data-label="الصنف">${it.item_name}</td>
+          <td data-label="المطلوب">${Number(it.ordered_quantity).toFixed(2)} ${it.unit || it.item_unit}</td>
+          <td data-label="المتبقي">${Number(it.remainingQuantity).toFixed(2)}</td>
+          <td data-label="المستلم فعليًا"><input class="grn-received" type="number" min="0" step="any" value="${Number(it.remainingQuantity).toFixed(2)}" style="width:90px" /></td>
+          <td data-label="مقبول"><input class="grn-accepted" type="number" min="0" step="any" value="${Number(it.remainingQuantity).toFixed(2)}" style="width:90px" /></td>
+          <td data-label="مرفوض"><input class="grn-rejected" type="number" value="0.00" style="width:70px" disabled /></td>
+          <td data-label="سعر الوحدة"><input class="grn-price" type="number" min="0" step="any" value="${it.unit_price}" style="width:90px" /></td>
+          <td data-label="رقم الدفعة"><input class="grn-batch" placeholder="اختياري" style="width:100px" /></td>
+          <td data-label="تاريخ الإنتاج"><input class="grn-mfg" type="date" /></td>
+          <td data-label="تاريخ الصلاحية"><input class="grn-exp" type="date" /></td>
+          <td data-label="سبب الرفض"><input class="grn-rejreason" placeholder="لو فيه مرفوض" style="width:120px" disabled /></td>
+        </tr>`).join("")}
+      </tbody></table>
+      <div class="hint" style="margin-top:8px">"مقبول" بيدخل المخزون فعليًا وقت الترحيل. "مرفوض" (المستلم - المقبول) بيتسجل للتتبّع بس وميدخلش أي رصيد.</div>
+    `;
+    itemsBox.querySelectorAll("tr[data-poitem]").forEach(row => {
+      const recalc = () => {
+        const received = Number(row.querySelector(".grn-received").value) || 0;
+        const accepted = Number(row.querySelector(".grn-accepted").value) || 0;
+        const rejected = Math.max(0, received - accepted);
+        row.querySelector(".grn-rejected").value = rejected.toFixed(2);
+        row.querySelector(".grn-rejreason").disabled = rejected <= 0;
+      };
+      row.querySelector(".grn-received").oninput = recalc;
+      row.querySelector(".grn-accepted").oninput = recalc;
+      recalc();
+    });
+    document.getElementById("grnSaveBtn").disabled = false;
+  } catch (e) {
+    itemsBox.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+async function submitGrn(overReceiveApprovedBy) {
+  const errBox = document.getElementById("grnCreateErr");
+  const okBox = document.getElementById("grnCreateOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const rows = [...document.querySelectorAll("#grnItemsBox tr[data-poitem]")];
+  const items = [];
+  for (const row of rows) {
+    const received = Number(row.querySelector(".grn-received").value) || 0;
+    if (received <= 0) continue;
+    const accepted = Number(row.querySelector(".grn-accepted").value) || 0;
+    const rejected = Number(row.querySelector(".grn-rejected").value) || 0;
+    if (rejected > 0 && !row.querySelector(".grn-rejreason").value.trim()) {
+      errBox.textContent = "لازم سبب رفض لأي صنف فيه كمية مرفوضة";
+      return;
+    }
+    items.push({
+      purchaseOrderItemId: Number(row.dataset.poitem),
+      receivedQuantity: received, acceptedQuantity: accepted, rejectedQuantity: rejected,
+      unitPrice: Number(row.querySelector(".grn-price").value),
+      batchNumber: row.querySelector(".grn-batch").value.trim() || null,
+      manufacturingDate: row.querySelector(".grn-mfg").value || null,
+      expiryDate: row.querySelector(".grn-exp").value || null,
+      rejectionReason: rejected > 0 ? row.querySelector(".grn-rejreason").value.trim() : null,
+    });
+  }
+  if (items.length === 0) { errBox.textContent = "لازم كمية مستلمة أكبر من صفر لصنف واحد على الأقل"; return; }
+  try {
+    const created = await api("/api/goods-receipts", {
+      method: "POST",
+      body: JSON.stringify({
+        purchaseOrderId: Number(document.getElementById("grnPoSelect").value),
+        supplierDocumentNumber: document.getElementById("grnSupplierDoc").value.trim() || null,
+        notes: document.getElementById("grnNotes").value.trim() || null,
+        items, overReceiveApprovedBy,
+      }),
+    });
+    okBox.textContent = `تم حفظ سند الاستلام #${created.id} كمسودة - افتح تفاصيله وارحّله عشان يدخل المخزون فعليًا`;
+    await loadGrnList();
+    setTimeout(() => showGrnDetails(created.id), 400);
+  } catch (e) {
+    if (e.code === "OVER_RECEIVE_NEEDS_APPROVAL") {
+      if (confirm(`${e.message}\n\nتأكيد إنك (${auth.user.name}) موافق على استلام الكمية الزيادة دي؟`)) {
+        return submitGrn(auth.user.id);
+      }
+      return;
+    }
+    errBox.textContent = apiErrorMessage(e);
+  }
+}
+document.getElementById("grnSaveBtn").onclick = () => submitGrn(undefined);
+
+async function showGrnDetails(id) {
+  hideAllCreateAndDetailBoxes();
+  const wrap = document.getElementById("grnDetailsBox");
+  const content = document.getElementById("grnDetailsContent");
+  wrap.style.display = "block";
+  content.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  wrap.scrollIntoView({ behavior: "smooth" });
+  try {
+    const { goodsReceipt: gr, items } = await api(`/api/goods-receipts/${id}`);
+    const canPost = gr.status === "DRAFT" && hasPerm("purchasing.create", "purchasing.approve");
+    const canCancel = gr.status !== "CANCELLED" && hasPerm("purchasing.cancel");
+    content.innerHTML = `
+      <div class="docchain"><button class="linkbtn" data-openpo="${gr.purchase_order_id}">أمر شراء #${gr.purchase_order_id}</button> ← <b>سند استلام #${gr.id}</b></div>
+      <div style="font-weight:800;font-size:15px">سند استلام #${gr.id} - ${gr.supplier_name}</div>
+      <div style="font-size:12px;color:var(--faint);margin:6px 0">
+        الفرع: ${gr.branch_name} — المستلِم: ${gr.received_by_name || "-"} — التاريخ: ${fmtDate(gr.received_at)}
+        ${gr.supplier_document_number ? ` — مستند المورد: ${gr.supplier_document_number}` : ""}
+      </div>
+      <div style="margin:10px 0"><span class="badge ${gr.status}">${GRN_STATUS_LABELS[gr.status] || gr.status}</span>
+        ${gr.status === "POSTED" ? ` <span class="hint" style="display:inline">— تم ترحيله للمخزون والمحاسبة</span>` : gr.status === "DRAFT" ? ` <span class="hint" style="display:inline">— مسودة، لسه مالمسش المخزون</span>` : ""}
+      </div>
+      <table><thead><tr><th>الصنف</th><th>مطلوب</th><th>مستلم</th><th>مقبول</th><th>مرفوض</th><th>سعر الوحدة</th><th>الدفعة</th><th>الصلاحية</th></tr></thead><tbody>
+        ${items.map(it => `<tr>
+          <td data-label="الصنف">${it.item_name}</td>
+          <td data-label="مطلوب">${Number(it.ordered_quantity).toFixed(2)} ${it.unit || it.stock_unit}</td>
+          <td data-label="مستلم">${Number(it.received_quantity).toFixed(2)}</td>
+          <td data-label="مقبول">${Number(it.accepted_quantity).toFixed(2)}</td>
+          <td data-label="مرفوض">${Number(it.rejected_quantity) > 0 ? `<span class="badge variance-pos">${Number(it.rejected_quantity).toFixed(2)}${it.rejection_reason ? ` - ${it.rejection_reason}` : ""}</span>` : "0"}</td>
+          <td data-label="سعر الوحدة">${fmtMoney(it.unit_price)}</td>
+          <td data-label="الدفعة">${it.batch_number || "-"}</td>
+          <td data-label="الصلاحية">${fmtDate(it.expiry_date)}</td>
+        </tr>`).join("")}
+      </tbody></table>
+      <div class="row" style="margin-top:12px">
+        ${canPost ? `<button class="good" data-postgrn="${gr.id}">ترحيل الاستلام (يدخل المخزون)</button>` : ""}
+        ${canCancel ? `<button class="secondary" data-cancelgrn="${gr.id}">إلغاء</button>` : ""}
+      </div>
+      <div class="err" id="grnActionErr"></div>
+    `;
+    const errBox = () => document.getElementById("grnActionErr");
+    content.querySelector("[data-openpo]")?.addEventListener("click", (e) => { switchToTab("po"); showPoDetails(e.target.dataset.openpo); });
+    content.querySelector("[data-postgrn]")?.addEventListener("click", async () => {
+      if (!confirm("تأكيد ترحيل الاستلام؟ الكمية المقبولة هتدخل المخزون فعليًا فورًا.")) return;
+      try { await api(`/api/goods-receipts/${gr.id}/post`, { method: "POST" }); await showGrnDetails(gr.id); await loadGrnList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-cancelgrn]")?.addEventListener("click", async () => {
+      const reason = prompt("سبب الإلغاء (اختياري):") || undefined;
+      if (!confirm("تأكيد إلغاء سند الاستلام؟")) return;
+      try { await api(`/api/goods-receipts/${gr.id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }); await showGrnDetails(gr.id); await loadGrnList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+  } catch (e) {
+    content.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+document.getElementById("grnDetailsCloseBtn").onclick = () => { document.getElementById("grnDetailsBox").style.display = "none"; };
+
+// ================= UI-2J/K/L: فواتير الموردين =================
+document.getElementById("invFilterBtn").onclick = loadInvList;
+async function loadInvList() {
+  const box = document.getElementById("invListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  const status = document.getElementById("invStatusFilter").value;
+  try {
+    const qs = new URLSearchParams();
+    if (status) qs.set("status", status);
+    if (auth.user.role === "branch_manager") qs.set("branchId", auth.user.branchId);
+    const list = await api(`/api/supplier-invoices?${qs.toString()}`);
+    box.innerHTML = list.length ? `
+      <table><thead><tr>
+        <th>رقم فاتورة المورد</th><th>المورد</th><th>أمر الشراء</th><th>تاريخ الفاتورة</th><th>الإجمالي</th><th>الفرق</th><th>الحالة</th><th></th>
+      </tr></thead><tbody>
+        ${list.map(inv => `<tr>
+          <td data-label="رقم الفاتورة">${inv.supplier_invoice_number}</td>
+          <td data-label="المورد">${inv.supplier_name}</td>
+          <td data-label="أمر الشراء">${inv.purchase_order_id ? `#${inv.purchase_order_id}` : "-"}</td>
+          <td data-label="تاريخ الفاتورة">${fmtDate(inv.invoice_date)}</td>
+          <td data-label="الإجمالي">${fmtMoney(inv.total)}</td>
+          <td data-label="الفرق">${Math.abs(Number(inv.variance_amount)) > 0.01 ? `<span class="badge ${Number(inv.variance_amount) > 0 ? "variance-pos" : "variance-neg"}">${Number(inv.variance_amount) > 0 ? "+" : ""}${fmtMoney(inv.variance_amount)}</span>` : "مطابق"}</td>
+          <td data-label="الحالة"><span class="badge ${inv.status}">${INV_STATUS_LABELS[inv.status] || inv.status}</span></td>
+          <td data-label=""><button class="linkbtn" data-view="${inv.id}">تفاصيل</button></td>
+        </tr>`).join("")}
+      </tbody></table>
+    ` : `<div class="hint">مفيش فواتير موردين مطابقة</div>`;
+    box.querySelectorAll("[data-view]").forEach(btn => { btn.onclick = () => showInvDetails(btn.dataset.view); });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+let grnItemPool = []; // كل سطور الاستلام (GRN items) المتاحة للربط، من كل سندات الاستلام المرحّلة لأمر الشراء المختار
+document.getElementById("invNewBtn").onclick = () => {
+  hideAllCreateAndDetailBoxes();
+  document.getElementById("invCreateBox").style.display = "block";
+  document.getElementById("invCreateErr").textContent = "";
+  document.getElementById("invCreateOk").textContent = "";
+  document.getElementById("invNumber").value = "";
+  document.getElementById("invTax").value = "0";
+  document.getElementById("invNotes").value = "";
+  document.getElementById("invPoSelect").innerHTML = `<option value="">اختار أمر شراء...</option>`;
+  document.getElementById("invLineRows").innerHTML = "";
+  grnItemPool = [];
+  loadPoOptionsForInvoice();
+  addInvRow();
+  updateInvSubtotalPreview();
+  document.getElementById("invCreateBox").scrollIntoView({ behavior: "smooth" });
+};
+document.getElementById("invCancelCreateBtn").onclick = () => { document.getElementById("invCreateBox").style.display = "none"; };
+
+async function loadPoOptionsForInvoice() {
+  try {
+    const qs = new URLSearchParams();
+    if (auth.user.role === "branch_manager") qs.set("branchId", auth.user.branchId);
+    const [approved, partial, fully] = await Promise.all([
+      api(`/api/purchase-orders?${qs.toString()}&status=APPROVED`),
+      api(`/api/purchase-orders?${qs.toString()}&status=PARTIALLY_RECEIVED`),
+      api(`/api/purchase-orders?${qs.toString()}&status=FULLY_RECEIVED`),
+    ]);
+    const pos = [...approved, ...partial, ...fully];
+    document.getElementById("invPoSelect").innerHTML = `<option value="">بدون (سطر يدوي فقط)</option>` +
+      pos.map(po => `<option value="${po.id}" data-supplier="${po.supplier_id}" data-branch="${po.branch_id}">أمر #${po.id} - ${po.supplier_name}</option>`).join("");
+  } catch (e) { /* الحقل هيفضل فاضي - المستخدم لسه يقدر يكمل بسطور يدوية */ }
+}
+document.getElementById("invPoSelect").onchange = async (e) => {
+  const poId = e.target.value;
+  grnItemPool = [];
+  if (poId) {
+    const opt = e.target.selectedOptions[0];
+    document.getElementById("invSupplierSelect").value = opt.dataset.supplier;
+    document.getElementById("invBranchSelect").value = opt.dataset.branch;
+    try {
+      const grns = await api(`/api/goods-receipts?purchaseOrderId=${poId}&status=POSTED`);
+      for (const gr of grns) {
+        const { items } = await api(`/api/goods-receipts/${gr.id}`);
+        items.forEach(it => grnItemPool.push({
+          goodsReceiptItemId: it.id, goodsReceiptId: gr.id, inventoryItemId: it.inventory_item_id,
+          itemName: it.item_name, unit: it.unit || it.stock_unit, unitPrice: Number(it.unit_price), acceptedQty: Number(it.accepted_quantity),
+        }));
+      }
+    } catch (err) { /* تجاهل - يقدر يكمل يدوي */ }
+  }
+  document.querySelectorAll("#invLineRows .pickrow").forEach(refreshInvRowOptions);
+};
+
+function addInvRow() {
+  const wrap = document.getElementById("invLineRows");
+  const row = document.createElement("div");
+  row.className = "pickrow";
+  row.innerHTML = `
+    <select class="inv-source" style="flex:2"></select>
+    <input class="inv-qty" type="number" min="0" step="any" placeholder="الكمية" />
+    <input class="inv-price" type="number" min="0" step="any" placeholder="سعر الوحدة" />
+    <button type="button" class="inv-remove">×</button>
+  `;
+  refreshInvRowOptions(row);
+  row.querySelector(".inv-source").onchange = () => applyInvRowSelection(row);
+  row.querySelectorAll(".inv-qty,.inv-price").forEach(inp => inp.oninput = updateInvSubtotalPreview);
+  row.querySelector(".inv-remove").onclick = () => { row.remove(); updateInvSubtotalPreview(); };
+  wrap.appendChild(row);
+  applyInvRowSelection(row);
+}
+document.getElementById("invAddRowBtn").onclick = addInvRow;
+function refreshInvRowOptions(row) {
+  const sel = row.querySelector(".inv-source");
+  const grnOptions = grnItemPool.map((g, i) => `<option value="grn:${i}">من الاستلام #${g.goodsReceiptId}: ${g.itemName} (متاح ${g.acceptedQty.toFixed(2)} ${g.unit})</option>`).join("");
+  const manualOptions = inventoryItems.map(it => `<option value="item:${it.id}">${it.name} (${it.unit}) - يدوي (بدون ربط استلام)</option>`).join("");
+  sel.innerHTML = (grnOptions ? `<optgroup label="من سندات الاستلام">${grnOptions}</optgroup>` : "") + `<optgroup label="صنف يدوي">${manualOptions}</optgroup>`;
+}
+function applyInvRowSelection(row) {
+  const val = row.querySelector(".inv-source").value;
+  if (val.startsWith("grn:")) {
+    const g = grnItemPool[Number(val.split(":")[1])];
+    row.querySelector(".inv-qty").value = g.acceptedQty.toFixed(2);
+    row.querySelector(".inv-price").value = g.unitPrice.toFixed(2);
+  }
+  updateInvSubtotalPreview();
+}
+// UI-2K: إجمالي السطور المُدخلة للعرض بس (مجموع كمية×سعر بسيط زي ما المستخدم كاتبه) - مش حساب فرق
+// المطابقة (ده السيرفر بس اللي بيحسبه وقت POST مقابل قيمة الاستلام الفعلية المرحّلة)
+function updateInvSubtotalPreview() {
+  const total = [...document.querySelectorAll("#invLineRows .pickrow")].reduce((sum, row) => {
+    const qty = Number(row.querySelector(".inv-qty").value) || 0;
+    const price = Number(row.querySelector(".inv-price").value) || 0;
+    return sum + qty * price;
+  }, 0);
+  document.getElementById("invSubtotalPreview").textContent = fmtMoney(total);
+}
+
+document.getElementById("invSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("invCreateErr");
+  const okBox = document.getElementById("invCreateOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const lines = [...document.querySelectorAll("#invLineRows .pickrow")].map(row => {
+    const val = row.querySelector(".inv-source").value;
+    const qty = Number(row.querySelector(".inv-qty").value);
+    const price = Number(row.querySelector(".inv-price").value);
+    if (val.startsWith("grn:")) {
+      const g = grnItemPool[Number(val.split(":")[1])];
+      return { goodsReceiptItemId: g.goodsReceiptItemId, inventoryItemId: g.inventoryItemId, invoicedQuantity: qty, unit: g.unit, unitPrice: price };
+    }
+    const itemId = Number(val.split(":")[1]);
+    const item = inventoryItems.find(i => i.id === itemId);
+    return { inventoryItemId: itemId, invoicedQuantity: qty, unit: item?.unit || null, unitPrice: price };
+  }).filter(l => l.invoicedQuantity > 0);
+  if (lines.length === 0) { errBox.textContent = "لازم سطر واحد على الأقل بكمية أكبر من صفر"; return; }
+  if (!document.getElementById("invNumber").value.trim()) { errBox.textContent = "لازم رقم فاتورة المورد"; return; }
+  try {
+    const created = await api("/api/supplier-invoices", {
+      method: "POST",
+      body: JSON.stringify({
+        supplierId: Number(document.getElementById("invSupplierSelect").value),
+        branchId: Number(document.getElementById("invBranchSelect").value),
+        purchaseOrderId: document.getElementById("invPoSelect").value || null,
+        supplierInvoiceNumber: document.getElementById("invNumber").value.trim(),
+        invoiceDate: document.getElementById("invDate").value || null,
+        tax: Number(document.getElementById("invTax").value) || 0,
+        notes: document.getElementById("invNotes").value.trim() || null,
+        lines,
+      }),
+    });
+    okBox.textContent = `تم حفظ الفاتورة #${created.id}`;
+    await loadInvList();
+    setTimeout(() => showInvDetails(created.id), 400);
+  } catch (e) { errBox.textContent = apiErrorMessage(e); }
+};
+
+async function showInvDetails(id) {
+  hideAllCreateAndDetailBoxes();
+  const wrap = document.getElementById("invDetailsBox");
+  const content = document.getElementById("invDetailsContent");
+  wrap.style.display = "block";
+  content.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  wrap.scrollIntoView({ behavior: "smooth" });
+  try {
+    const { invoice: inv, lines, payments } = await api(`/api/supplier-invoices/${id}`);
+    const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
+    const hasVariance = Math.abs(Number(inv.variance_amount)) > 0.01;
+    const canApproveInv = ["MATCHED", "VARIANCE_PENDING"].includes(inv.status) && canApprove();
+    const canCancelInv = ["DRAFT", "MATCHED", "VARIANCE_PENDING", "APPROVED"].includes(inv.status) && payments.length === 0 && hasPerm("purchasing.cancel");
+    const canPay = ["APPROVED", "PARTIALLY_PAID"].includes(inv.status) && hasPerm("purchasing.create", "accounting.create");
+
+    content.innerHTML = `
+      <div class="docchain">${inv.purchase_order_id ? `<button class="linkbtn" data-openpo="${inv.purchase_order_id}">أمر شراء #${inv.purchase_order_id}</button> ← ` : ""}<b>فاتورة مورد ${inv.supplier_invoice_number}</b></div>
+      <div style="font-weight:800;font-size:15px">فاتورة ${inv.supplier_invoice_number} - ${inv.supplier_name}</div>
+      <div style="font-size:12px;color:var(--faint);margin:6px 0">
+        الفرع: ${inv.branch_name} — تاريخ الفاتورة: ${fmtDate(inv.invoice_date)} — الاستحقاق: ${fmtDate(inv.due_date)}
+      </div>
+      ${inv.notes ? `<div style="font-size:12px;color:var(--faint)">ملاحظات: ${inv.notes}</div>` : ""}
+      <div style="margin:10px 0"><span class="badge ${inv.status}">${INV_STATUS_LABELS[inv.status] || inv.status}</span></div>
+
+      <h2>المطابقة (PO → GRN → فاتورة)</h2>
+      <div class="formbox">
+        <div class="row" style="justify-content:space-between">
+          <div>قيمة الاستلام المرحّلة (Matched): <b>${fmtMoney(inv.matched_total)}</b></div>
+          <div>قيمة الفاتورة: <b>${fmtMoney(inv.subtotal)}</b></div>
+          <div>الفرق: ${hasVariance ? `<span class="badge ${Number(inv.variance_amount) > 0 ? "variance-pos" : "variance-neg"}">فرق الفاتورة: ${Number(inv.variance_amount) > 0 ? "+" : ""}${fmtMoney(inv.variance_amount)}</span>` : `<span class="badge APPROVED">مطابق تمامًا</span>`}</div>
+        </div>
+        ${hasVariance && inv.status === "VARIANCE_PENDING" ? `<div class="hint" style="margin-top:8px">الفاتورة فيها فرق عن قيمة الاستلام المرحّلة - الاعتماد هيرحّل قيد الفرق ده صراحة (${inv.variance_amount > 0 ? "زيادة في المخزون" : "نقص من المخزون"}) بمجرد الاعتماد.</div>` : ""}
+      </div>
+
+      <table><thead><tr><th>الصنف</th><th>الكمية</th><th>سعر الفاتورة</th><th>سعر الاستلام</th><th>إجمالي السطر</th><th>فرق السطر</th></tr></thead><tbody>
+        ${lines.map(l => `<tr>
+          <td data-label="الصنف">${l.item_name}</td>
+          <td data-label="الكمية">${Number(l.invoiced_quantity).toFixed(2)} ${l.unit || ""}</td>
+          <td data-label="سعر الفاتورة">${fmtMoney(l.unit_price)}</td>
+          <td data-label="سعر الاستلام">${l.grn_unit_price != null ? fmtMoney(l.grn_unit_price) : "بدون ربط استلام"}</td>
+          <td data-label="إجمالي السطر">${fmtMoney(l.line_total)}</td>
+          <td data-label="فرق السطر">${Math.abs(Number(l.variance_amount)) > 0.01 ? fmtMoney(l.variance_amount) : "-"}</td>
+        </tr>`).join("")}
+      </tbody></table>
+      <div class="row" style="justify-content:flex-end;font-size:13px;margin-top:8px">
+        <div>الفرعي: ${fmtMoney(inv.subtotal)} + ضريبة: ${fmtMoney(inv.tax)} = الإجمالي: <b>${fmtMoney(inv.total)}</b></div>
+      </div>
+
+      <h2>السداد</h2>
+      <div class="formbox">
+        <div>الإجمالي: ${fmtMoney(inv.total)} — المسدد: ${fmtMoney(totalPaid)} — المتبقي: <b>${fmtMoney(Number(inv.total) - totalPaid)}</b></div>
+        ${payments.length ? `<table style="margin-top:8px"><thead><tr><th>التاريخ</th><th>المبلغ</th></tr></thead><tbody>
+          ${payments.map(p => `<tr><td data-label="التاريخ">${fmtDate(p.payment_date)}</td><td data-label="المبلغ">${fmtMoney(p.amount)}</td></tr>`).join("")}
+        </tbody></table>` : `<div class="hint">مفيش سدادات مسجّلة على الفاتورة دي لسه</div>`}
+      </div>
+
+      <div class="row">
+        ${canApproveInv ? `<button class="good" data-approveinv="${inv.id}">اعتماد الفاتورة</button>` : ""}
+        ${canPay ? `<button data-payinv="${inv.id}">تسجيل سداد</button>` : ""}
+        ${canCancelInv ? `<button class="secondary" data-cancelinv="${inv.id}">إلغاء</button>` : ""}
+        <button class="secondary" id="invPrintBtn">طباعة</button>
+      </div>
+      <div class="err" id="invActionErr"></div>
+    `;
+    const errBox = () => document.getElementById("invActionErr");
+    content.querySelector("[data-openpo]")?.addEventListener("click", (e) => { switchToTab("po"); showPoDetails(e.target.dataset.openpo); });
+    content.querySelector("[data-approveinv]")?.addEventListener("click", async () => {
+      const msg = hasVariance ? `الفاتورة فيها فرق قدره ${fmtMoney(inv.variance_amount)} عن قيمة الاستلام - تأكيد الاعتماد وترحيل قيد الفرق؟` : `تأكيد اعتماد الفاتورة؟`;
+      if (!confirm(msg)) return;
+      try { await api(`/api/supplier-invoices/${inv.id}/approve`, { method: "POST" }); await showInvDetails(inv.id); await loadInvList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-cancelinv]")?.addEventListener("click", async () => {
+      const reason = prompt("سبب الإلغاء (اختياري):") || undefined;
+      if (!confirm("تأكيد إلغاء الفاتورة؟")) return;
+      try { await api(`/api/supplier-invoices/${inv.id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }); await showInvDetails(inv.id); await loadInvList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-payinv]")?.addEventListener("click", () => {
+      switchToTab("payments");
+      openPayCreate({ supplierId: inv.supplier_id, branchId: inv.branch_id, invoiceId: inv.id });
+    });
+    document.getElementById("invPrintBtn").onclick = () => {
+      const rowsHtml = lines.map(l => `<tr><td>${l.item_name}</td><td>${Number(l.invoiced_quantity).toFixed(2)} ${l.unit || ""}</td><td>${fmtMoney(l.unit_price)}</td><td>${fmtMoney(l.line_total)}</td></tr>`).join("");
+      window.SatamoniPrint.openCustomPrint(`فاتورة مورد ${inv.supplier_invoice_number}`, `
+        <div style="font-size:13px;margin-bottom:10px">المورد: ${inv.supplier_name} — الفرع: ${inv.branch_name} — تاريخ الفاتورة: ${fmtDate(inv.invoice_date)}</div>
+        <table style="width:100%;border-collapse:collapse"><thead><tr><th>الصنف</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+        <div style="margin-top:10px;font-weight:800">الإجمالي: ${fmtMoney(inv.total)}</div>
+      `);
+    };
+  } catch (e) {
+    content.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+document.getElementById("invDetailsCloseBtn").onclick = () => { document.getElementById("invDetailsBox").style.display = "none"; };
+
+// ================= UI-2M: سداد الموردين =================
+document.getElementById("payFilterBtn").onclick = loadPayList;
+async function loadPayList() {
+  const box = document.getElementById("payListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  const supplierId = document.getElementById("paySupplierFilter").value;
+  try {
+    const qs = new URLSearchParams();
+    if (supplierId) qs.set("supplierId", supplierId);
+    if (auth.user.role === "branch_manager") qs.set("branchId", auth.user.branchId);
+    const list = await api(`/api/supplier-payments?${qs.toString()}`);
+    box.innerHTML = list.length ? `
+      <table><thead><tr><th>رقم السداد</th><th>المورد</th><th>الفرع</th><th>التاريخ</th><th>المبلغ</th><th>الفاتورة المرتبطة</th><th>رقم مرجعي</th></tr></thead><tbody>
+        ${list.map(p => `<tr>
+          <td data-label="رقم السداد">#${p.id}</td>
+          <td data-label="المورد">${p.supplier_name}</td>
+          <td data-label="الفرع">${p.branch_name}</td>
+          <td data-label="التاريخ">${fmtDate(p.payment_date)}</td>
+          <td data-label="المبلغ">${fmtMoney(p.amount)}</td>
+          <td data-label="الفاتورة المرتبطة">${p.supplier_invoice_id ? `<button class="linkbtn" data-openinv="${p.supplier_invoice_id}">فاتورة #${p.supplier_invoice_id}</button>` : "حساب المورد العام"}</td>
+          <td data-label="رقم مرجعي">${p.reference_number || "-"}</td>
+        </tr>`).join("")}
+      </tbody></table>
+    ` : `<div class="hint">مفيش سدادات مطابقة</div>`;
+    box.querySelectorAll("[data-openinv]").forEach(btn => { btn.onclick = () => { switchToTab("invoices"); showInvDetails(btn.dataset.openinv); }; });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+document.getElementById("payNewBtn").onclick = () => openPayCreate({});
+async function openPayCreate({ supplierId, branchId, invoiceId }) {
+  hideAllCreateAndDetailBoxes();
+  document.getElementById("payCreateBox").style.display = "block";
+  document.getElementById("payCreateErr").textContent = "";
+  document.getElementById("payCreateOk").textContent = "";
+  document.getElementById("payAmount").value = "";
+  document.getElementById("payReference").value = "";
+  document.getElementById("payNotes").value = "";
+  document.getElementById("payDate").value = new Date().toISOString().slice(0, 10);
+  document.getElementById("payInvoiceInfo").innerHTML = "";
+  if (supplierId) document.getElementById("paySupplierSelect").value = supplierId;
+  if (branchId) document.getElementById("payBranchSelect").value = branchId;
+  await refreshPayableInvoices();
+  if (invoiceId) { document.getElementById("payInvoiceSelect").value = invoiceId; await onPayInvoiceSelected(); }
+  document.getElementById("payCreateBox").scrollIntoView({ behavior: "smooth" });
+}
+document.getElementById("payCancelCreateBtn").onclick = () => { document.getElementById("payCreateBox").style.display = "none"; };
+document.getElementById("paySupplierSelect").onchange = refreshPayableInvoices;
+async function refreshPayableInvoices() {
+  const supplierId = document.getElementById("paySupplierSelect").value;
+  const select = document.getElementById("payInvoiceSelect");
+  select.innerHTML = `<option value="">سداد على حساب المورد العام</option>`;
+  if (!supplierId) return;
+  try {
+    const [approved, partial] = await Promise.all([
+      api(`/api/supplier-invoices?supplierId=${supplierId}&status=APPROVED`),
+      api(`/api/supplier-invoices?supplierId=${supplierId}&status=PARTIALLY_PAID`),
+    ]);
+    [...approved, ...partial].forEach(inv => {
+      select.innerHTML += `<option value="${inv.id}">فاتورة ${inv.supplier_invoice_number} - إجمالي ${fmtMoney(inv.total)}</option>`;
+    });
+  } catch (e) { /* تفضل خيار السداد العام متاحة برضو */ }
+}
+document.getElementById("payInvoiceSelect").onchange = onPayInvoiceSelected;
+async function onPayInvoiceSelected() {
+  const invoiceId = document.getElementById("payInvoiceSelect").value;
+  const infoBox = document.getElementById("payInvoiceInfo");
+  if (!invoiceId) { infoBox.innerHTML = ""; return; }
+  infoBox.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    const { invoice, payments } = await api(`/api/supplier-invoices/${invoiceId}`);
+    const paid = payments.reduce((s, p) => s + Number(p.amount), 0);
+    const outstanding = Number(invoice.total) - paid;
+    infoBox.innerHTML = `<div class="hint">إجمالي الفاتورة: ${fmtMoney(invoice.total)} — المسدد سابقًا: ${fmtMoney(paid)} — المتبقي: <b>${fmtMoney(outstanding)}</b></div>`;
+    document.getElementById("payAmount").value = outstanding.toFixed(2);
+  } catch (e) { infoBox.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`; }
+}
+
+document.getElementById("paySaveBtn").onclick = async () => {
+  const errBox = document.getElementById("payCreateErr");
+  const okBox = document.getElementById("payCreateOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const amount = Number(document.getElementById("payAmount").value);
+  if (!amount || amount <= 0) { errBox.textContent = "لازم مبلغ أكبر من صفر"; return; }
+  try {
+    const created = await api("/api/supplier-payments", {
+      method: "POST",
+      body: JSON.stringify({
+        supplierId: Number(document.getElementById("paySupplierSelect").value),
+        branchId: Number(document.getElementById("payBranchSelect").value),
+        amount, paymentDate: document.getElementById("payDate").value || null,
+        supplierInvoiceId: document.getElementById("payInvoiceSelect").value || null,
+        paymentMethodId: document.getElementById("payMethodSelect").value || null,
+        referenceNumber: document.getElementById("payReference").value.trim() || null,
+        notes: document.getElementById("payNotes").value.trim() || null,
+      }),
+    });
+    okBox.textContent = `تم تسجيل السداد #${created.id}`;
+    await loadPayList();
+  } catch (e) { errBox.textContent = apiErrorMessage(e); }
+};
+
+// ================= UI-2N: الموردون =================
+async function loadSupplierList() {
+  const box = document.getElementById("supListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    const suppliers = await api("/api/suppliers");
+    allSuppliers = suppliers;
+    box.innerHTML = suppliers.length ? `
+      <table><thead><tr><th>المورد</th><th>الحالة</th><th>شروط الدفع</th><th>عدد الأصناف</th><th></th></tr></thead><tbody>
+        ${suppliers.map(s => `<tr>
+          <td data-label="المورد">${s.name}</td>
+          <td data-label="الحالة"><span class="badge ${s.status === "ACTIVE" ? "APPROVED" : "CANCELLED"}">${s.status === "ACTIVE" ? "نشط" : s.status === "INACTIVE" ? "غير نشط" : "محظور"}</span></td>
+          <td data-label="شروط الدفع">${s.payment_terms || "-"}</td>
+          <td data-label="عدد الأصناف">${s.items.length}</td>
+          <td data-label=""><button class="linkbtn" data-view="${s.id}">ملف المورد</button></td>
+        </tr>`).join("")}
+      </tbody></table>
+    ` : `<div class="hint">مفيش موردين مسجّلين</div>`;
+    box.querySelectorAll("[data-view]").forEach(btn => { btn.onclick = () => showSupplierDetails(btn.dataset.view); });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+async function showSupplierDetails(id) {
+  hideAllCreateAndDetailBoxes();
+  const wrap = document.getElementById("supDetailsBox");
+  const content = document.getElementById("supDetailsContent");
+  wrap.style.display = "block";
+  content.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  wrap.scrollIntoView({ behavior: "smooth" });
+  try {
+    const [{ supplier, currentItems }, pos, invoices, payments, balance] = await Promise.all([
+      api(`/api/suppliers/${id}`),
+      api(`/api/purchase-orders?supplierId=${id}`),
+      api(`/api/supplier-invoices?supplierId=${id}`),
+      api(`/api/supplier-payments?supplierId=${id}`),
+      api(`/api/supplier-payments/balance/${id}`).catch(() => null),
+    ]);
+    const openPos = pos.filter(p => !["CLOSED", "CANCELLED"].includes(p.status));
+
+    content.innerHTML = `
+      <div style="font-weight:800;font-size:16px">${supplier.name}</div>
+      <div style="font-size:12px;color:var(--faint);margin:6px 0">
+        ${supplier.contact_person ? `مسؤول التواصل: ${supplier.contact_person} — ` : ""}${supplier.phone || ""} ${supplier.email ? `— ${supplier.email}` : ""}
+      </div>
+      <div style="margin:8px 0">
+        <span class="badge ${supplier.status === "ACTIVE" ? "APPROVED" : "CANCELLED"}">${supplier.status === "ACTIVE" ? "نشط" : supplier.status === "INACTIVE" ? "غير نشط" : "محظور"}</span>
+        ${balance ? ` <span class="badge ${balance.balance > 0 ? "variance-pos" : ""}">الرصيد المستحق: ${fmtMoney(balance.balance)}</span>` : ""}
+      </div>
+
+      <h2>أوامر الشراء المفتوحة (${openPos.length})</h2>
+      ${openPos.length ? `<table><thead><tr><th>الأمر</th><th>الفرع</th><th>التاريخ</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>
+        ${openPos.map(p => `<tr><td data-label="الأمر"><button class="linkbtn" data-openpo="${p.id}">#${p.id}</button></td><td data-label="الفرع">${p.branch_name}</td><td data-label="التاريخ">${fmtDate(p.order_date)}</td><td data-label="الإجمالي">${fmtMoney(p.total)}</td><td data-label="الحالة"><span class="badge ${p.status}">${PO_STATUS_LABELS[p.status]}</span></td></tr>`).join("")}
+      </tbody></table>` : `<div class="hint">مفيش أوامر شراء مفتوحة لهذا المورد</div>`}
+
+      <h2>فواتير المورد (${invoices.length})</h2>
+      ${invoices.length ? `<table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>
+        ${invoices.slice(0, 15).map(i => `<tr><td data-label="رقم الفاتورة"><button class="linkbtn" data-openinv="${i.id}">${i.supplier_invoice_number}</button></td><td data-label="التاريخ">${fmtDate(i.invoice_date)}</td><td data-label="الإجمالي">${fmtMoney(i.total)}</td><td data-label="الحالة"><span class="badge ${i.status}">${INV_STATUS_LABELS[i.status]}</span></td></tr>`).join("")}
+      </tbody></table>` : `<div class="hint">مفيش فواتير مسجّلة لهذا المورد</div>`}
+
+      <h2>سدادات المورد (${payments.length})</h2>
+      ${payments.length ? `<table><thead><tr><th>التاريخ</th><th>المبلغ</th><th>مرجع</th></tr></thead><tbody>
+        ${payments.slice(0, 15).map(p => `<tr><td data-label="التاريخ">${fmtDate(p.payment_date)}</td><td data-label="المبلغ">${fmtMoney(p.amount)}</td><td data-label="مرجع">${p.reference_number || "-"}</td></tr>`).join("")}
+      </tbody></table>` : `<div class="hint">مفيش سدادات مسجّلة لهذا المورد</div>`}
+
+      <h2>الأصناف وأسعارها الحالية</h2>
+      ${currentItems.length ? `<table><thead><tr><th>الصنف</th><th>السعر</th><th>الوحدة</th></tr></thead><tbody>
+        ${currentItems.map(it => `<tr><td data-label="الصنف">${it.item_name}</td><td data-label="السعر">${fmtMoney(it.unit_price)}</td><td data-label="الوحدة">${it.purchase_unit || it.item_unit}</td></tr>`).join("")}
+      </tbody></table>` : `<div class="hint">مفيش أسعار مسجّلة لهذا المورد</div>`}
+    `;
+    content.querySelectorAll("[data-openpo]").forEach(btn => { btn.onclick = (e) => { switchToTab("po"); showPoDetails(e.target.dataset.openpo); }; });
+    content.querySelectorAll("[data-openinv]").forEach(btn => { btn.onclick = (e) => { switchToTab("invoices"); showInvDetails(e.target.dataset.openinv); }; });
+  } catch (e) {
+    content.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+document.getElementById("supDetailsCloseBtn").onclick = () => { document.getElementById("supDetailsBox").style.display = "none"; };
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) bootSafely();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>
+
