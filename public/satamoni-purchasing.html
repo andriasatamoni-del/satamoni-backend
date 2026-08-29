@@ -420,7 +420,39 @@
   <!-- UI-2N: الموردون -->
   <div class="panel" id="panel-suppliers">
     <h1>الموردون</h1>
+    <div class="formbox">
+      <div class="row">
+        <button class="secondary" id="supNewBtn">+ مورد جديد</button>
+      </div>
+    </div>
     <div id="supListBox"><div class="hint">جاري التحميل...</div></div>
+
+    <div id="supCreateBox" style="display:none">
+      <h2>مورد جديد</h2>
+      <div class="formbox">
+        <div class="row">
+          <input id="supName" placeholder="اسم المورد *" />
+          <input id="supCode" placeholder="كود المورد (اختياري)" />
+        </div>
+        <div class="row">
+          <input id="supContactPerson" placeholder="مسؤول التواصل (اختياري)" />
+          <input id="supPhone" placeholder="رقم التليفون (اختياري)" />
+          <input id="supEmail" type="email" placeholder="الإيميل (اختياري)" />
+        </div>
+        <div class="row">
+          <input id="supAddress" placeholder="العنوان (اختياري)" />
+          <input id="supTaxId" placeholder="الرقم الضريبي (اختياري)" />
+          <input id="supPaymentTerms" placeholder="شروط الدفع (اختياري، مثال: 30 يوم)" />
+        </div>
+        <div class="row">
+          <button id="supSaveBtn">حفظ المورد</button>
+          <button class="secondary" id="supCancelCreateBtn">إلغاء</button>
+        </div>
+        <div class="err" id="supCreateErr"></div>
+        <div class="ok" id="supCreateOk"></div>
+      </div>
+    </div>
+
     <div id="supDetailsBox" style="display:none">
       <h2>ملف المورد</h2>
       <div class="formbox" id="supDetailsContent"></div>
@@ -554,7 +586,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 });
 function hideAllCreateAndDetailBoxes() {
   ["prCreateBox", "prDetailsBox", "poCreateBox", "poDetailsBox", "grnCreateBox", "grnDetailsBox",
-   "invCreateBox", "invDetailsBox", "payCreateBox", "supDetailsBox"].forEach(id => {
+   "invCreateBox", "invDetailsBox", "payCreateBox", "supCreateBox", "supDetailsBox"].forEach(id => {
     document.getElementById(id).style.display = "none";
   });
 }
@@ -1703,6 +1735,51 @@ async function loadSupplierList() {
     box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
   }
 }
+
+// كانت شاشة الموردين للعرض بس - قايمة وملف تفاصيل، مفيش أي طريقة تسجّل مورد جديد أصلًا. الباك إند
+// (POST /api/suppliers) كان جاهز من زمان، الاسم بس مطلوب والباقي اختياري - الفجوة كانت في الواجهة بس
+document.getElementById("supNewBtn").onclick = () => {
+  hideAllCreateAndDetailBoxes();
+  document.getElementById("supCreateBox").style.display = "block";
+  ["supName", "supCode", "supContactPerson", "supPhone", "supEmail", "supAddress", "supTaxId", "supPaymentTerms"]
+    .forEach(id => { document.getElementById(id).value = ""; });
+  document.getElementById("supCreateErr").textContent = "";
+  document.getElementById("supCreateOk").textContent = "";
+  document.getElementById("supCreateBox").scrollIntoView({ behavior: "smooth" });
+};
+document.getElementById("supCancelCreateBtn").onclick = () => { document.getElementById("supCreateBox").style.display = "none"; };
+document.getElementById("supSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("supCreateErr");
+  const okBox = document.getElementById("supCreateOk");
+  errBox.textContent = "";
+  okBox.textContent = "";
+  const name = document.getElementById("supName").value.trim();
+  if (!name) { errBox.textContent = "لازم اسم المورد"; return; }
+  const saveBtn = document.getElementById("supSaveBtn");
+  saveBtn.disabled = true;
+  try {
+    await api("/api/suppliers", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        supplierCode: document.getElementById("supCode").value.trim() || undefined,
+        contactPerson: document.getElementById("supContactPerson").value.trim() || undefined,
+        phone: document.getElementById("supPhone").value.trim() || undefined,
+        email: document.getElementById("supEmail").value.trim() || undefined,
+        address: document.getElementById("supAddress").value.trim() || undefined,
+        taxId: document.getElementById("supTaxId").value.trim() || undefined,
+        paymentTerms: document.getElementById("supPaymentTerms").value.trim() || undefined,
+      }),
+    });
+    okBox.textContent = "اتسجّل المورد بنجاح";
+    await loadSupplierList();
+    setTimeout(() => { document.getElementById("supCreateBox").style.display = "none"; }, 800);
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  } finally {
+    saveBtn.disabled = false;
+  }
+};
 
 async function showSupplierDetails(id) {
   hideAllCreateAndDetailBoxes();
