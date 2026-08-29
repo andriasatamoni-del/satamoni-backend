@@ -71,6 +71,52 @@ router.get("/", requireAuth, requirePermission("production.view"), async (req, r
   }
 });
 
+// GET /api/production/:id - تفاصيل أمر تصنيع واحد + دفعاته (مدخلات/مخرجات) - UI-3: الشاشة دي كانت
+// ناقصة تمامًا (GET / بترجع قايمة بس، مفيش endpoint لتفصيل أمر واحد) - عكس routes/packaging.js اللي
+// عندها GET /:id مطابق تمامًا لنفس الشكل ده بالفعل. من غيرها مفيش طريقة تعرض "رقم الدفعة الناتجة" ولا
+// "الدفعات المصدر المتعددة" (multi-batch input) للمستخدم بعد إنشاء/بدء/إكمال أمر - نفس الحاجة اللي
+// production_order_batches أصلًا مسجلاها، بس معندهاش طريق قراءة لأمر واحد بعينه. نفس نمط الجوين ومنطق
+// صلاحية الفرع الموجودين في packaging.js GET /:id بالظبط - قراءة إضافية بس، مفيش أي تغيير في منطق العمل
+router.get("/:id", requireAuth, requirePermission("production.view"), async (req, res) => {
+  try {
+    const order = await pool.query(
+      `SELECT po.*, b.name AS branch_name, rv.version_number, rv.yield_quantity, rv.yield_unit,
+              COALESCE(mi.name || ' - ' || v.label, ii.name) AS product_name,
+              r.recipe_type, u1.name AS operator_name, u2.name AS approved_by_name,
+              u3.name AS completed_by_name
+       FROM production_orders po
+       JOIN branches b ON b.id = po.branch_id
+       JOIN recipes r ON r.id = po.recipe_id
+       JOIN recipe_versions rv ON rv.id = po.recipe_version_id
+       LEFT JOIN menu_item_variants v ON v.id = r.variant_id
+       LEFT JOIN menu_items mi ON mi.id = v.item_id
+       LEFT JOIN inventory_items ii ON ii.id = r.inventory_item_id
+       LEFT JOIN users u1 ON u1.id = po.operator_id
+       LEFT JOIN users u2 ON u2.id = po.approved_by
+       LEFT JOIN users u3 ON u3.id = po.completed_by
+       WHERE po.id = $1`,
+      [req.params.id]
+    );
+    if (order.rows.length === 0) return res.status(404).json({ error: "أمر التصنيع مش موجود" });
+    if (req.user.role === "branch_manager" && !assertOwnBranch(req.user, order.rows[0].branch_id)) {
+      return res.status(403).json({ error: "معندكش صلاحية تشوف أمر تصنيع فرع تاني" });
+    }
+    const batches = await pool.query(
+      `SELECT pob.*, ii.name AS item_name, ib.batch_number, ib.expiry_date, ib.production_date AS batch_production_date,
+              ib.remaining_quantity, ib.unit_cost AS batch_unit_cost
+       FROM production_order_batches pob
+       JOIN inventory_items ii ON ii.id = pob.inventory_item_id
+       LEFT JOIN inventory_batches ib ON ib.id = pob.batch_id
+       WHERE pob.production_order_id = $1
+       ORDER BY pob.role, pob.id`,
+      [req.params.id]
+    );
+    res.json({ ...order.rows[0], batches: batches.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/production/:id/approve - DRAFT → APPROVED (أدمن بس)
 router.post("/:id/approve", requireAuth, requireRole("admin"), requirePermission("production.approve"), async (req, res) => {
   try {
@@ -242,33 +288,33 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
     );
     const parentBatchId = inputBatchesRes.rows.length === 1 ? inputBatchesRes.rows[0].batch_id : null;
 
-    let batchId = null;
-    let batchNumber = null;
-    if (order.batch_number || order.expiry_date) {
-      // Procurement v2 STEP H: رقم دفعة تصنيع فريد إلزامي - لو الأوبريتور معملش batch_number بنفسه، بيتولّد
-      // نظاميًا من db/batch-numbering.js (SAU-20260828-001 مثلًا)، مش بيتسيب فاضي أبدًا لأي دفعة تصنيع فعلية
-      batchNumber = order.batch_number || (await generateBatchNumber(client, { inventoryItemId: outputItemId }));
-      const batch = await client.query(
-        `INSERT INTO inventory_batches
-          (batch_number, inventory_item_id, branch_id, received_date, expiry_date, original_quantity, remaining_quantity,
-           unit_cost, created_by, parent_batch_id)
-         VALUES ($1,$2,$3,CURRENT_DATE,$4,$5,$5,$6,$7,$8) RETURNING id`,
-        [batchNumber, outputItemId, order.branch_id, order.expiry_date, actualQuantity, unitCost, req.user.id, parentBatchId]
-      );
-      batchId = batch.rows[0].id;
-    }
+    // UI-3 E2E discovery: التعليق فوق (STEP H) بيقول صراحة "رقم دفعة تصنيع فريد إلزامي... مش بيتسيب فاضي
+    // أبدًا لأي دفعة تصنيع فعلية"، بس الكود الفعلي كان بيعمل الدفعة بس لو order.batch_number أو
+    // order.expiry_date اتحددوا وقت الإنشاء - يعني أمر تصنيع عادي من غيرهم (الحالة الافتراضية في UI-3D)
+    // كان بيكمّل من غير أي دفعة ناتج خالص، عكس التعليق نفسه وعكس routes/packaging.js (STEP J) اللي بيعمل
+    // الدفعة الناتجة دايمًا بلا شرط، ونفس الوصف "بالظبط زي production_orders" موجود في تعليق packaging.js
+    // نفسه. ده فجوة تتبّع حقيقية (batch traceability هو محور UI-3 كله) - الإصلاح: توحيد السلوك مع
+    // packaging.js (اللي هو المرجع الأحدث والمقصود فعليًا) بإنشاء الدفعة دايمًا، من غير أي تغيير تاني
+    // في منطق التصنيع أو المحاسبة
+    const batchNumber = order.batch_number || (await generateBatchNumber(client, { inventoryItemId: outputItemId }));
+    const batch = await client.query(
+      `INSERT INTO inventory_batches
+        (batch_number, inventory_item_id, branch_id, received_date, expiry_date, original_quantity, remaining_quantity,
+         unit_cost, created_by, parent_batch_id)
+       VALUES ($1,$2,$3,CURRENT_DATE,$4,$5,$5,$6,$7,$8) RETURNING id`,
+      [batchNumber, outputItemId, order.branch_id, order.expiry_date, actualQuantity, unitCost, req.user.id, parentBatchId]
+    );
+    const batchId = batch.rows[0].id;
 
     await postInventoryMovement(client, {
       branchId: order.branch_id, inventoryItemId: outputItemId, quantity: Number(actualQuantity),
       movementType: "PRODUCTION_IN", referenceType: "production_order", referenceId: order.id,
       unitCost, batchId, userId: req.user.id, negativeStockOverrideApproved: true,
     });
-    if (batchId) {
-      await client.query(
-        `INSERT INTO production_order_batches (production_order_id, role, inventory_item_id, batch_id, quantity) VALUES ($1,'output',$2,$3,$4)`,
-        [order.id, outputItemId, batchId, actualQuantity]
-      );
-    }
+    await client.query(
+      `INSERT INTO production_order_batches (production_order_id, role, inventory_item_id, batch_id, quantity) VALUES ($1,'output',$2,$3,$4)`,
+      [order.id, outputItemId, batchId, actualQuantity]
+    );
 
     // المرحلة 4B: التصنيع بيحوّل قيمة داخل نفس حساب المخزون المشترك 1400 (خام → تام) - مدين المنتج
     // التام / دائن المكونات المستهلكة (المكونات اتخصمت فعليًا وقت /start عبر postInventoryMovement، بس
@@ -279,9 +325,17 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
        FROM inventory_movements WHERE reference_type = 'production_order' AND reference_id = $1 AND movement_type = 'PRODUCTION_OUT'`,
       [order.id]
     );
-    const rawMaterialValue = Number(rawCostRes.rows[0].raw_cost);
+    // UI-3 E2E discovery: unitCost بييجي من قسمة متسلسلة (effectiveQuantityPerUnit بيقسم على yield_quantity)
+    // فممكن يطلع رقم عشري متكرر في binary floating point (زي 6/10) حتى لو الناتج النهائي "نضيف" حسابيًا -
+    // finishedGoodsValue = unitCost × actualQuantity كان بيورّث نفس الضجيج (مثلًا 998.4000000000001 بدل
+    // 998.4). القيد كان بيعدّي فحص التسامح في postJournalEntry (1e-7) لكن بيفشل الـtrigger الصارم على
+    // مستوى القاعدة (check_journal_entry_balanced، مساواة تامة بلا تسامح) - باج حقيقي في الحسابات
+    // المرحّلة فعليًا، مش تصميم جديد: نفس نمط round2 المستخدم بالفعل في routes/reports.js (المطابقة
+    // المحاسبية) - تقريب لأقرب قرش قبل ما القيمة توصل لقاعدة البيانات، من غير أي تغيير في منطق الحساب نفسه
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const rawMaterialValue = round2(Number(rawCostRes.rows[0].raw_cost));
     const rawIncomplete = rawCostRes.rows[0].incomplete;
-    const finishedGoodsValue = unitCost != null ? Number(unitCost) * Number(actualQuantity) : 0;
+    const finishedGoodsValue = unitCost != null ? round2(Number(unitCost) * Number(actualQuantity)) : 0;
 
     if (rawMaterialValue > 0 || finishedGoodsValue > 0) {
       const inventoryAccount = await getAccountByCode(client, "1400");
@@ -290,7 +344,7 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
       const entryLines = [];
       if (finishedGoodsValue > 0) entryLines.push({ accountId: inventoryAccount.id, debit: finishedGoodsValue, description: "إنتاج - إضافة المنتج التام للمخزون" });
       if (rawMaterialValue > 0) entryLines.push({ accountId: inventoryAccount.id, credit: rawMaterialValue, description: "إنتاج - خصم مكونات مستهلكة" });
-      const varianceAmount = finishedGoodsValue - rawMaterialValue;
+      const varianceAmount = round2(finishedGoodsValue - rawMaterialValue);
       if (varianceAmount > 0.0000001) {
         entryLines.push({ accountId: varianceAccount.id, credit: varianceAmount, description: `فرق تكلفة إنتاج${incompleteNote}` });
       } else if (varianceAmount < -0.0000001) {

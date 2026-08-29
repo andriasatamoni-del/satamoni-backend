@@ -249,7 +249,12 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
        FROM inventory_movements WHERE reference_type = 'packaging_order' AND reference_id = $1 AND movement_type = 'PRODUCTION_OUT'`,
       [order.id]
     );
-    const inputValue = Number(inputCostRes.rows[0].input_cost);
+    // UI-3 E2E discovery: نفس باج الفاصلة العشرية اللي اتصلح في routes/production.js - inputValue/quantity
+    // بيرجّع كسر عشري متكرر في binary floating point غالبًا (زي 1040/94)، فلو ضربناه تاني في نفس الكمية
+    // مش هيرجّع نفس الرقم بالظبط - القيد كان بيفشل check_journal_entry_balanced trigger الصارم في القاعدة.
+    // round2 نفس helper المستخدم فعليًا في routes/reports.js للمطابقة المحاسبية - تقريب لأقرب قرش
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const inputValue = round2(Number(inputCostRes.rows[0].input_cost));
     const inputIncomplete = inputCostRes.rows[0].incomplete;
     const outputUnitCost = inputValue > 0 ? inputValue / Number(actualOutputQuantity) : null;
 
@@ -281,7 +286,7 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
 
     // نفس فلسفة قيد التصنيع بالظبط (routes/production.js) - القيمة بتتحوّل داخل نفس حساب المخزون
     // المشترك 1400 (سائب → معبّأ)، وأي فرق (تسرّب أثناء التعبئة مثلًا) بيتقفل على 5300
-    const outputValue = outputUnitCost != null ? outputUnitCost * Number(actualOutputQuantity) : 0;
+    const outputValue = outputUnitCost != null ? round2(outputUnitCost * Number(actualOutputQuantity)) : 0;
     if (inputValue > 0 || outputValue > 0) {
       const inventoryAccount = await getAccountByCode(client, "1400");
       const varianceAccount = await getAccountByCode(client, "5300");
@@ -289,7 +294,7 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
       const entryLines = [];
       if (outputValue > 0) entryLines.push({ accountId: inventoryAccount.id, debit: outputValue, description: "تعبئة - إضافة المنتج المعبأ للمخزون" });
       if (inputValue > 0) entryLines.push({ accountId: inventoryAccount.id, credit: inputValue, description: "تعبئة - خصم المدخل السائب المستهلك" });
-      const varianceAmount = outputValue - inputValue;
+      const varianceAmount = round2(outputValue - inputValue);
       if (varianceAmount > 0.0000001) {
         entryLines.push({ accountId: varianceAccount.id, credit: varianceAmount, description: `فرق تعبئة${incompleteNote}` });
       } else if (varianceAmount < -0.0000001) {

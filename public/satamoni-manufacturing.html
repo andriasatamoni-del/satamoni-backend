@@ -1,0 +1,1684 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ساتاموني — التصنيع والتعبئة</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1280px; margin: 0 auto; padding: 20px 16px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+  h2 { font-size: 14px; color: var(--faint); margin: 18px 0 8px; }
+  h3 { font-size: 13px; color: var(--ink); margin: 14px 0 6px; }
+
+  #tabs { display: flex; gap: 6px; margin: 16px 0; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 130px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; font-family: inherit; }
+  .formbox label.field-label { flex: 0; white-space: nowrap; font-size: 12px; color: var(--faint); }
+  button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+  button.good { background: var(--green); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+  .hint { color: var(--faint); font-size: 12px; margin-bottom: 8px; }
+
+  .pickrow { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .pickrow select { flex: 2; }
+  .pickrow input { flex: 1; }
+  .pickrow button { flex: 0; padding: 8px 10px; border: 1px solid var(--line); background: transparent; color: #F08A83; border-radius: 6px; cursor: pointer; }
+  .addrow-link { background: none; border: 1px dashed var(--line); color: var(--gold-bright); cursor: pointer; font-size: 12px; padding: 8px; border-radius: 6px; width: 100%; margin-bottom: 8px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; margin-left: 10px; }
+  .linkbtn.danger { color: #F08A83; }
+
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .badge.DRAFT { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .badge.PENDING_APPROVAL { background: rgba(203,161,53,.25); color: var(--gold-bright); }
+  .badge.APPROVED { background: rgba(63,163,77,.12); color: var(--green); }
+  .badge.ACTIVE, .badge.COMPLETED, .badge.POSTED { background: rgba(63,163,77,.18); color: var(--green); }
+  .badge.IN_PROGRESS { background: rgba(203,161,53,.25); color: var(--gold-bright); }
+  .badge.ARCHIVED { background: rgba(156,148,138,.2); color: var(--faint); }
+  .badge.REJECTED, .badge.CANCELLED { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.variance-pos { background: rgba(203,161,53,.2); color: var(--gold-bright); }
+  .badge.variance-neg { background: rgba(63,163,77,.15); color: var(--green); }
+  .badge.variance-alert { background: rgba(194,42,36,.18); color: #F08A83; }
+
+  .expandbox { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-top: 8px; }
+  .cardrow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .statcard { flex: 1; min-width: 170px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; cursor: pointer; }
+  .statcard:hover { border-color: var(--gold); }
+  .statcard .num { font-size: 26px; font-weight: 800; color: var(--gold-bright); }
+  .statcard .lbl { font-size: 12px; color: var(--faint); margin-top: 4px; }
+  .statcard .sub { font-size: 11px; color: var(--faint); margin-top: 2px; }
+  .statcard.alert .num { color: #F08A83; }
+
+  .docchain { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; margin: 10px 0; }
+  .docchain .linkbtn { text-decoration: underline; }
+
+  .batchnum-hero { background: linear-gradient(135deg, rgba(203,161,53,.18), rgba(63,163,77,.10)); border: 1px solid var(--gold); border-radius: 10px; padding: 16px; margin: 12px 0; text-align: center; }
+  .batchnum-hero .lbl { font-size: 12px; color: var(--faint); }
+  .batchnum-hero .num { font-size: 24px; font-weight: 800; color: var(--gold-bright); letter-spacing: 1px; margin-top: 4px; }
+
+  .stepper { display: flex; align-items: center; gap: 4px; margin: 12px 0; flex-wrap: wrap; }
+  .step { padding: 5px 12px; border-radius: 14px; font-size: 11px; font-weight: 700; background: var(--bg-alt); color: var(--faint); border: 1px solid var(--line); }
+  .step.done { background: rgba(63,163,77,.15); color: var(--green); border-color: var(--green); }
+  .step.current { background: var(--red); color: #fff; border-color: var(--red); }
+  .step-arrow { color: var(--faint); font-size: 12px; }
+
+  .varbox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0; }
+  .varbox .cell { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center; }
+  .varbox .cell .v { font-size: 16px; font-weight: 800; color: var(--ink); }
+  .varbox .cell .l { font-size: 11px; color: var(--faint); margin-top: 2px; }
+  .varbox .cell.warn .v { color: #F08A83; }
+  .varbox .cell.ok .v { color: var(--green); }
+
+  .tracetree { font-size: 12px; }
+  .tracenode { border-right: 2px solid var(--line); padding-right: 12px; margin-bottom: 8px; }
+  .tracenode .box { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 6px; }
+  .tracenode .box.origin-PURCHASE { border-color: var(--gold); }
+  .tracenode .box.origin-PRODUCTION { border-color: var(--green); }
+  .tracenode .box.origin-PACKAGING { border-color: #7aa7d9; }
+  .tracenode .box.focus { border-width: 2px; border-color: var(--red); }
+  .tracenode .children { margin-right: 14px; }
+  .tracenode .box .ttitle { font-weight: 800; color: var(--gold-bright); font-size: 12px; }
+  .tracenode .box .tmeta { color: var(--faint); font-size: 11px; margin-top: 2px; }
+  .tracenode .multisrc { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .tracenode .multisrc .srcchip { background: var(--card); border: 1px solid var(--gold); border-radius: 6px; padding: 6px 8px; font-size: 11px; }
+
+  #bootStatus { max-width: 1280px; margin: 20px auto; padding: 0 16px; }
+  #bootStatus .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; text-align: center; }
+  #bootStatus .box.error { border-color: var(--red); }
+  #bootStatus button { margin-top: 10px; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; font-size: 15px; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+
+  /* UI-3V: تابلت/ديسكتوب هما الأساس، بس لازم تفضل قابلة للاستخدام على الموبايل */
+  @media (max-width: 720px) {
+    table, thead, tbody, th, td, tr { display: block; }
+    thead tr { display: none; }
+    td { border: none; padding: 4px 0; }
+    td::before { content: attr(data-label); font-weight: 700; color: var(--faint); display: inline-block; min-width: 130px; }
+    tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+    .cardrow { flex-direction: column; }
+    .varbox { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🏭 ساتاموني — التصنيع والتعبئة</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🏭 تسجيل الدخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="dashboard">لوحة التصنيع</div>
+    <div class="tabbtn" data-tab="recipes">الوصفات (BOM)</div>
+    <div class="tabbtn" data-tab="production">أوامر التصنيع</div>
+    <div class="tabbtn" data-tab="packaging">التعبئة</div>
+    <div class="tabbtn" data-tab="batches">الدفعات والتتبّع</div>
+  </div>
+
+  <!-- UI-3A: لوحة التصنيع -->
+  <div class="panel active" id="panel-dashboard">
+    <h1>لوحة التصنيع</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الفرع/السنتر كيتشن:</label>
+        <select id="dashBranchFilter"><option value="">كل الفروع</option></select>
+        <button id="dashFilterBtn">تحديث</button>
+      </div>
+    </div>
+    <div id="dashboardBox"><div class="hint">جاري التحميل...</div></div>
+  </div>
+
+  <!-- UI-3B: الوصفات (BOM) -->
+  <div class="panel" id="panel-recipes">
+    <h1>الوصفات (BOM)</h1>
+    <div class="formbox">
+      <div class="row">
+        <button class="secondary" id="recipeNewBtn">+ وصفة جديدة</button>
+      </div>
+    </div>
+    <div class="formbox" id="recipeCreateBox" style="display:none">
+      <h2>وصفة جديدة</h2>
+      <div class="row">
+        <label class="field-label">نوع الوصفة:</label>
+        <select id="recNewType">
+          <option value="manufactured_item">صنف مصنّع (نصف مصنّع/تام)</option>
+          <option value="sellable_variant">صنف مباع (منيو)</option>
+        </select>
+      </div>
+      <div class="row" id="recNewTargetRow">
+        <label class="field-label">الصنف الناتج:</label>
+        <select id="recNewTarget"></select>
+      </div>
+      <div class="row">
+        <label class="field-label">كمية الإنتاج (Yield):</label>
+        <input type="number" id="recNewYieldQty" value="1" min="0.001" step="0.001" />
+        <label class="field-label">وحدة الإنتاج:</label>
+        <input id="recNewYieldUnit" placeholder="كيلو/قطعة..." />
+      </div>
+      <div class="row">
+        <label class="field-label">فقد التحضير %:</label>
+        <input type="number" id="recNewPrepLoss" value="0" min="0" step="0.1" />
+        <label class="field-label">فقد الطهي %:</label>
+        <input type="number" id="recNewCookLoss" value="0" min="0" step="0.1" />
+      </div>
+      <h3>المكوّنات</h3>
+      <div id="recNewIngredients"></div>
+      <button type="button" class="addrow-link" id="recNewAddIngredient">+ إضافة مكوّن</button>
+      <div class="row">
+        <textarea id="recNewNotes" placeholder="ملاحظات (اختياري)" rows="2"></textarea>
+      </div>
+      <div class="row">
+        <button id="recNewSaveBtn">حفظ كمسودة</button>
+        <button class="secondary" id="recNewCancelBtn">إلغاء</button>
+      </div>
+      <div id="recNewErr" class="err"></div>
+    </div>
+    <div id="recipeListBox"><div class="hint">جاري التحميل...</div></div>
+    <div class="formbox" id="recipeDetailsBox" style="display:none"></div>
+  </div>
+
+  <!-- UI-3C/D/E/F/G: أوامر التصنيع -->
+  <div class="panel" id="panel-production">
+    <h1>أوامر التصنيع</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الحالة:</label>
+        <select id="prodStatusFilter">
+          <option value="">الكل</option>
+          <option value="DRAFT">مسودة</option>
+          <option value="APPROVED">معتمد</option>
+          <option value="IN_PROGRESS">قيد التنفيذ</option>
+          <option value="COMPLETED">مكتمل</option>
+          <option value="CANCELLED">ملغي</option>
+        </select>
+        <label class="field-label">الفرع:</label>
+        <select id="prodBranchFilter"><option value="">كل الفروع</option></select>
+        <button id="prodFilterBtn">فلترة</button>
+        <button class="secondary" id="prodNewBtn">+ أمر تصنيع جديد</button>
+      </div>
+    </div>
+    <div class="formbox" id="prodCreateBox" style="display:none">
+      <h2>أمر تصنيع جديد</h2>
+      <div class="hint">الوصفة بتحدد المكونات - الكمية النظرية بيحسبها السيرفر تلقائيًا وقت البدء، مفيش حساب في الواجهة.</div>
+      <div class="row">
+        <label class="field-label">الفرع/السنتر كيتشن:</label>
+        <select id="prodNewBranch"></select>
+      </div>
+      <div class="row">
+        <label class="field-label">الوصفة (نسخة نشطة بس):</label>
+        <select id="prodNewRecipe"></select>
+      </div>
+      <div class="row">
+        <label class="field-label">الكمية المخططة:</label>
+        <input type="number" id="prodNewQty" min="0.001" step="0.001" />
+        <label class="field-label">تاريخ الإنتاج:</label>
+        <input type="date" id="prodNewDate" />
+      </div>
+      <div class="row">
+        <label class="field-label">رقم الدفعة (اختياري - وإلا هيتولّد تلقائي):</label>
+        <input id="prodNewBatchNum" placeholder="مثال: SAU-20260829-001" />
+        <label class="field-label">تاريخ الصلاحية:</label>
+        <input type="date" id="prodNewExpiry" />
+      </div>
+      <div class="row">
+        <textarea id="prodNewNotes" placeholder="ملاحظات (اختياري)" rows="2"></textarea>
+      </div>
+      <div class="row">
+        <button id="prodNewSaveBtn">إنشاء أمر التصنيع</button>
+        <button class="secondary" id="prodNewCancelBtn">إلغاء</button>
+      </div>
+      <div id="prodNewErr" class="err"></div>
+    </div>
+    <div id="productionListBox"><div class="hint">جاري التحميل...</div></div>
+    <div class="formbox" id="prodDetailsBox" style="display:none"></div>
+  </div>
+
+  <!-- UI-3I/J/K: التعبئة -->
+  <div class="panel" id="panel-packaging">
+    <h1>التعبئة</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الحالة:</label>
+        <select id="packStatusFilter">
+          <option value="">الكل</option>
+          <option value="DRAFT">مسودة</option>
+          <option value="APPROVED">معتمد</option>
+          <option value="IN_PROGRESS">قيد التنفيذ</option>
+          <option value="COMPLETED">مكتمل</option>
+          <option value="CANCELLED">ملغي</option>
+        </select>
+        <label class="field-label">الفرع:</label>
+        <select id="packBranchFilter"><option value="">كل الفروع</option></select>
+        <button id="packFilterBtn">فلترة</button>
+        <button class="secondary" id="packNewBtn">+ أمر تعبئة جديد</button>
+      </div>
+    </div>
+    <div class="formbox" id="packCreateBox" style="display:none">
+      <h2>أمر تعبئة جديد</h2>
+      <div class="row">
+        <label class="field-label">الفرع/السنتر كيتشن:</label>
+        <select id="packNewBranch"></select>
+      </div>
+      <div class="row">
+        <label class="field-label">الصنف المُدخَل (السائب):</label>
+        <select id="packNewInputItem"></select>
+        <label class="field-label">دفعة محددة (اختياري):</label>
+        <select id="packNewInputBatch"><option value="">FEFO تلقائي</option></select>
+      </div>
+      <div class="row">
+        <label class="field-label">الكمية المخططة إدخال:</label>
+        <input type="number" id="packNewInputQty" min="0.001" step="0.001" />
+      </div>
+      <div class="row">
+        <label class="field-label">الصنف الناتج (المعبأ):</label>
+        <select id="packNewOutputItem"></select>
+        <label class="field-label">الكمية المخططة ناتج:</label>
+        <input type="number" id="packNewOutputQty" min="0.001" step="0.001" />
+      </div>
+      <div class="row">
+        <label class="field-label">تاريخ التعبئة:</label>
+        <input type="date" id="packNewDate" />
+        <label class="field-label">تاريخ الصلاحية:</label>
+        <input type="date" id="packNewExpiry" />
+      </div>
+      <div class="row">
+        <label class="field-label">رقم الدفعة (اختياري):</label>
+        <input id="packNewBatchNum" />
+      </div>
+      <div class="row">
+        <textarea id="packNewNotes" placeholder="ملاحظات (اختياري)" rows="2"></textarea>
+      </div>
+      <div class="row">
+        <button id="packNewSaveBtn">إنشاء أمر التعبئة</button>
+        <button class="secondary" id="packNewCancelBtn">إلغاء</button>
+      </div>
+      <div id="packNewErr" class="err"></div>
+    </div>
+    <div id="packagingListBox"><div class="hint">جاري التحميل...</div></div>
+    <div class="formbox" id="packDetailsBox" style="display:none"></div>
+  </div>
+
+  <!-- UI-3L/M/N/O: الدفعات والتتبّع -->
+  <div class="panel" id="panel-batches">
+    <h1>الدفعات والتتبّع</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الفرع:</label>
+        <select id="batchSearchBranch"><option value="">اختر فرع</option></select>
+        <label class="field-label">الصنف:</label>
+        <select id="batchSearchItem"><option value="">كل الأصناف</option></select>
+        <button id="batchSearchBtn">بحث</button>
+      </div>
+      <div class="row">
+        <label class="field-label">رقم الدفعة يحتوي على:</label>
+        <input id="batchSearchNumber" placeholder="مثال: SAU-2026" />
+        <label class="field-label">الحالة:</label>
+        <select id="batchSearchStatus">
+          <option value="">الكل</option>
+          <option value="active">نشطة</option>
+          <option value="depleted">منتهية (استُهلكت)</option>
+          <option value="expired">منتهية الصلاحية</option>
+        </select>
+        <label class="field-label">المورّد:</label>
+        <select id="batchSearchSupplier"><option value="">الكل</option></select>
+      </div>
+      <div class="row">
+        <label class="field-label">أو ابحث برقم الدفعة مباشرة (Batch ID):</label>
+        <input id="batchDirectId" type="number" placeholder="ID الدفعة" style="max-width:140px" />
+        <button class="secondary" id="batchDirectGoBtn">افتح تتبّع الدفعة دي</button>
+      </div>
+    </div>
+    <div id="batchSearchResultsBox"></div>
+    <div class="formbox" id="batchTraceBox" style="display:none"></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
+<div id="bootStatus" style="display:none"></div>
+
+<script src="js/requisition-errors.js"></script>
+<script src="js/print-reports.js"></script>
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "accountant"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+// UI-3B/C/I: تسميات الحالة - مطابقة بالظبط لقيم CHECK constraints في db/schema.sql (اتفحصت فعليًا، مش تخمين)
+const RECIPE_STATUS_LABELS = { DRAFT: "مسودة", PENDING_APPROVAL: "في انتظار الاعتماد", APPROVED: "معتمد", ACTIVE: "فعال", ARCHIVED: "مؤرشف", REJECTED: "مرفوض" };
+const PRODUCTION_STATUS_LABELS = { DRAFT: "مسودة", APPROVED: "معتمد", IN_PROGRESS: "قيد التنفيذ", COMPLETED: "مكتمل", CANCELLED: "ملغي" };
+const PACKAGING_STATUS_LABELS = { DRAFT: "مسودة", APPROVED: "معتمد", IN_PROGRESS: "قيد التنفيذ", COMPLETED: "مكتمل", CANCELLED: "ملغي" };
+const RECIPE_WORKFLOW_STEPS = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "ACTIVE"];
+const PRODUCTION_WORKFLOW_STEPS = ["DRAFT", "APPROVED", "IN_PROGRESS", "COMPLETED"];
+const PACKAGING_WORKFLOW_STEPS = ["DRAFT", "APPROVED", "IN_PROGRESS", "COMPLETED"];
+
+// UI-3S: نفس خريطة صلاحيات الأدوار الموجودة فعليًا في middleware/permissions.js - منسوخة حرفيًا، مش
+// تخمين. ملحوظة مهمة: مفيش صلاحيات "packaging.*" منفصلة في الـbackend خالص - routes/packaging.js
+// بيستخدم نفس "production.*" بالظبط (اتفحص فعليًا في الراوت)، فمفيش داعي نخترع صلاحية تعبئة منفصلة هنا
+const ROLE_PERMISSIONS = {
+  admin: ["*"],
+  branch_manager: ["recipes.view", "recipes.create", "recipes.edit", "recipes.submit", "production.view", "production.create", "production.complete", "production.cancel", "food_cost.view"],
+  accountant: ["inventory.view", "recipes.view", "production.view", "food_cost.view", "food_cost.export"],
+};
+function hasPerm(...perms) {
+  const list = ROLE_PERMISSIONS[auth.user?.role] || [];
+  return list.includes("*") || perms.some((p) => list.includes(p));
+}
+// production.approve/recipes.approve/recipes.activate/recipes.archive كلها أدمن بس فعليًا في كل الراوتس (requireRole("admin") + الصلاحية الوحيدة اللي بتغطيها هي "*")
+function canApprove() { return auth.user?.role === "admin"; }
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || "حصل خطأ");
+    err.code = data.code || null;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+function apiErrorMessage(err) { return describeRequisitionError(err, err && err.status).message; }
+function fmtMoney(n) { return Number(n || 0).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtQty(n) { return Number(n || 0).toLocaleString("ar-EG", { minimumFractionDigits: 0, maximumFractionDigits: 3 }); }
+function fmtDate(d) { return d ? String(d).slice(0, 10) : "-"; }
+function fmtDateTime(d) { return d ? String(d).replace("T", " ").slice(0, 16) : "-"; }
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    hideLogin();
+    if (!allowedRoles.includes(data.user.role)) {
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    bootSafely();
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+async function bootSafely() {
+  const statusBox = document.getElementById("bootStatus");
+  const mainBox = document.getElementById("main");
+  statusBox.style.display = "block";
+  mainBox.style.display = "none";
+  statusBox.innerHTML = `<div class="box">جاري تحميل البيانات...</div>`;
+  try {
+    await boot();
+    statusBox.style.display = "none";
+  } catch (e) {
+    mainBox.style.display = "none";
+    const isNetworkFailure = e instanceof TypeError;
+    const message = isNetworkFailure
+      ? "تعذّر الاتصال بالسيرفر - تأكد من الإنترنت أو حاول تاني بعد شوية"
+      : `حصل خطأ أثناء تحميل البيانات: ${apiErrorMessage(e)}`;
+    statusBox.innerHTML = `<div class="box error"><div>${message}</div><button id="bootRetryBtn">إعادة المحاولة</button></div>`;
+    document.getElementById("bootRetryBtn").onclick = bootSafely;
+    console.error("boot() failed:", e);
+  }
+}
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    hideAllCreateAndDetailBoxes();
+    if (btn.dataset.tab === "dashboard") loadDashboard();
+    if (btn.dataset.tab === "recipes") loadRecipeList();
+    if (btn.dataset.tab === "production") loadProductionList();
+    if (btn.dataset.tab === "packaging") loadPackagingList();
+    if (btn.dataset.tab === "batches") { document.getElementById("batchSearchResultsBox").innerHTML = ""; }
+  };
+});
+function hideAllCreateAndDetailBoxes() {
+  ["recipeCreateBox", "recipeDetailsBox", "prodCreateBox", "prodDetailsBox", "packCreateBox", "packDetailsBox", "batchTraceBox"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = "none";
+  });
+}
+function switchToTab(tabName) {
+  document.querySelector(`[data-tab="${tabName}"]`).click();
+}
+
+let inventoryItems = [], allBranches = [], allSuppliers = [], allRecipes = [];
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  const [items, branches, suppliers] = await Promise.all([
+    api("/api/inventory/items"),
+    api("/api/branches/all").catch(() => api("/api/branches")),
+    api("/api/suppliers").catch(() => []),
+  ]);
+  inventoryItems = items;
+  allBranches = branches;
+  allSuppliers = suppliers;
+
+  populateBranchSelects();
+  populateSupplierSelect();
+  populateItemSelects();
+
+  await loadDashboard();
+}
+
+function rawItemOptions() { return inventoryItems.filter(i => i.item_type !== "manufactured").map(i => `<option value="${i.id}" data-unit="${i.unit}">${esc(i.name)} (${esc(i.unit)})</option>`).join(""); }
+function manufacturedItemOptions() { return inventoryItems.filter(i => i.item_type === "manufactured").map(i => `<option value="${i.id}" data-unit="${i.unit}">${esc(i.name)} (${esc(i.unit)})</option>`).join(""); }
+function allItemOptions() { return inventoryItems.map(i => `<option value="${i.id}" data-unit="${i.unit}">${esc(i.name)} (${esc(i.unit)})</option>`).join(""); }
+function itemName(id) { const it = inventoryItems.find(i => i.id === Number(id)); return it ? it.name : `#${id}`; }
+
+function populateBranchSelects() {
+  const opts = allBranches.map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join("");
+  ["dashBranchFilter", "prodBranchFilter", "packBranchFilter"].forEach(id => {
+    document.getElementById(id).innerHTML = `<option value="">كل الفروع</option>${opts}`;
+  });
+  ["prodNewBranch", "packNewBranch", "batchSearchBranch"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const placeholder = id === "batchSearchBranch" ? `<option value="">اختر فرع</option>` : "";
+    el.innerHTML = placeholder + opts;
+  });
+  // مدير الفرع مقفول على فرعه بس فعليًا في السيرفر - نخفي الاختيار في الواجهة زي باقي الصفحات (تسهيل بس)
+  if (auth.user?.role === "branch_manager") {
+    ["prodNewBranch", "packNewBranch", "batchSearchBranch", "dashBranchFilter", "prodBranchFilter", "packBranchFilter"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.value = String(auth.user.branchId); el.disabled = true; }
+    });
+  }
+}
+function populateSupplierSelect() {
+  const el = document.getElementById("batchSearchSupplier");
+  el.innerHTML = `<option value="">الكل</option>` + allSuppliers.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
+}
+function populateItemSelects() {
+  document.getElementById("batchSearchItem").innerHTML = `<option value="">كل الأصناف</option>${allItemOptions()}`;
+  document.getElementById("packNewInputItem").innerHTML = manufacturedItemOptions() || allItemOptions();
+  document.getElementById("packNewOutputItem").innerHTML = allItemOptions();
+}
+
+document.getElementById("dashFilterBtn").onclick = loadDashboard;
+document.getElementById("prodFilterBtn").onclick = loadProductionList;
+document.getElementById("packFilterBtn").onclick = loadPackagingList;
+
+// ==================== UI-3A: لوحة التصنيع ====================
+// كل رقم هنا مُجمّع من endpoints موجودة فعليًا (قوايم/تقارير) - مفيش حساب أعمال مخترع في الواجهة،
+// زي ما اتحدد صراحة. "تنبيهات فرق الإنتاج" بتستخدم /api/reports/production-variance بمدى اليوم، والتنبيه
+// نفسه = وجود variance_reason (السيرفر أصلًا مايسمحش بإكمال أمر بفرق أكبر من الحد المسموح من غير سبب،
+// فوجود سبب = فرق تجاوز الحد وقتها بالظبط)
+async function loadDashboard() {
+  const box = document.getElementById("dashboardBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  const branchId = document.getElementById("dashBranchFilter").value;
+  const qs = branchId ? `?branchId=${branchId}` : "";
+  const today = todayStr();
+  try {
+    const [production, packaging, varianceReport] = await Promise.all([
+      api(`/api/production${qs}`),
+      api(`/api/packaging${qs}`),
+      api(`/api/reports/production-variance?from=${today}&to=${today}${branchId ? `&branchId=${branchId}` : ""}`).catch(() => []),
+    ]);
+
+    const prodToday = production.filter(o => fmtDate(o.production_date) === today);
+    const prodDraft = production.filter(o => o.status === "DRAFT");
+    const prodApproved = production.filter(o => o.status === "APPROVED");
+    const prodInProgress = production.filter(o => o.status === "IN_PROGRESS");
+    const prodCompletedToday = production.filter(o => o.status === "COMPLETED" && fmtDate(o.completed_at) === today);
+    const packInProgress = packaging.filter(o => o.status === "IN_PROGRESS");
+    const packCompletedToday = packaging.filter(o => o.status === "COMPLETED" && fmtDate(o.completed_at) === today);
+    const varianceAlerts = varianceReport.filter(r => r.variance_reason);
+
+    box.innerHTML = `
+      <div class="cardrow">
+        <div class="statcard" onclick="switchToTab('production')">
+          <div class="num">${prodToday.length}</div>
+          <div class="lbl">أوامر تصنيع اليوم</div>
+        </div>
+        <div class="statcard" onclick="switchToTab('production')">
+          <div class="num">${prodDraft.length}</div>
+          <div class="lbl">أوامر تصنيع مسودة</div>
+        </div>
+        <div class="statcard" onclick="switchToTab('production')">
+          <div class="num">${prodApproved.length}</div>
+          <div class="lbl">معتمدة (تنتظر البدء)</div>
+        </div>
+        <div class="statcard" onclick="switchToTab('production')">
+          <div class="num">${prodInProgress.length}</div>
+          <div class="lbl">تصنيع قيد التنفيذ الآن</div>
+        </div>
+        <div class="statcard" onclick="switchToTab('production')">
+          <div class="num">${prodCompletedToday.length}</div>
+          <div class="lbl">تصنيع مكتمل اليوم</div>
+        </div>
+      </div>
+      <div class="cardrow">
+        <div class="statcard" onclick="switchToTab('packaging')">
+          <div class="num">${packInProgress.length}</div>
+          <div class="lbl">تعبئة قيد التنفيذ</div>
+        </div>
+        <div class="statcard" onclick="switchToTab('packaging')">
+          <div class="num">${packCompletedToday.length}</div>
+          <div class="lbl">تعبئة مكتملة اليوم</div>
+        </div>
+        <div class="statcard" onclick="switchToTab('batches')">
+          <div class="num">${prodCompletedToday.length + packCompletedToday.length}</div>
+          <div class="lbl">دفعات أُنتجت اليوم</div>
+          <div class="sub">تصنيع + تعبئة</div>
+        </div>
+        <div class="statcard ${varianceAlerts.length ? 'alert' : ''}" onclick="switchToTab('production')">
+          <div class="num">${varianceAlerts.length}</div>
+          <div class="lbl">تنبيهات فرق إنتاج اليوم</div>
+          <div class="sub">فرق تجاوز الحد المسموح واحتاج سبب</div>
+        </div>
+      </div>
+      <h2>أوامر تصنيع تحتاج متابعة</h2>
+      ${renderProductionQueueTable(prodDraft.concat(prodApproved, prodInProgress).slice(0, 15))}
+      <h2>أوامر تعبئة تحتاج متابعة</h2>
+      ${renderPackagingQueueTable(packaging.filter(o => ["DRAFT", "APPROVED", "IN_PROGRESS"].includes(o.status)).slice(0, 15))}
+      <div class="row" style="margin-top:12px">
+        <button class="secondary" onclick="window.SatamoniPrint.printPanel(document.getElementById('panel-dashboard'), {title:'لوحة التصنيع'})">🖨️ طباعة اللوحة</button>
+      </div>
+    `;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+function renderProductionQueueTable(rows) {
+  if (rows.length === 0) return `<div class="hint">مفيش أوامر تصنيع محتاجة متابعة دلوقتي.</div>`;
+  return `<table><thead><tr><th>#</th><th>المنتج</th><th>الفرع</th><th>الحالة</th><th>الكمية المخططة</th><th>تاريخ الإنتاج</th><th></th></tr></thead><tbody>
+    ${rows.map(o => `<tr>
+      <td data-label="#">${o.id}</td>
+      <td data-label="المنتج">${esc(o.product_name || "-")}</td>
+      <td data-label="الفرع">${esc(o.branch_name)}</td>
+      <td data-label="الحالة"><span class="badge ${o.status}">${PRODUCTION_STATUS_LABELS[o.status] || o.status}</span></td>
+      <td data-label="الكمية المخططة">${fmtQty(o.planned_quantity)}</td>
+      <td data-label="تاريخ الإنتاج">${fmtDate(o.production_date)}</td>
+      <td><button class="linkbtn" onclick="switchToTab('production'); showProductionDetails(${o.id})">فتح</button></td>
+    </tr>`).join("")}
+  </tbody></table>`;
+}
+function renderPackagingQueueTable(rows) {
+  if (rows.length === 0) return `<div class="hint">مفيش أوامر تعبئة محتاجة متابعة دلوقتي.</div>`;
+  return `<table><thead><tr><th>#</th><th>من</th><th>إلى</th><th>الفرع</th><th>الحالة</th><th></th></tr></thead><tbody>
+    ${rows.map(o => `<tr>
+      <td data-label="#">${o.id}</td>
+      <td data-label="من">${esc(o.input_item_name)}</td>
+      <td data-label="إلى">${esc(o.output_item_name)}</td>
+      <td data-label="الفرع">${esc(o.branch_name)}</td>
+      <td data-label="الحالة"><span class="badge ${o.status}">${PACKAGING_STATUS_LABELS[o.status] || o.status}</span></td>
+      <td><button class="linkbtn" onclick="switchToTab('packaging'); showPackagingDetails(${o.id})">فتح</button></td>
+    </tr>`).join("")}
+  </tbody></table>`;
+}
+
+// ==================== UI-3B: الوصفات (BOM) ====================
+async function loadRecipeList() {
+  const box = document.getElementById("recipeListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    const recipes = await api("/api/recipes");
+    allRecipes = recipes;
+    if (recipes.length === 0) { box.innerHTML = `<div class="hint">مفيش وصفات مسجّلة لسه.</div>`; return; }
+    box.innerHTML = `<table><thead><tr><th>#</th><th>الصنف</th><th>النوع</th><th>النسخة النشطة</th><th>الحالة</th><th></th></tr></thead><tbody>
+      ${recipes.map(r => {
+        const name = r.recipe_type === "sellable_variant" ? `${r.item_name || ""} - ${r.variant_label || ""}` : r.inventory_item_name;
+        return `<tr>
+          <td data-label="#">${r.id}</td>
+          <td data-label="الصنف">${esc(name || "-")}</td>
+          <td data-label="النوع">${r.recipe_type === "manufactured_item" ? "صنف مصنّع" : "صنف مباع"}</td>
+          <td data-label="النسخة النشطة">${r.active_version_number ? `نسخة ${r.active_version_number}` : "-"}</td>
+          <td data-label="الحالة">${r.active_version_id ? `<span class="badge ACTIVE">فعال</span>` : `<span class="badge DRAFT">بدون نسخة مفعّلة</span>`}</td>
+          <td><button class="linkbtn" onclick="showRecipeDetails(${r.id})">فتح</button></td>
+        </tr>`;
+      }).join("")}
+    </tbody></table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+async function showRecipeDetails(id) {
+  const box = document.getElementById("recipeDetailsBox");
+  box.style.display = "block";
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+  try {
+    const { recipe, versions } = await api(`/api/recipes/${id}`);
+    const name = recipe.recipe_type === "sellable_variant" ? "صنف مباع" : "صنف مصنّع";
+    let html = `<h2>وصفة #${recipe.id} - ${name}</h2>
+      <button class="secondary" onclick="document.getElementById('recipeDetailsBox').style.display='none'">إغلاق</button>
+      <h3>النسخ</h3>
+      <table><thead><tr><th>النسخة</th><th>الحالة</th><th>الإنتاج (Yield)</th><th>فقد التحضير %</th><th>فقد الطهي %</th><th>سريان من</th><th>أنشأها</th><th></th></tr></thead><tbody>
+      ${versions.map(v => `<tr>
+        <td data-label="النسخة">${v.version_number}</td>
+        <td data-label="الحالة"><span class="badge ${v.status}">${RECIPE_STATUS_LABELS[v.status] || v.status}</span></td>
+        <td data-label="الإنتاج">${fmtQty(v.yield_quantity)} ${esc(v.yield_unit || "")}</td>
+        <td data-label="فقد التحضير">${v.preparation_loss_percent}%</td>
+        <td data-label="فقد الطهي">${v.cooking_loss_percent}%</td>
+        <td data-label="سريان من">${fmtDate(v.effective_from)}</td>
+        <td data-label="أنشأها">${esc(v.created_by_name || "-")}</td>
+        <td><button class="linkbtn" onclick="showRecipeVersionDetails(${v.id}, ${recipe.id})">تفاصيل</button></td>
+      </tr>`).join("")}
+      </tbody></table>
+      <div class="row" style="margin-top:10px">
+        ${hasPerm("recipes.create", "recipes.edit") ? `<button class="secondary" onclick="openRecipeNewVersion(${recipe.id})">+ نسخة جديدة</button>` : ""}
+      </div>
+      <div id="recipeVersionDetailBox"></div>`;
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+async function showRecipeVersionDetails(versionId, recipeId) {
+  const box = document.getElementById("recipeVersionDetailBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  try {
+    const { version, ingredients, cost } = await api(`/api/recipes/versions/${versionId}`);
+    let actions = "";
+    if (["DRAFT", "REJECTED"].includes(version.status) && hasPerm("recipes.submit")) {
+      actions += `<button onclick="recipeVersionAction(${versionId}, 'submit', ${recipeId})">تقديم للاعتماد</button>`;
+    }
+    if (version.status === "PENDING_APPROVAL" && canApprove()) {
+      actions += `<button class="good" onclick="recipeVersionAction(${versionId}, 'approve', ${recipeId})">اعتماد</button>`;
+      actions += `<button class="secondary" onclick="recipeVersionReject(${versionId}, ${recipeId})">رفض</button>`;
+    }
+    if (version.status === "APPROVED" && canApprove()) {
+      actions += `<button class="good" onclick="recipeVersionAction(${versionId}, 'activate', ${recipeId})">تفعيل</button>`;
+    }
+    if (version.status === "ACTIVE" && canApprove()) {
+      actions += `<button class="secondary" onclick="recipeVersionAction(${versionId}, 'archive', ${recipeId})">أرشفة</button>`;
+    }
+    box.innerHTML = `<div class="expandbox">
+      <h3>نسخة ${version.version_number} <span class="badge ${version.status}">${RECIPE_STATUS_LABELS[version.status] || version.status}</span></h3>
+      ${version.rejection_reason ? `<div class="err">سبب الرفض: ${esc(version.rejection_reason)}</div>` : ""}
+      <table><thead><tr><th>المكوّن</th><th>الكمية</th><th>فقد %</th><th>نسبة الاستفادة %</th><th>اختياري؟</th></tr></thead><tbody>
+        ${ingredients.map(i => `<tr>
+          <td data-label="المكوّن">${esc(i.item_name)}${i.item_type === "manufactured" ? " (نصف مصنّع)" : ""}</td>
+          <td data-label="الكمية">${fmtQty(i.quantity)} ${esc(i.unit || i.item_unit)}</td>
+          <td data-label="فقد">${i.wastage_percent}%</td>
+          <td data-label="استفادة">${i.yield_percent}%</td>
+          <td data-label="اختياري">${i.is_optional ? "نعم" : "لا"}</td>
+        </tr>`).join("")}
+      </tbody></table>
+      <div class="hint" style="margin-top:8px">التكلفة النظرية للوحدة (محسوبة من السيرفر، مش من الواجهة): ${cost ? (cost.incomplete ? "غير مكتملة البيانات" : fmtMoney(cost.totalCost) + " ج.م") : "غير متاحة"}</div>
+      <div class="row" style="margin-top:8px">${actions}</div>
+      <div id="recipeVersionActionErr" class="err"></div>
+    </div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+async function recipeVersionAction(versionId, action, recipeId) {
+  try {
+    await api(`/api/recipes/versions/${versionId}/${action}`, { method: "POST", body: JSON.stringify({}) });
+    await showRecipeDetails(recipeId);
+    await loadRecipeList();
+  } catch (e) {
+    const el = document.getElementById("recipeVersionActionErr");
+    if (el) el.textContent = apiErrorMessage(e);
+  }
+}
+async function recipeVersionReject(versionId, recipeId) {
+  const reason = prompt("سبب الرفض؟");
+  if (!reason) return;
+  try {
+    await api(`/api/recipes/versions/${versionId}/reject`, { method: "POST", body: JSON.stringify({ rejectionReason: reason }) });
+    await showRecipeDetails(recipeId);
+  } catch (e) {
+    alert(apiErrorMessage(e));
+  }
+}
+
+// ---- إنشاء وصفة/نسخة جديدة ----
+let recIngredientRows = [];
+document.getElementById("recNewType").onchange = () => {
+  const type = document.getElementById("recNewType").value;
+  document.getElementById("recNewTarget").innerHTML = type === "manufactured_item"
+    ? `<option value="">اختر الصنف المصنّع الناتج</option>${manufacturedItemOptions()}`
+    : `<option value="">اختر حجم/صنف المنيو</option>`; // sellable_variant اختيار variant محتاج endpoint تاني (menu variants) - مش أولوية UI-3
+};
+document.getElementById("recNewType").dispatchEvent(new Event("change"));
+document.getElementById("recNewAddIngredient").onclick = () => { recIngredientRows.push({}); renderRecIngredientRows(); };
+function renderRecIngredientRows() {
+  const box = document.getElementById("recNewIngredients");
+  box.innerHTML = recIngredientRows.map((_, idx) => `
+    <div class="pickrow">
+      <select data-idx="${idx}" class="rec-ing-item">${allItemOptions()}</select>
+      <input data-idx="${idx}" class="rec-ing-qty" type="number" min="0.001" step="0.001" placeholder="الكمية" />
+      <input data-idx="${idx}" class="rec-ing-wastage" type="number" min="0" step="0.1" placeholder="فقد %" style="max-width:80px" />
+      <button type="button" onclick="recIngredientRows.splice(${idx},1); renderRecIngredientRows();">✕</button>
+    </div>`).join("");
+}
+document.getElementById("recipeNewBtn").onclick = () => {
+  recIngredientRows = [{}];
+  renderRecIngredientRows();
+  document.getElementById("recNewErr").textContent = "";
+  document.getElementById("recipeCreateBox").style.display = "block";
+};
+document.getElementById("recNewCancelBtn").onclick = () => { document.getElementById("recipeCreateBox").style.display = "none"; };
+let recNewVersionForRecipeId = null;
+function openRecipeNewVersion(recipeId) {
+  recNewVersionForRecipeId = recipeId;
+  recIngredientRows = [{}];
+  renderRecIngredientRows();
+  document.getElementById("recNewErr").textContent = "";
+  document.getElementById("recNewType").parentElement.style.display = "none";
+  document.getElementById("recNewTargetRow").style.display = "none";
+  document.getElementById("recipeCreateBox").style.display = "block";
+  document.getElementById("recipeCreateBox").scrollIntoView({ behavior: "smooth" });
+}
+document.getElementById("recNewSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("recNewErr");
+  errBox.textContent = "";
+  const ingredients = [...document.querySelectorAll(".rec-ing-item")].map((sel, i) => ({
+    ingredientItemId: Number(sel.value),
+    quantity: Number(document.querySelectorAll(".rec-ing-qty")[i].value),
+    wastagePercent: Number(document.querySelectorAll(".rec-ing-wastage")[i].value) || 0,
+  }));
+  if (ingredients.some(i => !i.ingredientItemId || !i.quantity)) {
+    errBox.textContent = "كل مكوّن لازم صنف وكمية أكبر من صفر";
+    return;
+  }
+  const payload = {
+    yieldQuantity: Number(document.getElementById("recNewYieldQty").value) || 1,
+    yieldUnit: document.getElementById("recNewYieldUnit").value || null,
+    preparationLossPercent: Number(document.getElementById("recNewPrepLoss").value) || 0,
+    cookingLossPercent: Number(document.getElementById("recNewCookLoss").value) || 0,
+    notes: document.getElementById("recNewNotes").value || null,
+    ingredients,
+  };
+  try {
+    if (recNewVersionForRecipeId) {
+      await api(`/api/recipes/${recNewVersionForRecipeId}/versions`, { method: "POST", body: JSON.stringify(payload) });
+      document.getElementById("recipeCreateBox").style.display = "none";
+      document.getElementById("recNewType").parentElement.style.display = "";
+      document.getElementById("recNewTargetRow").style.display = "";
+      await showRecipeDetails(recNewVersionForRecipeId);
+      recNewVersionForRecipeId = null;
+    } else {
+      payload.recipeType = document.getElementById("recNewType").value;
+      const targetId = document.getElementById("recNewTarget").value;
+      if (!targetId) { errBox.textContent = "لازم تحدد الصنف الناتج"; return; }
+      if (payload.recipeType === "manufactured_item") payload.inventoryItemId = Number(targetId);
+      else payload.variantId = Number(targetId);
+      await api("/api/recipes", { method: "POST", body: JSON.stringify(payload) });
+      document.getElementById("recipeCreateBox").style.display = "none";
+    }
+    await loadRecipeList();
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  }
+};
+
+// ==================== UI-3C/D/E/F/G: أوامر التصنيع ====================
+function renderStepper(status, steps, labels) {
+  if (status === "CANCELLED") return `<div class="stepper"><span class="badge CANCELLED">${labels.CANCELLED}</span></div>`;
+  const idx = steps.indexOf(status);
+  return `<div class="stepper">${steps.map((s, i) => `
+    ${i > 0 ? '<span class="step-arrow">←</span>' : ''}
+    <span class="step ${i < idx ? 'done' : i === idx ? 'current' : ''}">${labels[s]}</span>
+  `).join("")}</div>`;
+}
+
+async function loadProductionList() {
+  const box = document.getElementById("productionListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  const status = document.getElementById("prodStatusFilter").value;
+  const branchId = document.getElementById("prodBranchFilter").value;
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (branchId) params.set("branchId", branchId);
+  try {
+    const rows = await api(`/api/production?${params}`);
+    if (rows.length === 0) { box.innerHTML = `<div class="hint">مفيش أوامر تصنيع مطابقة.</div>`; return; }
+    box.innerHTML = `<table><thead><tr><th>#</th><th>المنتج</th><th>الفرع</th><th>رقم الدفعة</th><th>المخطط</th><th>الفعلي</th><th>الحالة</th><th>تاريخ الإنتاج</th><th></th></tr></thead><tbody>
+      ${rows.map(o => `<tr>
+        <td data-label="#">${o.id}</td>
+        <td data-label="المنتج">${esc(o.product_name || "-")}</td>
+        <td data-label="الفرع">${esc(o.branch_name)}</td>
+        <td data-label="رقم الدفعة">${esc(o.batch_number || "-")}</td>
+        <td data-label="المخطط">${fmtQty(o.planned_quantity)}</td>
+        <td data-label="الفعلي">${o.actual_quantity != null ? fmtQty(o.actual_quantity) : "-"}</td>
+        <td data-label="الحالة"><span class="badge ${o.status}">${PRODUCTION_STATUS_LABELS[o.status] || o.status}</span></td>
+        <td data-label="تاريخ الإنتاج">${fmtDate(o.production_date)}</td>
+        <td><button class="linkbtn" onclick="showProductionDetails(${o.id})">فتح</button></td>
+      </tr>`).join("")}
+    </tbody></table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+document.getElementById("prodNewBtn").onclick = async () => {
+  document.getElementById("prodNewErr").textContent = "";
+  document.getElementById("prodNewDate").value = todayStr();
+  const recipeSel = document.getElementById("prodNewRecipe");
+  recipeSel.innerHTML = `<option value="">جاري التحميل...</option>`;
+  document.getElementById("prodCreateBox").style.display = "block";
+  try {
+    const recipes = await api("/api/recipes");
+    const withActive = recipes.filter(r => r.active_version_id);
+    recipeSel.innerHTML = `<option value="">اختر وصفة نشطة</option>` + withActive.map(r => {
+      const name = r.recipe_type === "sellable_variant" ? `${r.item_name} - ${r.variant_label}` : r.inventory_item_name;
+      return `<option value="${r.id}">${esc(name)} (نسخة ${r.active_version_number})</option>`;
+    }).join("");
+    if (withActive.length === 0) recipeSel.innerHTML = `<option value="">مفيش وصفات لها نسخة نشطة - فعّل وصفة الأول من تبويب الوصفات</option>`;
+  } catch (e) {
+    recipeSel.innerHTML = `<option value="">تعذّر تحميل الوصفات</option>`;
+  }
+};
+document.getElementById("prodNewCancelBtn").onclick = () => { document.getElementById("prodCreateBox").style.display = "none"; };
+document.getElementById("prodNewSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("prodNewErr");
+  errBox.textContent = "";
+  const branchId = Number(document.getElementById("prodNewBranch").value);
+  const recipeId = Number(document.getElementById("prodNewRecipe").value);
+  const plannedQuantity = Number(document.getElementById("prodNewQty").value);
+  if (!branchId || !recipeId || !plannedQuantity || plannedQuantity <= 0) {
+    errBox.textContent = "لازم فرع، وصفة، وكمية مخططة أكبر من صفر";
+    return;
+  }
+  try {
+    const created = await api("/api/production", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId, recipeId, plannedQuantity,
+        productionDate: document.getElementById("prodNewDate").value || null,
+        batchNumber: document.getElementById("prodNewBatchNum").value || null,
+        expiryDate: document.getElementById("prodNewExpiry").value || null,
+        notes: document.getElementById("prodNewNotes").value || null,
+      }),
+    });
+    document.getElementById("prodCreateBox").style.display = "none";
+    await loadProductionList();
+    await showProductionDetails(created.id);
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  }
+};
+
+let currentProdOrder = null;
+async function showProductionDetails(id) {
+  const box = document.getElementById("prodDetailsBox");
+  box.style.display = "block";
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+  try {
+    const order = await api(`/api/production/${id}`);
+    currentProdOrder = order;
+    renderProductionDetails(order);
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+function renderProductionDetails(order) {
+  const box = document.getElementById("prodDetailsBox");
+  const inputs = (order.batches || []).filter(b => b.role === "input");
+  const outputs = (order.batches || []).filter(b => b.role === "output");
+  const outputBatch = outputs[0];
+
+  let batchHero = "";
+  if (order.status === "COMPLETED" && outputBatch) {
+    batchHero = `<div class="batchnum-hero">
+      <div class="lbl">الدفعة الناتجة</div>
+      <div class="num">${esc(outputBatch.batch_number || "-")}</div>
+      <button class="linkbtn" onclick="switchToTab('batches'); openBatchTrace(${outputBatch.batch_id})">فتح تتبّع الدفعة دي</button>
+    </div>`;
+  } else if (order.batch_number) {
+    batchHero = `<div class="batchnum-hero"><div class="lbl">رقم الدفعة المحدد لهذا الأمر</div><div class="num">${esc(order.batch_number)}</div></div>`;
+  }
+
+  let inputsTable = "";
+  if (inputs.length > 0) {
+    inputsTable = `<h3>مدخلات التصنيع (من دفعات متعددة إن وُجدت)</h3>
+      <table><thead><tr><th>الصنف</th><th>الدفعة المصدر</th><th>الكمية المستهلكة</th><th>المخطط لها</th><th>الفرق</th><th>تكلفة الوحدة</th></tr></thead><tbody>
+      ${inputs.map(b => `<tr>
+        <td data-label="الصنف">${esc(b.item_name)}</td>
+        <td data-label="الدفعة المصدر">${b.batch_id ? `<button class="linkbtn" onclick="switchToTab('batches'); openBatchTrace(${b.batch_id})">${esc(b.batch_number || ('#' + b.batch_id))}</button>` : "بدون دفعة محددة (رصيد عام)"}</td>
+        <td data-label="المستهلك فعليًا">${fmtQty(b.quantity)}</td>
+        <td data-label="المخطط له">${b.planned_quantity != null ? fmtQty(b.planned_quantity) : "-"}</td>
+        <td data-label="الفرق">${b.variance_quantity != null ? fmtQty(b.variance_quantity) : "-"}${b.variance_reason ? ` (${esc(b.variance_reason)})` : ""}</td>
+        <td data-label="تكلفة الوحدة">${b.batch_unit_cost != null ? fmtMoney(b.batch_unit_cost) : "-"}</td>
+      </tr>`).join("")}
+      </tbody></table>
+      ${inputs.length > 1 ? `<div class="hint">⚠ الاستهلاك ده جاي من أكتر من دفعة مصدر واحدة (FEFO) - كل مصدر ظاهر بصف منفصل، من غير تجميعه في رقم واحد.</div>` : ""}`;
+  }
+
+  let outputSummary = "";
+  if (order.status === "COMPLETED" && outputBatch) {
+    outputSummary = `<div class="varbox">
+      <div class="cell"><div class="v">${fmtQty(order.planned_quantity)}</div><div class="l">مخطط</div></div>
+      <div class="cell ${Math.abs(order.actual_quantity - order.planned_quantity) > 0.0001 ? '' : 'ok'}"><div class="v">${fmtQty(order.actual_quantity)}</div><div class="l">فعلي</div></div>
+      <div class="cell ${Math.abs(order.actual_quantity - order.planned_quantity) > 0.0001 ? 'warn' : 'ok'}"><div class="v">${fmtQty(order.actual_quantity - order.planned_quantity)}</div><div class="l">فرق الإنتاج</div></div>
+    </div>
+    ${order.variance_reason ? `<div class="hint">سبب الفرق: ${esc(order.variance_reason)}</div>` : ""}`;
+  }
+
+  let actions = "";
+  if (order.status === "DRAFT" && canApprove()) {
+    actions += `<button class="good" onclick="prodOrderAction(${order.id}, 'approve')">اعتماد</button>`;
+  }
+  if (order.status === "APPROVED" && hasPerm("production.create")) {
+    actions += `<button onclick="openProductionStart(${order.id})">بدء التصنيع</button>`;
+  }
+  if (order.status === "IN_PROGRESS" && hasPerm("production.complete")) {
+    actions += `<button onclick="openProductionComplete(${order.id})">إكمال التصنيع</button>`;
+  }
+  if (!["COMPLETED", "CANCELLED"].includes(order.status) && hasPerm("production.cancel")) {
+    actions += `<button class="secondary" onclick="prodOrderCancel(${order.id})">إلغاء الأمر</button>`;
+  }
+  actions += `<button class="secondary" onclick="window.SatamoniPrint.openCustomPrint('أمر تصنيع #${order.id}', document.getElementById('prodDetailsBox').innerHTML)">🖨️ طباعة</button>`;
+
+  box.innerHTML = `
+    <h2>أمر تصنيع #${order.id} - ${esc(order.product_name || "")}</h2>
+    <button class="secondary" onclick="document.getElementById('prodDetailsBox').style.display='none'">إغلاق</button>
+    ${renderStepper(order.status, PRODUCTION_WORKFLOW_STEPS, PRODUCTION_STATUS_LABELS)}
+    ${batchHero}
+    <div class="docchain">
+      <span>الفرع: ${esc(order.branch_name)}</span> |
+      <span>الوصفة: نسخة ${order.version_number} (إنتاج ${fmtQty(order.yield_quantity)} ${esc(order.yield_unit || "")})</span> |
+      <span>تاريخ الإنتاج: ${fmtDate(order.production_date)}</span>
+      ${order.operator_name ? ` | <span>أنشأها: ${esc(order.operator_name)}</span>` : ""}
+      ${order.approved_by_name ? ` | <span>اعتمدها: ${esc(order.approved_by_name)}</span>` : ""}
+      ${order.completed_by_name ? ` | <span>أكملها: ${esc(order.completed_by_name)}</span>` : ""}
+      ${order.parent_production_order_id ? ` | <button class="linkbtn" onclick="showProductionDetails(${order.parent_production_order_id})">أمر التصنيع الأب #${order.parent_production_order_id}</button>` : ""}
+    </div>
+    ${outputSummary}
+    ${order.notes ? `<div class="hint">ملاحظات: ${esc(order.notes)}</div>` : ""}
+    <div id="prodStartBox"></div>
+    <div id="prodCompleteBox"></div>
+    ${inputsTable}
+    <div class="row" style="margin-top:10px">${actions}</div>
+    <div id="prodActionErr" class="err"></div>
+  `;
+}
+
+async function prodOrderAction(id, action) {
+  try {
+    await api(`/api/production/${id}/${action}`, { method: "POST", body: JSON.stringify({}) });
+    await showProductionDetails(id);
+    await loadProductionList();
+  } catch (e) {
+    document.getElementById("prodActionErr").textContent = apiErrorMessage(e);
+  }
+}
+async function prodOrderCancel(id) {
+  const reason = prompt("سبب الإلغاء (اختياري)؟") || "";
+  if (!confirm("متأكد إنك عايز تلغي أمر التصنيع ده؟" + (currentProdOrder?.status === "IN_PROGRESS" ? " هيترجّع المكونات اللي اتخصمت بالفعل." : ""))) return;
+  try {
+    await api(`/api/production/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+    await showProductionDetails(id);
+    await loadProductionList();
+  } catch (e) {
+    document.getElementById("prodActionErr").textContent = apiErrorMessage(e);
+  }
+}
+
+// UI-3E/F: قبل البدء - نعرض المكونات المباشرة للوصفة (من غير أي تفجير recipe-engine في الواجهة) كتقدير
+// استرشادي بس، ونتيح للأوبريتور يدخل استهلاك فعلي مختلف لو حابب - الأرقام الحقيقية النهائية (بما فيها أي
+// وصفات فرعية وفقد/نسب استفادة) بيحسبها ويرحّلها السيرفر فقط لحظة الضغط فعليًا
+async function openProductionStart(orderId) {
+  const box = document.getElementById("prodStartBox");
+  box.innerHTML = `<div class="hint">جاري تحميل مكونات الوصفة...</div>`;
+  try {
+    const order = currentProdOrder;
+    const { ingredients } = await api(`/api/recipes/versions/${order.recipe_version_id}`);
+    const ratio = Number(order.planned_quantity) / Number(order.yield_quantity || 1);
+    box.innerHTML = `<div class="expandbox">
+      <h3>المكونات المطلوبة نظريًا (تقدير استرشادي من مقياس الوصفة الأساسي)</h3>
+      <div class="hint">القيم دي تقدير خطي بسيط من كمية الوصفة الأساسية - مش شاملة أي فقد/نسب استفادة أو تفجير وصفات فرعية. الأرقام الفعلية اللي هتتخصم من المخزون بيحسبها السيرفر بالكامل لحظة الضغط على "تأكيد البدء".</div>
+      <table><thead><tr><th>المكوّن</th><th>مطلوب نظريًا (تقديري)</th><th>استهلاك فعلي مختلف؟</th><th>سبب الفرق (لو اختلف)</th></tr></thead><tbody>
+        ${ingredients.map(i => {
+          const estQty = (Number(i.quantity) * ratio).toFixed(3);
+          if (i.item_type === "manufactured") {
+            return `<tr>
+              <td data-label="المكوّن">${esc(i.item_name)} <span class="hint">(وصفة فرعية - هتتفجّر تلقائيًا)</span></td>
+              <td data-label="مطلوب">${estQty} ${esc(i.item_unit)}</td>
+              <td data-label="فعلي">-</td><td data-label="سبب">-</td>
+            </tr>`;
+          }
+          return `<tr>
+            <td data-label="المكوّن">${esc(i.item_name)}</td>
+            <td data-label="مطلوب">${estQty} ${esc(i.item_unit)}</td>
+            <td data-label="فعلي"><input type="number" min="0" step="0.001" class="prod-actual-qty" data-item="${i.ingredient_item_id}" placeholder="زي المخطط" style="max-width:110px" /></td>
+            <td data-label="سبب"><input class="prod-actual-reason" data-item="${i.ingredient_item_id}" placeholder="سبب الفرق (اختياري)" /></td>
+          </tr>`;
+        }).join("")}
+      </tbody></table>
+      <div class="row">
+        <button id="prodStartConfirmBtn">تأكيد البدء</button>
+        <button class="secondary" onclick="document.getElementById('prodStartBox').innerHTML=''">إلغاء</button>
+      </div>
+      <div id="prodStartErr" class="err"></div>
+    </div>`;
+    document.getElementById("prodStartConfirmBtn").onclick = () => confirmProductionStart(orderId);
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+async function confirmProductionStart(orderId) {
+  const errBox = document.getElementById("prodStartErr");
+  errBox.textContent = "";
+  const actualConsumption = [];
+  document.querySelectorAll(".prod-actual-qty").forEach(input => {
+    if (input.value !== "") {
+      const itemId = Number(input.dataset.item);
+      const reasonInput = document.querySelector(`.prod-actual-reason[data-item="${itemId}"]`);
+      actualConsumption.push({ inventoryItemId: itemId, actualQuantity: Number(input.value), varianceReason: reasonInput.value || null });
+    }
+  });
+  try {
+    await api(`/api/production/${orderId}/start`, { method: "POST", body: JSON.stringify({ actualConsumption }) });
+    document.getElementById("prodStartBox").innerHTML = "";
+    await showProductionDetails(orderId);
+    await loadProductionList();
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  }
+}
+
+// UI-3G: تأكيد الإكمال - عرض مخطط/فعلي/فرق قبل الإرسال، ولو السيرفر رفض بسبب فرق كبير من غير سبب
+// (VARIANCE_REASON_REQUIRED) بنطلب السبب ونخلي المستخدم يعيد المحاولة - من غير ما نتحايل على تحقق السيرفر
+function openProductionComplete(orderId) {
+  const order = currentProdOrder;
+  const box = document.getElementById("prodCompleteBox");
+  box.innerHTML = `<div class="expandbox">
+    <h3>إكمال التصنيع</h3>
+    <div class="row">
+      <label class="field-label">الكمية الفعلية المنتَجة:</label>
+      <input type="number" id="prodCompleteQty" min="0.001" step="0.001" value="${order.planned_quantity}" />
+    </div>
+    <div id="prodCompletePreview" class="varbox"></div>
+    <div class="row">
+      <label class="field-label">سبب الفرق (لو الفرق كبير هيتطلب):</label>
+      <input id="prodCompleteReason" placeholder="سبب فرق الإنتاج" />
+    </div>
+    <div class="row">
+      <button id="prodCompleteConfirmBtn">تأكيد الإكمال</button>
+      <button class="secondary" onclick="document.getElementById('prodCompleteBox').innerHTML=''">إلغاء</button>
+    </div>
+    <div id="prodCompleteErr" class="err"></div>
+  </div>`;
+  const updatePreview = () => {
+    const actual = Number(document.getElementById("prodCompleteQty").value) || 0;
+    const planned = Number(order.planned_quantity);
+    const variance = actual - planned;
+    const pct = planned ? (variance / planned) * 100 : 0;
+    document.getElementById("prodCompletePreview").innerHTML = `
+      <div class="cell"><div class="v">${fmtQty(planned)}</div><div class="l">مخطط</div></div>
+      <div class="cell"><div class="v">${fmtQty(actual)}</div><div class="l">فعلي</div></div>
+      <div class="cell ${Math.abs(pct) > 5 ? 'warn' : 'ok'}"><div class="v">${fmtQty(variance)} (${pct.toFixed(1)}%)</div><div class="l">فرق الإنتاج</div></div>
+    `;
+  };
+  document.getElementById("prodCompleteQty").oninput = updatePreview;
+  updatePreview();
+  document.getElementById("prodCompleteConfirmBtn").onclick = () => confirmProductionComplete(orderId);
+}
+async function confirmProductionComplete(orderId) {
+  const errBox = document.getElementById("prodCompleteErr");
+  errBox.textContent = "";
+  const actualQuantity = Number(document.getElementById("prodCompleteQty").value);
+  const varianceReason = document.getElementById("prodCompleteReason").value || null;
+  try {
+    await api(`/api/production/${orderId}/complete`, { method: "POST", body: JSON.stringify({ actualQuantity, varianceReason }) });
+    document.getElementById("prodCompleteBox").innerHTML = "";
+    await showProductionDetails(orderId);
+    await loadProductionList();
+    await loadDashboard();
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  }
+}
+
+// ==================== UI-3I/J/K: التعبئة ====================
+async function loadPackagingList() {
+  const box = document.getElementById("packagingListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  const status = document.getElementById("packStatusFilter").value;
+  const branchId = document.getElementById("packBranchFilter").value;
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (branchId) params.set("branchId", branchId);
+  try {
+    const rows = await api(`/api/packaging?${params}`);
+    if (rows.length === 0) { box.innerHTML = `<div class="hint">مفيش أوامر تعبئة مطابقة.</div>`; return; }
+    box.innerHTML = `<table><thead><tr><th>#</th><th>من (سائب)</th><th>إلى (معبأ)</th><th>الفرع</th><th>رقم الدفعة</th><th>الحالة</th><th>تاريخ التعبئة</th><th></th></tr></thead><tbody>
+      ${rows.map(o => `<tr>
+        <td data-label="#">${o.id}</td>
+        <td data-label="من">${esc(o.input_item_name)}</td>
+        <td data-label="إلى">${esc(o.output_item_name)}</td>
+        <td data-label="الفرع">${esc(o.branch_name)}</td>
+        <td data-label="رقم الدفعة">${esc(o.batch_number || "-")}</td>
+        <td data-label="الحالة"><span class="badge ${o.status}">${PACKAGING_STATUS_LABELS[o.status] || o.status}</span></td>
+        <td data-label="تاريخ التعبئة">${fmtDate(o.packaging_date)}</td>
+        <td><button class="linkbtn" onclick="showPackagingDetails(${o.id})">فتح</button></td>
+      </tr>`).join("")}
+    </tbody></table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+document.getElementById("packNewInputItem").onchange = async () => {
+  const itemId = document.getElementById("packNewInputItem").value;
+  const batchSel = document.getElementById("packNewInputBatch");
+  batchSel.innerHTML = `<option value="">FEFO تلقائي</option>`;
+  if (!itemId) return;
+  const branchId = document.getElementById("packNewBranch").value;
+  if (!branchId) return;
+  try {
+    const batches = await api(`/api/inventory/batches?branchId=${branchId}&itemId=${itemId}`);
+    const active = batches.filter(b => b.status === "active" && Number(b.remaining_quantity) > 0);
+    batchSel.innerHTML = `<option value="">FEFO تلقائي (الأقرب صلاحية الأول)</option>` +
+      active.map(b => `<option value="${b.id}">${esc(b.batch_number || ('#' + b.id))} - متبقي ${fmtQty(b.remaining_quantity)} - صلاحية ${fmtDate(b.expiry_date)}</option>`).join("");
+  } catch (e) { /* الاختيار اليدوي اختياري - لو فشل التحميل يفضل FEFO التلقائي شغال */ }
+};
+document.getElementById("packNewBtn").onclick = () => {
+  document.getElementById("packNewErr").textContent = "";
+  document.getElementById("packNewDate").value = todayStr();
+  document.getElementById("packNewInputBatch").innerHTML = `<option value="">FEFO تلقائي</option>`;
+  document.getElementById("packCreateBox").style.display = "block";
+};
+document.getElementById("packNewCancelBtn").onclick = () => { document.getElementById("packCreateBox").style.display = "none"; };
+document.getElementById("packNewSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("packNewErr");
+  errBox.textContent = "";
+  const branchId = Number(document.getElementById("packNewBranch").value);
+  const inputItemId = Number(document.getElementById("packNewInputItem").value);
+  const outputItemId = Number(document.getElementById("packNewOutputItem").value);
+  const plannedInputQuantity = Number(document.getElementById("packNewInputQty").value);
+  const plannedOutputQuantity = Number(document.getElementById("packNewOutputQty").value);
+  if (!branchId || !inputItemId || !outputItemId || !plannedInputQuantity || !plannedOutputQuantity) {
+    errBox.textContent = "لازم فرع، صنف مُدخَل وناتج، وكميات مخططة أكبر من صفر";
+    return;
+  }
+  try {
+    const created = await api("/api/packaging", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId, inputItemId, outputItemId, plannedInputQuantity, plannedOutputQuantity,
+        inputBatchId: document.getElementById("packNewInputBatch").value || null,
+        packagingDate: document.getElementById("packNewDate").value || null,
+        expiryDate: document.getElementById("packNewExpiry").value || null,
+        batchNumber: document.getElementById("packNewBatchNum").value || null,
+        notes: document.getElementById("packNewNotes").value || null,
+      }),
+    });
+    document.getElementById("packCreateBox").style.display = "none";
+    await loadPackagingList();
+    await showPackagingDetails(created.id);
+  } catch (e) {
+    errBox.textContent = apiErrorMessage(e);
+  }
+};
+
+let currentPackOrder = null;
+async function showPackagingDetails(id) {
+  const box = document.getElementById("packDetailsBox");
+  box.style.display = "block";
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+  try {
+    const order = await api(`/api/packaging/${id}`);
+    currentPackOrder = order;
+    renderPackagingDetails(order);
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+function renderPackagingDetails(order) {
+  const box = document.getElementById("packDetailsBox");
+  const inputs = (order.batches || []).filter(b => b.role === "input");
+  const outputs = (order.batches || []).filter(b => b.role === "output");
+  const outputBatch = outputs[0];
+
+  let batchHero = "";
+  if (order.status === "COMPLETED" && outputBatch) {
+    batchHero = `<div class="batchnum-hero">
+      <div class="lbl">الدفعة الناتجة (المعبأة)</div>
+      <div class="num">${esc(outputBatch.batch_number || "-")}</div>
+      <div class="hint">من الدفعة السائبة: ${inputs[0]?.batch_number ? esc(inputs[0].batch_number) : "بدون دفعة محددة"}</div>
+      <button class="linkbtn" onclick="switchToTab('batches'); openBatchTrace(${outputBatch.batch_id})">فتح تتبّع الدفعة دي</button>
+    </div>`;
+  } else if (order.batch_number) {
+    batchHero = `<div class="batchnum-hero"><div class="lbl">رقم الدفعة المحدد لهذا الأمر</div><div class="num">${esc(order.batch_number)}</div></div>`;
+  }
+
+  let inputsTable = "";
+  if (inputs.length > 0) {
+    inputsTable = `<h3>المدخل المستهلك</h3>
+      <table><thead><tr><th>الصنف</th><th>الدفعة المصدر</th><th>الكمية</th></tr></thead><tbody>
+      ${inputs.map(b => `<tr>
+        <td data-label="الصنف">${esc(b.item_name)}</td>
+        <td data-label="الدفعة">${b.batch_id ? `<button class="linkbtn" onclick="switchToTab('batches'); openBatchTrace(${b.batch_id})">${esc(b.batch_number || ('#' + b.batch_id))}</button>` : "بدون دفعة محددة"}</td>
+        <td data-label="الكمية">${fmtQty(b.quantity)}</td>
+      </tr>`).join("")}
+      </tbody></table>`;
+  }
+
+  let outputSummary = "";
+  if (order.status === "COMPLETED") {
+    const variance = Number(order.actual_output_quantity) - Number(order.planned_output_quantity);
+    outputSummary = `<div class="varbox">
+      <div class="cell"><div class="v">${fmtQty(order.planned_output_quantity)}</div><div class="l">ناتج مخطط</div></div>
+      <div class="cell ${Math.abs(variance) > 0.0001 ? '' : 'ok'}"><div class="v">${fmtQty(order.actual_output_quantity)}</div><div class="l">ناتج فعلي</div></div>
+      <div class="cell ${Math.abs(variance) > 0.0001 ? 'warn' : 'ok'}"><div class="v">${fmtQty(variance)}</div><div class="l">فرق (هالك/رفض)</div></div>
+    </div>
+    ${order.variance_reason ? `<div class="hint">سبب الفرق: ${esc(order.variance_reason)}</div>` : ""}`;
+  }
+
+  let actions = "";
+  if (order.status === "DRAFT" && canApprove()) {
+    actions += `<button class="good" onclick="packOrderAction(${order.id}, 'approve')">اعتماد</button>`;
+  }
+  if (order.status === "APPROVED" && hasPerm("production.create")) {
+    actions += `<button onclick="openPackagingStart(${order.id})">بدء التعبئة</button>`;
+  }
+  if (order.status === "IN_PROGRESS" && hasPerm("production.complete")) {
+    actions += `<button onclick="openPackagingComplete(${order.id})">إكمال التعبئة</button>`;
+  }
+  if (!["COMPLETED", "CANCELLED"].includes(order.status) && hasPerm("production.cancel")) {
+    actions += `<button class="secondary" onclick="packOrderCancel(${order.id})">إلغاء الأمر</button>`;
+  }
+  actions += `<button class="secondary" onclick="window.SatamoniPrint.openCustomPrint('أمر تعبئة #${order.id}', document.getElementById('packDetailsBox').innerHTML)">🖨️ طباعة</button>`;
+
+  box.innerHTML = `
+    <h2>أمر تعبئة #${order.id} - ${esc(order.input_item_name)} → ${esc(order.output_item_name)}</h2>
+    <button class="secondary" onclick="document.getElementById('packDetailsBox').style.display='none'">إغلاق</button>
+    ${renderStepper(order.status, PACKAGING_WORKFLOW_STEPS, PACKAGING_STATUS_LABELS)}
+    ${batchHero}
+    <div class="docchain">
+      <span>الفرع: ${esc(order.branch_name)}</span> |
+      <span>تاريخ التعبئة: ${fmtDate(order.packaging_date)}</span>
+    </div>
+    ${outputSummary}
+    ${order.notes ? `<div class="hint">ملاحظات: ${esc(order.notes)}</div>` : ""}
+    <div id="packStartBox"></div>
+    <div id="packCompleteBox"></div>
+    ${inputsTable}
+    <div class="row" style="margin-top:10px">${actions}</div>
+    <div id="packActionErr" class="err"></div>
+  `;
+}
+async function packOrderAction(id, action) {
+  try {
+    await api(`/api/packaging/${id}/${action}`, { method: "POST", body: JSON.stringify({}) });
+    await showPackagingDetails(id);
+    await loadPackagingList();
+  } catch (e) {
+    document.getElementById("packActionErr").textContent = apiErrorMessage(e);
+  }
+}
+async function packOrderCancel(id) {
+  const reason = prompt("سبب الإلغاء (اختياري)؟") || "";
+  if (!confirm("متأكد إنك عايز تلغي أمر التعبئة ده؟" + (currentPackOrder?.status === "IN_PROGRESS" ? " هيترجّع المدخل اللي اتخصم بالفعل." : ""))) return;
+  try {
+    await api(`/api/packaging/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+    await showPackagingDetails(id);
+    await loadPackagingList();
+  } catch (e) {
+    document.getElementById("packActionErr").textContent = apiErrorMessage(e);
+  }
+}
+function openPackagingStart(orderId) {
+  const order = currentPackOrder;
+  const box = document.getElementById("packStartBox");
+  box.innerHTML = `<div class="expandbox">
+    <h3>بدء التعبئة</h3>
+    <div class="row">
+      <label class="field-label">الكمية الفعلية المستهلكة من السائب:</label>
+      <input type="number" id="packStartQty" min="0.001" step="0.001" value="${order.planned_input_quantity}" />
+    </div>
+    <div class="row">
+      <button id="packStartConfirmBtn">تأكيد البدء</button>
+      <button class="secondary" onclick="document.getElementById('packStartBox').innerHTML=''">إلغاء</button>
+    </div>
+    <div id="packStartErr" class="err"></div>
+  </div>`;
+  document.getElementById("packStartConfirmBtn").onclick = async () => {
+    const errBox = document.getElementById("packStartErr");
+    errBox.textContent = "";
+    try {
+      await api(`/api/packaging/${orderId}/start`, { method: "POST", body: JSON.stringify({ actualInputQuantity: Number(document.getElementById("packStartQty").value) }) });
+      document.getElementById("packStartBox").innerHTML = "";
+      await showPackagingDetails(orderId);
+      await loadPackagingList();
+    } catch (e) {
+      errBox.textContent = apiErrorMessage(e);
+    }
+  };
+}
+function openPackagingComplete(orderId) {
+  const order = currentPackOrder;
+  const box = document.getElementById("packCompleteBox");
+  box.innerHTML = `<div class="expandbox">
+    <h3>إكمال التعبئة</h3>
+    <div class="row">
+      <label class="field-label">الكمية الفعلية الناتجة (وحدات معبأة سليمة):</label>
+      <input type="number" id="packCompleteQty" min="0.001" step="0.001" value="${order.planned_output_quantity}" />
+    </div>
+    <div id="packCompletePreview" class="varbox"></div>
+    <div class="row">
+      <label class="field-label">سبب الفرق/الرفض (لو وُجد):</label>
+      <input id="packCompleteReason" placeholder="سبب الفرق" />
+    </div>
+    <div class="row">
+      <button id="packCompleteConfirmBtn">تأكيد الإكمال</button>
+      <button class="secondary" onclick="document.getElementById('packCompleteBox').innerHTML=''">إلغاء</button>
+    </div>
+    <div id="packCompleteErr" class="err"></div>
+  </div>`;
+  const updatePreview = () => {
+    const actual = Number(document.getElementById("packCompleteQty").value) || 0;
+    const planned = Number(order.planned_output_quantity);
+    const variance = actual - planned;
+    document.getElementById("packCompletePreview").innerHTML = `
+      <div class="cell"><div class="v">${fmtQty(planned)}</div><div class="l">متوقع</div></div>
+      <div class="cell ${Math.abs(variance) > 0.0001 ? '' : 'ok'}"><div class="v">${fmtQty(actual)}</div><div class="l">فعلي</div></div>
+      <div class="cell ${variance < 0 ? 'warn' : 'ok'}"><div class="v">${fmtQty(-variance)}</div><div class="l">رفض/فاقد</div></div>
+    `;
+  };
+  document.getElementById("packCompleteQty").oninput = updatePreview;
+  updatePreview();
+  document.getElementById("packCompleteConfirmBtn").onclick = async () => {
+    const errBox = document.getElementById("packCompleteErr");
+    errBox.textContent = "";
+    try {
+      await api(`/api/packaging/${orderId}/complete`, {
+        method: "POST",
+        body: JSON.stringify({ actualOutputQuantity: Number(document.getElementById("packCompleteQty").value), varianceReason: document.getElementById("packCompleteReason").value || null }),
+      });
+      document.getElementById("packCompleteBox").innerHTML = "";
+      await showPackagingDetails(orderId);
+      await loadPackagingList();
+      await loadDashboard();
+    } catch (e) {
+      errBox.textContent = apiErrorMessage(e);
+    }
+  };
+}
+
+// ==================== UI-3L/M/N/O: الدفعات والتتبّع ====================
+function branchNameById(id) { const b = allBranches.find(x => x.id === Number(id)); return b ? b.name : `فرع #${id}`; }
+const MOVEMENT_TYPE_LABELS = {
+  SALE: "🧾 بيع", WASTE: "🗑️ هالك", ADJUSTMENT: "⚖️ تسوية", RECONCILE_ADJUSTMENT: "⚖️ تسوية جرد",
+  RETURN_TO_SUPPLIER: "↩️ مرتجع للمورد", TRANSFER_IN: "🔁 تحويل وارد", PRODUCTION_REVERSAL: "↩️ إلغاء تصنيع (استرجاع)",
+  PURCHASE_RECEIPT: "🚚 استلام مشتريات",
+};
+function movementTypeLabel(t) { return MOVEMENT_TYPE_LABELS[t] || t; }
+
+document.getElementById("batchSearchBtn").onclick = runBatchSearch;
+document.getElementById("batchDirectGoBtn").onclick = () => {
+  const id = Number(document.getElementById("batchDirectId").value);
+  if (id) { switchToTab("batches"); openBatchTrace(id); }
+};
+
+// UI-3O: بحث الدفعات - عبر GET /api/inventory/batches الموجود فعليًا (مقيّد بفرع/صنف من السيرفر - نتيجة
+// صغيرة محدودة)، وبعدين فلترة إضافية على رقم الدفعة/الحالة/المورد في الواجهة على النتيجة المحدودة دي بس -
+// مش loop غير فعّال على آلاف الدفعات. لا يوجد بحث مباشر بـ"أمر تصنيع/تعبئة" من هنا (فجوة موثّقة في التقرير
+// النهائي) - التنقّل العكسي متاح من تفاصيل الأمر نفسه لدفعته الناتجة
+async function runBatchSearch() {
+  const box = document.getElementById("batchSearchResultsBox");
+  const branchId = document.getElementById("batchSearchBranch").value;
+  if (!branchId) { box.innerHTML = `<div class="err">لازم تحدد فرع للبحث فيه.</div>`; return; }
+  const itemId = document.getElementById("batchSearchItem").value;
+  box.innerHTML = `<div class="hint">جاري البحث...</div>`;
+  try {
+    const params = new URLSearchParams({ branchId });
+    if (itemId) params.set("itemId", itemId);
+    let rows = await api(`/api/inventory/batches?${params}`);
+    const numberFilter = document.getElementById("batchSearchNumber").value.trim().toLowerCase();
+    const statusFilter = document.getElementById("batchSearchStatus").value;
+    const supplierFilter = document.getElementById("batchSearchSupplier").value;
+    if (numberFilter) rows = rows.filter(b => (b.batch_number || "").toLowerCase().includes(numberFilter));
+    if (statusFilter) rows = rows.filter(b => b.status === statusFilter);
+    if (supplierFilter) rows = rows.filter(b => String(b.supplier_id) === supplierFilter);
+    if (rows.length === 0) { box.innerHTML = `<div class="hint">مفيش دفعات مطابقة.</div>`; return; }
+    box.innerHTML = `<table><thead><tr><th>#</th><th>رقم الدفعة</th><th>الصنف</th><th>المتبقي</th><th>الحالة</th><th>صلاحية</th><th></th></tr></thead><tbody>
+      ${rows.map(b => `<tr>
+        <td data-label="#">${b.id}</td>
+        <td data-label="رقم الدفعة">${esc(b.batch_number || "-")}</td>
+        <td data-label="الصنف">${esc(b.item_name)}</td>
+        <td data-label="المتبقي">${fmtQty(b.remaining_quantity)} ${esc(b.unit)}</td>
+        <td data-label="الحالة"><span class="badge ${b.status === 'active' ? 'ACTIVE' : b.status === 'expired' ? 'CANCELLED' : 'ARCHIVED'}">${b.status === 'active' ? 'نشطة' : b.status === 'expired' ? 'منتهية الصلاحية' : 'مستهلكة بالكامل'}</span></td>
+        <td data-label="صلاحية">${fmtDate(b.expiry_date)}</td>
+        <td><button class="linkbtn" onclick="openBatchTrace(${b.id})">تتبّع</button></td>
+      </tr>`).join("")}
+    </tbody></table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+// UI-3H/L/M/N: شاشة الدفعة الرئيسية - تجمع بين "بطاقة الدفعة" و"التتبّع للخلف" (مصدر حقيقي، مصادر متعددة
+// لو وُجدت) و"التتبّع للأمام" (استخدامات تالية، عمق محدود وقابل للتوسيع). كل البيانات جايه حرفيًا من
+// GET /api/inventory/batches/:id/trace (Procurement v2 STEP I) - مفيش أي حساب تتبّع مستقل في الواجهة
+const FORWARD_MAX_DEPTH = 4;
+async function openBatchTrace(batchId) {
+  switchToTab("batches");
+  const box = document.getElementById("batchTraceBox");
+  box.style.display = "block";
+  box.innerHTML = `<div class="hint">جاري تحميل التتبّع...</div>`;
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+  try {
+    const trace = await api(`/api/inventory/batches/${batchId}/trace`);
+    const forwardTree = await buildForwardTree(batchId, 0, FORWARD_MAX_DEPTH, trace.forward);
+    box.innerHTML = `
+      <h2>تتبّع الدفعة #${batchId}</h2>
+      <button class="secondary" onclick="document.getElementById('batchTraceBox').style.display='none'">إغلاق</button>
+      <button class="secondary" onclick="window.SatamoniPrint.openCustomPrint('تتبّع الدفعة #${batchId}', document.getElementById('batchTraceBox').innerHTML)">🖨️ طباعة تقرير التتبّع</button>
+      <h3>⬅ من فين جاية (التتبّع للخلف)</h3>
+      <div class="tracetree">${trace.backward ? renderBackwardNode(trace.backward, true) : '<div class="hint">مفيش بيانات تتبّع للخلف لهذه الدفعة.</div>'}</div>
+      <h3>➡ راحت فين (التتبّع للأمام)</h3>
+      <div class="tracetree">${renderForwardChildren(forwardTree)}</div>
+    `;
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+function renderBackwardNode(node, isRoot) {
+  if (!node || !node.batch) return "";
+  const b = node.batch;
+  let html = `<div class="tracenode">
+    <div class="box ${node.origin ? "origin-" + node.origin.type : ""} ${isRoot ? "focus" : ""}">
+      <div class="ttitle">${esc(b.batch_number || ("دفعة #" + b.id))} - ${esc(b.item_name)}</div>
+      <div class="tmeta">الفرع: ${esc(branchNameById(b.branch_id))} | أصلي: ${fmtQty(b.original_quantity)} ${esc(b.unit)} | متبقي: ${fmtQty(b.remaining_quantity)} | الحالة: ${esc(b.status)} | صلاحية: ${fmtDate(b.expiry_date)}</div>
+      ${!isRoot ? `<button class="linkbtn" onclick="openBatchTrace(${b.id})">فتحها كجذر تتبّع مستقل</button>` : ""}
+    </div>
+    <div class="children">`;
+
+  if (node.origin && node.origin.type === "PURCHASE") {
+    html += `<div class="tracenode"><div class="box origin-PURCHASE">
+      <div class="ttitle">🚚 المصدر: استلام من مورد</div>
+      <div class="tmeta">المورد: ${esc(node.origin.supplier_name || "-")} | سند استلام #${node.origin.goods_receipt_id} (${esc(node.origin.supplier_document_number || "-")}) | كمية مقبولة: ${fmtQty(node.origin.accepted_quantity)} بسعر ${fmtMoney(node.origin.unit_price)} | تاريخ: ${fmtDateTime(node.origin.received_at)}</div>
+    </div></div>`;
+  } else if (node.origin && node.origin.type === "PRODUCTION") {
+    html += `<div class="tracenode"><div class="box origin-PRODUCTION">
+      <div class="ttitle">🏭 المصدر: أمر تصنيع #${node.origin.production_order_id}</div>
+      <div class="tmeta">الحالة: ${PRODUCTION_STATUS_LABELS[node.origin.status] || node.origin.status} | تاريخ: ${fmtDate(node.origin.production_date)} | مخطط: ${fmtQty(node.origin.planned_quantity)} | فعلي: ${node.origin.actual_quantity != null ? fmtQty(node.origin.actual_quantity) : "-"}</div>
+      <button class="linkbtn" onclick="switchToTab('production'); showProductionDetails(${node.origin.production_order_id})">فتح أمر التصنيع</button>
+      ${node.origin.inputs.length > 1 ? `<div class="hint">⚠ متعدد المصادر - الدفعة دي طلعت من أكتر من دفعة خام مختلفة سوا:</div>` : ""}
+      <div class="multisrc">
+        ${node.origin.inputs.map(inp => `<div class="srcchip">${esc(inp.item_name)}: ${fmtQty(inp.quantity)} ${inp.batch_id ? "(دفعة #" + inp.batch_id + ")" : "(رصيد عام - بلا دفعة محددة)"}</div>`).join("")}
+      </div>
+    </div>
+    <div class="children">
+      ${node.origin.inputs.filter(inp => inp.trace).map(inp => renderBackwardNode(inp.trace, false)).join("")}
+    </div>
+    </div>`;
+  } else if (node.origin && node.origin.type === "PACKAGING") {
+    html += `<div class="tracenode"><div class="box origin-PACKAGING">
+      <div class="ttitle">📦 المصدر: أمر تعبئة #${node.origin.packaging_order_id}</div>
+      <div class="tmeta">الحالة: ${PACKAGING_STATUS_LABELS[node.origin.status] || node.origin.status} | تاريخ: ${fmtDate(node.origin.packaging_date)}</div>
+      <button class="linkbtn" onclick="switchToTab('packaging'); showPackagingDetails(${node.origin.packaging_order_id})">فتح أمر التعبئة</button>
+      ${node.origin.input_batch_id ? `<button class="linkbtn" onclick="openBatchTrace(${node.origin.input_batch_id})">فتح تتبّع الدفعة السائبة المصدر</button>` : ""}
+    </div></div>`;
+  } else if (!node.transferredIn) {
+    html += `<div class="hint" style="margin-right:14px">مفيش مصدر مسجّل أعمق من كده (نهاية السلسلة المعروفة).</div>`;
+  }
+
+  if (node.transferredIn) {
+    html += `<div class="tracenode"><div class="box">
+      <div class="ttitle">🔁 وصلت الفرع ده عن طريق تحويل</div>
+      <div class="tmeta">تحويل #${node.transferredIn.kitchen_transfer_id} من ${esc(branchNameById(node.transferredIn.from_branch_id))} إلى ${esc(branchNameById(node.transferredIn.to_branch_id))} | الحالة: ${esc(node.transferredIn.status)} | استلام: ${fmtDateTime(node.transferredIn.received_at)}</div>
+      <div class="children">${node.parent ? renderBackwardNode(node.parent, false) : `<div class="hint">مفيش تتبّع أعمق للدفعة الأصلية في فرع المصدر.</div>`}</div>
+    </div></div>`;
+  } else if (node.parent) {
+    html += renderBackwardNode(node.parent, false);
+  }
+
+  html += `</div></div>`;
+  return html;
+}
+
+async function buildForwardTree(batchId, depth, maxDepth, prefetchedForward) {
+  if (depth > maxDepth) return { batchId, truncated: true };
+  const fwd = prefetchedForward || (await api(`/api/inventory/batches/${batchId}/trace`)).forward;
+  const children = [];
+  for (const p of fwd.consumedInProduction) {
+    children.push({ kind: "production", ref: p, child: p.output_batch_id ? await buildForwardTree(p.output_batch_id, depth + 1, maxDepth) : null });
+  }
+  for (const p of fwd.consumedInPackaging) {
+    children.push({ kind: "packaging", ref: p, child: p.output_batch_id ? await buildForwardTree(p.output_batch_id, depth + 1, maxDepth) : null });
+  }
+  for (const t of fwd.transferredOut) {
+    children.push({ kind: "transfer", ref: t, child: null });
+  }
+  const coveredIds = new Set(children.filter(c => c.child && !c.child.truncated).map(c => c.child.batchId));
+  for (const cb of fwd.childBatches) {
+    if (coveredIds.has(cb.id)) continue;
+    children.push({ kind: "child", ref: cb, child: await buildForwardTree(cb.id, depth + 1, maxDepth) });
+  }
+  return { batchId, movements: fwd.movements, children };
+}
+
+function renderForwardChildren(node) {
+  if (!node) return `<div class="hint">مفيش بيانات.</div>`;
+  if (node.truncated) {
+    return `<div class="tracenode"><div class="box"><button class="linkbtn" onclick="openBatchTrace(${node.batchId})">فيه أعمق من كده - افتح كجذر تتبّع مستقل لعرضه</button></div></div>`;
+  }
+  let html = "";
+  for (const c of node.children) {
+    if (c.kind === "production") {
+      html += `<div class="tracenode"><div class="box origin-PRODUCTION">
+        <div class="ttitle">🏭 استُهلكت في أمر تصنيع #${c.ref.production_order_id}</div>
+        <div class="tmeta">الحالة: ${PRODUCTION_STATUS_LABELS[c.ref.status] || c.ref.status} | الكمية المستهلكة: ${fmtQty(c.ref.quantity_consumed)}</div>
+        <button class="linkbtn" onclick="switchToTab('production'); showProductionDetails(${c.ref.production_order_id})">فتح الأمر</button>
+      </div>
+      <div class="children">${c.ref.output_batch_id ? renderForwardChildren(c.child) : `<div class="hint">لسه معندوش دفعة ناتج (الأمر لسه مكملش).</div>`}</div>
+      </div>`;
+    } else if (c.kind === "packaging") {
+      html += `<div class="tracenode"><div class="box origin-PACKAGING">
+        <div class="ttitle">📦 استُهلكت في أمر تعبئة #${c.ref.packaging_order_id}</div>
+        <div class="tmeta">الحالة: ${PACKAGING_STATUS_LABELS[c.ref.status] || c.ref.status} | الكمية المستهلكة: ${fmtQty(c.ref.quantity_consumed)}</div>
+        <button class="linkbtn" onclick="switchToTab('packaging'); showPackagingDetails(${c.ref.packaging_order_id})">فتح الأمر</button>
+      </div>
+      <div class="children">${c.ref.output_batch_id ? renderForwardChildren(c.child) : `<div class="hint">لسه معندوش دفعة ناتج (الأمر لسه مكملش).</div>`}</div>
+      </div>`;
+    } else if (c.kind === "transfer") {
+      html += `<div class="tracenode"><div class="box">
+        <div class="ttitle">🔁 اتحوّلت إلى فرع ${esc(branchNameById(c.ref.to_branch_id))}</div>
+        <div class="tmeta">تحويل #${c.ref.kitchen_transfer_id} | الحالة: ${esc(c.ref.status)} | الكمية: ${fmtQty(c.ref.quantity)}${c.ref.received_at ? " | استلام: " + fmtDateTime(c.ref.received_at) : ""}</div>
+      </div></div>`;
+    } else if (c.kind === "child") {
+      html += `<div class="tracenode"><div class="box">
+        <div class="ttitle">دفعة مرتبطة #${esc(c.ref.batch_number || c.ref.id)}</div>
+        <div class="tmeta">الفرع: ${esc(branchNameById(c.ref.branch_id))} | المتبقي: ${fmtQty(c.ref.remaining_quantity)} | الحالة: ${esc(c.ref.status)}</div>
+        <button class="linkbtn" onclick="openBatchTrace(${c.ref.id})">فتحها كجذر تتبّع</button>
+      </div>
+      <div class="children">${renderForwardChildren(c.child)}</div>
+      </div>`;
+    }
+  }
+  const terminalMovements = (node.movements || []).filter(m => m.movement_type !== "PRODUCTION_IN");
+  if (terminalMovements.length) {
+    html += terminalMovements.map(m => `<div class="tracenode"><div class="box">
+      <div class="ttitle">${movementTypeLabel(m.movement_type)}</div>
+      <div class="tmeta">الكمية: ${fmtQty(m.quantity)} | تاريخ: ${fmtDate(m.business_date)}${m.reason ? " | سبب: " + esc(m.reason) : ""}${m.notes ? " | " + esc(m.notes) : ""}</div>
+    </div></div>`).join("");
+  }
+  if (!html) html = `<div class="hint">لسه معندهاش أي استخدام تالٍ مسجّل - الدفعة لسه في المخزون.</div>`;
+  return html;
+}
+</script>
+</body>
+</html>
+

@@ -12,6 +12,9 @@ const REQUISITION_ERROR_MESSAGES = {
   OVER_RECEIVE_NEEDS_APPROVAL: (msg) => msg,
   DUPLICATE_INVOICE_NUMBER: () => "رقم الفاتورة ده مسجّل بالفعل لنفس المورد - تأكد من الرقم قبل ما تحفظ تاني.",
   INVOICE_PAYMENT_VALIDATION: (msg) => msg,
+  // PHASE UI-3: رموز التصنيع/التعبئة - نفس الملف المشترك برضو (نفس مبدأ UI-2)
+  VARIANCE_REASON_REQUIRED: (msg) => msg,
+  PRODUCTION_VALIDATION: (msg) => msg,
 };
 
 // بيرجع {message, code} جاهزة للعرض - مبني على شكل الخطأ اللي بيرميه helper الـapi() في كل صفحة (Error
