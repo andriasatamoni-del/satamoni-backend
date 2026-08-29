@@ -28,6 +28,79 @@ router.get("/", requireAuth, canOperate, async (req, res) => {
   }
 });
 
+// GET /api/cash-sessions/expected?branchId=&date= - نفس معادلة الكاش المتوقع بتاعة الشيفتات (shift-engine)
+// بس مجمّعة على مستوى اليوم كله للفرع، مش شيفت واحد - عشان تعبّي فورم "تقفيل الكاش" تلقائيًا من المبيعات/
+// المصروفات/المشتريات الحقيقية بدل ما المحاسب يكتبها يدوي من الصفر (كانت السبب في إن كل تقفيلات الكاش
+// القديمة طالعة أصفار - الفورم مكنش متوصّل بأي بيانات حقيقية خالص، مجرد إدخال يدوي بحت)
+router.get("/expected", requireAuth, canOperate, async (req, res) => {
+  let { branchId, date } = req.query;
+  if (req.user.role === "branch_manager" || req.user.role === "cashier") {
+    if (branchId && !assertOwnBranch(req.user, branchId)) {
+      return res.status(403).json({ error: "معندكش صلاحية تشوف كاش فرع تاني" });
+    }
+    branchId = req.user.branchId;
+  }
+  if (!branchId || !date) return res.status(400).json({ error: "لازم فرع وتاريخ" });
+
+  try {
+    // كاش أول اليوم = الكاش الفعلي المسجّل آخر تقفيل قبل اليوم ده لنفس الفرع (رصيد آخر يوم بيبقى بداية
+    // اليوم اللي بعده) - صفر لو مفيش تقفيل قبل كده خالص
+    const openingRes = await pool.query(
+      `SELECT actual_counted_cash FROM daily_cash_sessions
+       WHERE branch_id = $1 AND business_date < $2 ORDER BY business_date DESC LIMIT 1`,
+      [branchId, date]
+    );
+    const openingCash = openingRes.rows.length ? Number(openingRes.rows[0].actual_counted_cash) : 0;
+
+    // مبيعات اليوم حسب طريقة الدفع - نفس فلتر "محصّلة فعليًا" (payment_status='collected') اللي محرك
+    // الشيفتات بيستخدمه بالظبط (routes/shifts.js -> db/shift-engine.js) عشان طلبات دليفري لسه تحت
+    // التحصيل ما تتحسبش كاش موجود في الدرج فعليًا دلوقتي
+    const salesRes = await pool.query(
+      `SELECT
+         COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'cash'), 0) AS cash_sales,
+         COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'card_or_wallet'), 0) AS card_sales,
+         COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'credit'), 0) AS credit_sales,
+         COALESCE(SUM(o.total) FILTER (WHERE o.source = 'talabat'), 0) AS delivery_app_sales
+       FROM orders o LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+       WHERE o.branch_id = $1 AND o.created_at::date = $2
+         AND o.status <> 'cancelled' AND o.payment_status = 'collected'`,
+      [branchId, date]
+    );
+
+    // نفس منطق cashPurchasesTotal/cashExpensesTotal بتاع shift-engine.js بالظبط، بس على مستوى اليوم كله
+    const purchasesRes = await pool.query(
+      `SELECT COALESCE(SUM(p.amount), 0) AS cash_purchases_total
+       FROM purchases p
+       WHERE p.branch_id = $1 AND p.status <> 'REJECTED' AND p.created_at::date = $2`,
+      [branchId, date]
+    );
+    const expensesRes = await pool.query(
+      `SELECT COALESCE(SUM(e.amount), 0) AS cash_expenses_total
+       FROM expenses e JOIN payment_methods pm ON pm.id = e.payment_method_id
+       WHERE e.branch_id = $1 AND e.status IN ('SUBMITTED', 'APPROVED', 'POSTED') AND pm.kind = 'cash'
+         AND COALESCE(e.posted_at, e.created_at)::date = $2`,
+      [branchId, date]
+    );
+
+    const cashSales = Number(salesRes.rows[0].cash_sales);
+    const cashPaidToKitchen = Number(purchasesRes.rows[0].cash_purchases_total);
+    const otherCashPayments = Number(expensesRes.rows[0].cash_expenses_total);
+
+    res.json({
+      openingCash,
+      cashSales,
+      cardSales: Number(salesRes.rows[0].card_sales),
+      creditSales: Number(salesRes.rows[0].credit_sales),
+      deliveryAppSales: Number(salesRes.rows[0].delivery_app_sales),
+      cashPaidToKitchen,
+      otherCashPayments,
+      expectedClosingCash: openingCash + cashSales - cashPaidToKitchen - otherCashPayments,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/cash-sessions - تقفيل/تحديث كاش يوم معين لفرع (بديل شيت "فرع ..." اليدوي)
 // expected_closing_cash و cash_difference بيتحسبوا في السيرفر عشان محدش يغلط فيهم يدوي
 router.post("/", requireAuth, canOperate, async (req, res) => {

@@ -156,6 +156,7 @@
 
   <!-- تقفيل الكاش -->
   <div class="panel" id="panel-cash">
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">الأرقام تحت بتتحسب أوتوماتيك من المبيعات/المصروفات/المشتريات الفعلية المسجّلة في اليوم ده - راجعها وعدّل لو محتاجة تصحيح، والكاش الفعلي بعد الجرد بس هو اللي محتاج تدخله يدوي من العدّ الفعلي للدرج.</div>
     <div class="formbox">
       <div class="row">
         <input id="cashDate" type="date" />
@@ -171,6 +172,7 @@
       </div>
       <div class="row">
         <input id="countedCash" type="number" placeholder="الكاش الفعلي بعد الجرد" />
+        <span id="cashExpectedNote" style="font-size:12px;color:var(--faint);align-self:center"></span>
         <button id="cashSubmit">تقفيل اليوم</button>
       </div>
       <div class="err" id="cashErr"></div>
@@ -934,7 +936,32 @@ async function loadCash() {
     <tr><td>${r.business_date.slice(0, 10)}</td><td>${money(r.expected_closing_cash)}</td><td>${money(r.actual_counted_cash)}</td>
     <td class="${Number(r.cash_difference) < 0 ? "diffneg" : "diffpos"}">${money(r.cash_difference)}</td></tr>
   `).join("") || `<tr><td colspan="4">مفيش تقفيلات مسجلة</td></tr>`;
+  await loadCashExpected();
 }
+// المرحلة 8.12: الفورم كان فاضي بالكامل (إدخال يدوي بحت من غير أي اتصال بالمبيعات الحقيقية) - ده كان
+// سبب إن كل تقفيلات الكاش بتطلع صفر (محدش كان بيعرف لازم يكتب الأرقام بنفسه). دلوقتي بتتحمّل تلقائيًا
+// من /api/cash-sessions/expected (نفس معادلة الكاش المتوقع بتاعة الشيفتات - shift-engine.js - بس على
+// مستوى اليوم كله) كل ما التاريخ أو الفرع يتغيّر، والمحاسب يراجعها/يعدّلها لو محتاج قبل ما يقفل
+async function loadCashExpected() {
+  const branchId = currentBranchId();
+  const date = document.getElementById("cashDate").value;
+  const note = document.getElementById("cashExpectedNote");
+  if (!branchId || !date) return;
+  try {
+    const exp = await api(`/api/cash-sessions/expected?branchId=${branchId}&date=${date}`);
+    document.getElementById("cashOpening").value = exp.openingCash;
+    document.getElementById("cashSales").value = exp.cashSales;
+    document.getElementById("cardSales").value = exp.cardSales;
+    document.getElementById("creditSales").value = exp.creditSales;
+    document.getElementById("deliverySales").value = exp.deliveryAppSales;
+    document.getElementById("paidToKitchen").value = exp.cashPaidToKitchen;
+    document.getElementById("otherPayments").value = exp.otherCashPayments;
+    note.textContent = `الكاش المتوقع: ${money(exp.expectedClosingCash)}`;
+  } catch (e) {
+    note.textContent = "";
+  }
+}
+document.getElementById("cashDate").onchange = loadCashExpected;
 document.getElementById("cashSubmit").onclick = async () => {
   const errBox = document.getElementById("cashErr");
   const okBox = document.getElementById("cashOk");
