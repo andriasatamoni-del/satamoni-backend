@@ -46,12 +46,21 @@
   #topbar .dot.err { background: var(--red); }
 
   /* ===== Layout ===== */
+  /* المرحلة 8.11: نفس تقسيم شاشة الكول سنتر بالظبط (بدل عمود السلة اللي كان شايل تفاصيل الطلب كمان جواه
+     ومزحوم) - عمود السلة بقى مخصص لأصناف الطلب بس على اليمين، المنيو في النص بمساحة كبيرة، وتفاصيل
+     الطلب (القناة/نوع الطلب/بيانات العميل) في عمود مستقل على الشمال زي #customerPane في الكول سنتر */
   #main { display: flex; width: 100%; margin-top: 56px; height: calc(100vh - 56px); }
   #menuPane { flex: 1; overflow-y: auto; padding: 16px; }
   #cartPane {
     width: 360px; min-width: 320px; background: var(--bg-alt); border-right: 1px solid var(--line);
     display: flex; flex-direction: column; height: 100%;
   }
+  #detailsPane {
+    width: 300px; min-width: 280px; background: var(--bg-alt); border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; overflow-y: auto; height: 100%;
+  }
+  #detailsPane h3 { font-size: 13px; color: var(--gold-bright); margin: 14px 16px 8px; }
+  #detailsPane h3:first-child { margin-top: 14px; }
 
   /* ===== Menu group (عادي/صيامي) ===== */
   #menuGroupRow { display: flex; gap: 8px; margin-bottom: 12px; }
@@ -96,13 +105,11 @@
     background: var(--card); border: 1px solid var(--line); color: var(--ink);
     border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%;
   }
-  /* المرحلة 8.8: channelRow/orderTypeRow/extraFields/cartList كانوا كل واحد بارتفاعه الطبيعي جوه عمود
-     flex واحد، وcartList لوحدها flex:1 - في طلب دليفري بحقول عنوان كتير (منطقة+عنوان+علامة مميزة)، مجموع
-     ارتفاع باقي العناصر بيتعدى ارتفاع الشاشة فعليًا فتتصفّر مساحة cartList وتختفي أصناف السلة تمامًا رغم
-     إنها موجودة فعلاً في الطلب. الحل: العمود الأوسط كله (مش cartList لوحدها) بقى الجزء القابل للسكرول، فأي
-     زيادة في حقول العنوان بتعمل سكرول بدل ما تاكل مساحة السلة */
-  #cartScroll { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; }
-  #cartList { padding: 8px 16px; }
+  /* المرحلة 8.11: channelRow/orderTypeRow/extraFields اتنقلوا لعمود #detailsPane المستقل (نفس تقسيم
+     الكول سنتر) - عمود السلة بقى مخصص لأصناف الطلب بس، فـcartList نفسها بقت المساحة القابلة للسكرول
+     مباشرة (حل جذري لباج 8.8 القديم - حقول عنوان الدليفري الكتيرة بقت في عمود تاني خالص متأثرش على
+     مساحة السلة أبدًا، مش مجرد سكرول مشترك) */
+  #cartList { flex: 1; overflow-y: auto; min-height: 0; padding: 8px 16px; }
   .cart-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
   .cart-row .info { flex: 1; }
   .cart-row .info .n { font-size: 13px; font-weight: 700; }
@@ -315,49 +322,17 @@
   <div id="ordersEmptyState" style="display:none">مفيش طلبات مطابقة</div>
 </div>
 
+<!-- المرحلة 8.11: نفس تقسيم شاشة الكول سنتر بالظبط - السلة يمين (بس أصناف الطلب)، المنيو في النص
+     بمساحة كبيرة، وتفاصيل الطلب (القناة/نوع الطلب/بيانات العميل) في عمود مستقل شمال زي #customerPane
+     في الكول سنتر - بدل ما كانت كلها مزحومة جوه عمود السلة الواحد -->
 <div id="main">
-  <div id="menuPane">
-    <div id="loadingState">جاري تحميل المنيو...</div>
-    <div id="menuGroupRow" style="display:none"></div>
-    <div id="tabs" style="display:none"></div>
-    <div id="grid" style="display:none"></div>
-  </div>
-
   <div id="cartPane">
     <div id="cartHeader">
       <span>الطلب الحالي</span>
       <span id="cartCount" style="font-size:12px;color:var(--faint)"></span>
     </div>
 
-    <div id="cartScroll">
-      <div id="channelRow">
-        <div class="channel-btn active" data-channel="branch">بيع الفرع</div>
-        <div class="channel-btn" data-channel="talabat">طلبات 🛵</div>
-      </div>
-
-      <div id="orderTypeRow">
-        <div class="otype-btn" data-type="dinein" id="dineInBtn" style="display:none">صالة</div>
-        <div class="otype-btn active" data-type="takeaway">تيك أواي</div>
-        <div class="otype-btn" data-type="delivery">دليفري</div>
-      </div>
-
-      <div id="extraFields">
-        <input id="tableInput" placeholder="رقم الطاولة" style="display:none" />
-        <input id="phoneInput" placeholder="رقم موبايل العميل" />
-        <div id="customerStatus" style="font-size:11px;min-height:14px"></div>
-        <input id="nameInput" placeholder="اسم العميل" style="display:none" />
-        <input id="phone2Input" placeholder="رقم موبايل تاني (اختياري)" style="display:none" />
-        <select id="areaSelect" style="display:none"></select>
-        <input id="addressInput" placeholder="تفاصيل العنوان (شارع/عمارة/دور/شقة)" style="display:none" />
-        <input id="markInput" placeholder="علامة مميزة (بجوار كذا...)" style="display:none" />
-        <div id="savedAddressesRow" style="display:none">
-          <div style="font-size:11px;color:var(--faint);font-weight:700;margin-bottom:4px">عناوين محفوظة للعميل ده:</div>
-          <div id="savedAddressesList" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-        </div>
-      </div>
-
-      <div id="cartList"><div class="cart-empty">السلة فاضية — دوس على أي صنف من المنيو</div></div>
-    </div>
+    <div id="cartList"><div class="cart-empty">السلة فاضية — دوس على أي صنف من المنيو</div></div>
 
     <div id="cartFooter">
       <div class="row"><span>الإجمالي الفرعي</span><span id="subtotalVal">0 ج.م</span></div>
@@ -371,6 +346,42 @@
       <div id="payRow"></div>
       <button id="submitBtn" disabled>أرسل الطلب</button>
       <div id="errBox"></div>
+    </div>
+  </div>
+
+  <div id="menuPane">
+    <div id="loadingState">جاري تحميل المنيو...</div>
+    <div id="menuGroupRow" style="display:none"></div>
+    <div id="tabs" style="display:none"></div>
+    <div id="grid" style="display:none"></div>
+  </div>
+
+  <div id="detailsPane">
+    <h3>بيانات الطلب</h3>
+    <div id="channelRow">
+      <div class="channel-btn active" data-channel="branch">بيع الفرع</div>
+      <div class="channel-btn" data-channel="talabat">طلبات 🛵</div>
+    </div>
+
+    <div id="orderTypeRow">
+      <div class="otype-btn" data-type="dinein" id="dineInBtn" style="display:none">صالة</div>
+      <div class="otype-btn active" data-type="takeaway">تيك أواي</div>
+      <div class="otype-btn" data-type="delivery">دليفري</div>
+    </div>
+
+    <div id="extraFields">
+      <input id="tableInput" placeholder="رقم الطاولة" style="display:none" />
+      <input id="phoneInput" placeholder="رقم موبايل العميل" />
+      <div id="customerStatus" style="font-size:11px;min-height:14px"></div>
+      <input id="nameInput" placeholder="اسم العميل" style="display:none" />
+      <input id="phone2Input" placeholder="رقم موبايل تاني (اختياري)" style="display:none" />
+      <select id="areaSelect" style="display:none"></select>
+      <input id="addressInput" placeholder="تفاصيل العنوان (شارع/عمارة/دور/شقة)" style="display:none" />
+      <input id="markInput" placeholder="علامة مميزة (بجوار كذا...)" style="display:none" />
+      <div id="savedAddressesRow" style="display:none">
+        <div style="font-size:11px;color:var(--faint);font-weight:700;margin-bottom:4px">عناوين محفوظة للعميل ده:</div>
+        <div id="savedAddressesList" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
     </div>
   </div>
 </div>
