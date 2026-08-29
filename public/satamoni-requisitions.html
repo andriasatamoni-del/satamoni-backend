@@ -12,8 +12,9 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
-  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 10px; }
   #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #topbar select { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
   #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
   #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
 
@@ -93,6 +94,7 @@
 
 <div id="topbar">
   <div class="brand">📦 ستاموني — طلبيات الفرع</div>
+  <select id="branchSelect" style="display:none"></select>
   <div id="userInfo">
     <span id="userName"></span>
     <button id="logoutBtn">خروج</button>
@@ -356,11 +358,23 @@ function itemOptions() {
   return inventoryItems.map(i => `<option value="${i.id}">${i.name} (${i.unit})</option>`).join("");
 }
 
+// الأدمن مش تابع لفرع واحد (auth.user.branchId = null) - زي شاشة إعدادات الطباعة بالظبط، بنديله قائمة
+// اختيار فرع أعلى الشاشة بدل ما الصفحة تفضل فاضية له. لمدير الفرع/الكاشير، الفرع ده فرعهم الثابت
+function currentBranchId() {
+  return auth.user.role === "admin" ? document.getElementById("branchSelect").value : auth.user.branchId;
+}
+
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
 
-  if (!auth.user.branchId) {
+  if (auth.user.role === "admin") {
+    const branches = await api("/api/branches");
+    const sel = document.getElementById("branchSelect");
+    sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    sel.style.display = "block";
+    sel.onchange = loadBranchData;
+  } else if (!auth.user.branchId) {
     document.getElementById("bootStatus").style.display = "block";
     document.getElementById("bootStatus").innerHTML = `<div class="box">الصفحة دي لمستخدمين تابعين لفرع - حسابك مش مربوط بفرع.</div>`;
     document.getElementById("main").style.display = "none";
@@ -371,8 +385,18 @@ async function boot() {
   document.getElementById("suggestDate").value = new Date().toISOString().slice(0, 10);
   addManualRow();
 
+  await loadBranchData();
+}
+
+// بيتحمّل من boot() الأول مرة، وكمان من onchange بتاع قائمة اختيار الفرع (أدمن) - اللوحة وطلبياتي
+// دايمًا، وأي تبويب تاني مفتوح فعليًا وقت تغيير الفرع
+async function loadBranchData() {
+  ordersPage = 1;
   await loadDashboardTab();
   await loadMyOrders();
+  const activeTab = document.querySelector(".tabbtn.active");
+  if (activeTab && activeTab.dataset.tab === "receiving") await loadReceivingTab();
+  if (activeTab && activeTab.dataset.tab === "stock") await loadStockTab();
 }
 
 // ---------------- لوحة الفرع (UI-1A) ----------------
@@ -384,8 +408,8 @@ async function loadDashboardTab() {
   const today = new Date().toISOString().slice(0, 10);
   try {
     const [suggestRes, todaysOrders] = await Promise.all([
-      api(`/api/kitchen-orders/suggested?branchId=${auth.user.branchId}&targetDate=${today}`),
-      api(`/api/kitchen-orders?branchId=${auth.user.branchId}&from=${today}&to=${today}`),
+      api(`/api/kitchen-orders/suggested?branchId=${currentBranchId()}&targetDate=${today}`),
+      api(`/api/kitchen-orders?branchId=${currentBranchId()}&from=${today}&to=${today}`),
     ]);
     const requestedByItem = new Map();
     (Array.isArray(todaysOrders) ? todaysOrders : []).forEach(o => {
@@ -433,7 +457,7 @@ document.getElementById("suggestCalcBtn").onclick = async () => {
   const nextReplenishmentDate = document.getElementById("suggestNextReplenishment").value;
   if (!targetDate) { errBox.textContent = "لازم تحدد تاريخ الطلبية"; return; }
   try {
-    const qs = new URLSearchParams({ branchId: auth.user.branchId, targetDate });
+    const qs = new URLSearchParams({ branchId: currentBranchId(), targetDate });
     if (nextReplenishmentDate) qs.set("nextReplenishmentDate", nextReplenishmentDate);
     const res = await api(`/api/kitchen-orders/suggested?${qs.toString()}`);
     lastSuggestions = res.suggestions;
@@ -487,7 +511,7 @@ document.getElementById("suggestSaveDraft").onclick = async () => {
     const created = await api("/api/kitchen-orders", {
       method: "POST",
       body: JSON.stringify({
-        branchId: auth.user.branchId, status: "DRAFT", isAutoSuggested: lastSuggestions.length > 0,
+        branchId: currentBranchId(), status: "DRAFT", isAutoSuggested: lastSuggestions.length > 0,
         items, notes: document.getElementById("suggestNotes").value.trim() || null,
       }),
     });
@@ -509,7 +533,7 @@ async function loadMyOrders() {
   const status = document.getElementById("ordersStatusFilter").value;
   const from = document.getElementById("ordersFrom").value;
   const to = document.getElementById("ordersTo").value;
-  const qs = new URLSearchParams({ branchId: auth.user.branchId, page: ordersPage, limit: ORDERS_PAGE_SIZE });
+  const qs = new URLSearchParams({ branchId: currentBranchId(), page: ordersPage, limit: ORDERS_PAGE_SIZE });
   if (status) qs.set("status", status);
   if (from) qs.set("from", from);
   if (to) qs.set("to", to);
@@ -733,7 +757,7 @@ async function loadReceivingTab() {
   box0.innerHTML = `<div style="color:var(--faint);font-size:13px">جاري التحميل...</div>`;
   let transfers;
   try {
-    transfers = await api(`/api/kitchen-transfers?branchId=${auth.user.branchId}`);
+    transfers = await api(`/api/kitchen-transfers?branchId=${currentBranchId()}`);
   } catch (e) {
     box0.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
     return;
@@ -847,7 +871,7 @@ async function loadReceivingTab() {
 
 // ---------------- المخزون ----------------
 async function loadStockTab() {
-  const stock = await api(`/api/inventory/stock?branchId=${auth.user.branchId}`);
+  const stock = await api(`/api/inventory/stock?branchId=${currentBranchId()}`);
   document.getElementById("stockBody").innerHTML = stock.map(s => `
     <tr><td data-label="الصنف">${s.name}</td><td data-label="الرصيد">${s.quantity} ${s.unit}</td></tr>
   `).join("") || `<tr><td colspan="2">مفيش رصيد مسجل لسه</td></tr>`;
