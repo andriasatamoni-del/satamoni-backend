@@ -1252,9 +1252,11 @@ function renderCashEntryPurchaseForm(rawMaterials) {
   document.getElementById("cashEntryModalSubmit").textContent = editingCashEntry ? "حفظ التعديل" : "تسجيل فاتورة المشترى";
   renderPurchaseItemOptions(rawMaterials, "");
   renderPurchaseItemsTable();
-  document.getElementById("purchaseItemSearch").addEventListener("input", (e) => {
-    renderPurchaseItemOptions(rawMaterials, e.target.value);
-  });
+  // بعض شاشات نقاط البيع (تابلت/متصفح مدمج) مش دايمًا بتبعت حدث "input" بشكل موثوق مع الكيبورد
+  // الافتراضي بتاعها - بنسمع كمان على keyup/change/paste عشان البحث يشتغل مهما كان نوع الجهاز
+  const searchInput = document.getElementById("purchaseItemSearch");
+  const onSearchInput = (e) => renderPurchaseItemOptions(rawMaterials, e.target.value);
+  ["input", "keyup", "change", "paste"].forEach((evt) => searchInput.addEventListener(evt, onSearchInput));
   document.getElementById("purchaseItemAddBtn").onclick = () => {
     const errBox = document.getElementById("cashEntryModalErr");
     errBox.textContent = "";
