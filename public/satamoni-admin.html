@@ -44,6 +44,11 @@
   .badge.inactive { background: rgba(194,42,36,.15); color: #F08A83; }
   .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
 
+  #homeTilesBody input { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+  #homeTilesBody input.tileTitle { width: 160px; }
+  #homeTilesBody input.tileDesc { width: 100%; min-width: 220px; }
+  #homeTilesBody input.tileOrder { width: 60px; }
+
   #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
   #loginOverlay.hidden { display: none; }
   #loginBox { width: 320px; text-align: center; }
@@ -144,6 +149,12 @@
     </div>
     <div id="smsConfirmationsErr" class="err"></div>
   </div>
+
+  <h1>تخصيص الصفحة الرئيسية</h1>
+  <table style="margin-bottom:24px">
+    <thead><tr><th></th><th>الاسم</th><th>الوصف</th><th>الترتيب</th><th></th></tr></thead>
+    <tbody id="homeTilesBody"></tbody>
+  </table>
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية أدمن على الحساب ده.</div>
@@ -224,6 +235,7 @@ async function boot() {
   await loadBranches();
   await loadUsers();
   await loadPosSettings();
+  await loadHomeTiles();
 }
 
 async function loadBranches() {
@@ -350,6 +362,40 @@ document.getElementById("smsConfirmationsSubmit").onclick = async () => {
     errBox.textContent = "اتحفظ ✓";
   } catch (e) { errBox.style.color = "#F08A83"; errBox.textContent = e.message; }
 };
+
+// ---------------- بطاقات الصفحة الرئيسية ----------------
+function escAttr(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;"); }
+
+async function loadHomeTiles() {
+  const tiles = await api("/api/home-tiles");
+  document.getElementById("homeTilesBody").innerHTML = tiles.map(t => `
+    <tr>
+      <td>${t.icon}</td>
+      <td><input class="tileTitle" value="${escAttr(t.title)}" /></td>
+      <td><input class="tileDesc" value="${escAttr(t.description)}" /></td>
+      <td><input class="tileOrder" type="number" step="1" value="${t.display_order}" /></td>
+      <td><button class="linkbtn" data-save-tile="${t.id}">حفظ</button></td>
+    </tr>
+  `).join("");
+  document.querySelectorAll("#homeTilesBody button[data-save-tile]").forEach(btn => {
+    btn.onclick = async () => {
+      const tr = btn.closest("tr");
+      try {
+        await api(`/api/home-tiles/${btn.dataset.saveTile}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            title: tr.querySelector(".tileTitle").value.trim(),
+            description: tr.querySelector(".tileDesc").value,
+            displayOrder: tr.querySelector(".tileOrder").value,
+          }),
+        });
+        const original = btn.textContent;
+        btn.textContent = "اتحفظ ✓";
+        setTimeout(() => { btn.textContent = original; }, 1500);
+      } catch (e) { alert(e.message); }
+    };
+  });
+}
 
 document.getElementById("createBtn").onclick = async () => {
   const errBox = document.getElementById("formErr");

@@ -27,97 +27,35 @@
 </style>
 </head>
 <body>
-<script>
-  const _u = JSON.parse(sessionStorage.getItem("satamoni_user") || "null");
-  if (_u && _u.role === "cashier") location.replace("satamoni-pos.html");
-  if (_u && _u.role === "callcenter") location.replace("satamoni-callcenter.html");
-</script>
 <div id="wrap">
   <h1>🍕 ستاموني</h1>
   <div class="sub">نظام إدارة المطعم — اختار الشاشة اللي هتجربها</div>
 
-  <a class="card" href="satamoni-pos.html">
-    <span class="icon">🧾</span>
-    <div><div class="title">نقطة البيع (كاشير)</div><div class="desc">تسجيل طلبات الفرع مباشرة</div></div>
-  </a>
-  <a class="card" href="satamoni-callcenter.html">
-    <span class="icon">📞</span>
-    <div><div class="title">الكول سنتر</div><div class="desc">بحث عن عميل وتسجيل طلب تليفوني</div></div>
-  </a>
-  <a class="card" href="satamoni-delivery.html">
-    <span class="icon">🛵</span>
-    <div><div class="title">دورة حياة الدليفري</div><div class="desc">تحت التحضير، في الطريق، تحصيل الفلوس، وسجل كل الطلبات</div></div>
-  </a>
-  <a class="card" href="satamoni-dashboard.html">
-    <span class="icon">📊</span>
-    <div><div class="title">داش بورد المالك</div><div class="desc">كل تفاصيل الشغل في شاشة واحدة: مبيعات، أصناف وفروع ومناطق الأكثر مبيعًا، تكلفة، ربحية</div></div>
-  </a>
-  <a class="card" href="satamoni-accounting.html">
-    <span class="icon">💰</span>
-    <div><div class="title">الحسابات</div><div class="desc">مصروفات، مشتريات، تقفيل كاش، كشف حساب المخزن</div></div>
-  </a>
-  <a class="card" href="satamoni-reports.html">
-    <span class="icon">📈</span>
-    <div><div class="title">مركز التقارير</div><div class="desc">مبيعات، هالك، ملغي، تأخيرات، أداء الأصناف، مصروفات ومشتريات، مناطق وطيارين، خدمة الدليفري</div></div>
-  </a>
-  <a class="card" href="satamoni-customers.html">
-    <span class="icon">👥</span>
-    <div><div class="title">بيانات العملاء</div><div class="desc">دليل العملاء وبحث برقم التليفون، نقاط الولاء، والعملاء اللي مطلبوش بقالهم فترة</div></div>
-  </a>
-  <a class="card" href="satamoni-audit.html">
-    <span class="icon">🛡️</span>
-    <div><div class="title">سجل التدقيق والموافقات</div><div class="desc">كل عملية حساسة اتسجلت مين وامتى، وطلبات موافقة على تسوية المخزون</div></div>
-  </a>
-  <a class="card" href="satamoni-attendance.html">
-    <span class="icon">🕒</span>
-    <div><div class="title">الحضور والانصراف</div><div class="desc">تسجيل حضورك، أو متابعة شيفتات الفرع</div></div>
-  </a>
-  <a class="card" href="satamoni-admin.html">
-    <span class="icon">🔐</span>
-    <div><div class="title">إدارة المستخدمين (أدمن)</div><div class="desc">إضافة موظفين وتحديد صلاحياتهم</div></div>
-  </a>
-  <a class="card" href="satamoni-menu.html">
-    <span class="icon">📋</span>
-    <div><div class="title">المنيو والإعدادات (أدمن)</div><div class="desc">إضافة الأصناف والأسعار، مناطق التوصيل، طرق الدفع</div></div>
-  </a>
-  <a class="card" href="satamoni-kitchen.html">
-    <span class="icon">🏭</span>
-    <div><div class="title">السنتر كيتشن</div><div class="desc">طلبيات الفروع، التحويلات، والتصنيع من خام لمواد مصنّعة</div></div>
-  </a>
-  <a class="card" href="satamoni-requisitions.html">
-    <span class="icon">📦</span>
-    <div><div class="title">طلبيات الفرع</div><div class="desc">لوحة الفرع، اقتراح طلبية، تقديم، استلام تحويلات، والإبلاغ عن فروقات</div></div>
-  </a>
-  <a class="card" href="satamoni-ck-requisitions.html">
-    <span class="icon">🏭</span>
-    <div><div class="title">طلبيات السنتر كيتشن</div><div class="desc">اعتماد طلبيات الفروع، التجهيز، والتحويل للفروع</div></div>
-  </a>
-  <a class="card" href="satamoni-purchasing.html">
-    <span class="icon">🧾</span>
-    <div><div class="title">المشتريات</div><div class="desc">طلبات شراء، أوامر شراء، استلام مشتريات، فواتير وسداد الموردين</div></div>
-  </a>
-  <a class="card" href="satamoni-manufacturing.html">
-    <span class="icon">🏭</span>
-    <div><div class="title">التصنيع والتعبئة</div><div class="desc">وصفات (BOM)، أوامر تصنيع، تعبئة، وتتبّع الدفعات من الخام لحد الفرع</div></div>
-  </a>
-  <a class="card" href="satamoni-production-planning.html">
-    <span class="icon">📋</span>
-    <div><div class="title">تخطيط التصنيع</div><div class="desc">طلب الفروع، المتاح، المطلوب تصنيعه، احتياج الخامات، وإنشاء أوامر التصنيع من الخطة</div></div>
-  </a>
-  <a class="card" href="satamoni-kds.html">
-    <span class="icon">👨‍🍳</span>
-    <div><div class="title">شاشة المطبخ (KDS)</div><div class="desc">لوحة تتبّع تحضير الطلبات لحظيًا: جديد، مقبول، بيتحضّر، جاهز</div></div>
-  </a>
-  <a class="card" href="satamoni-payroll.html">
-    <span class="icon">🧑‍🍳</span>
-    <div><div class="title">الرواتب (أدمن/محاسب)</div><div class="desc">حساب أوتوماتيكي من البصمة، سلف وجزاءات ومكافآت، ملخص شهري</div></div>
-  </a>
-  <a class="card" href="satamoni-printing.html">
-    <span class="icon">🖨️</span>
-    <div><div class="title">إعدادات الطباعة (أدمن/مدير فرع)</div><div class="desc">الطابعات، محطات المطبخ، وربط كل محطة بطابعتها لكل فرع</div></div>
-  </a>
+  <div id="tilesWrap"></div>
 
   <footer>سجّل دخولك بالحساب اللي عملته وقت الإعداد (ADMIN_EMAIL)</footer>
 </div>
+<script>
+  const _u = JSON.parse(sessionStorage.getItem("satamoni_user") || "null");
+  if (_u && _u.role === "cashier") location.replace("satamoni-pos.html");
+  if (_u && _u.role === "callcenter") location.replace("satamoni-callcenter.html");
+
+  // المرحلة 8.17: البطاقات بقت مخزّنة في الداتابيز (home_tiles) بدل ما تكون ثابتة هنا - المالك يقدر
+  // يغيّر اسم/ترتيب أي بطاقة من لوحة الأدمن (satamoni-admin.html) من غير ما يحتاج تعديل كود
+  const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+  fetch(`${API_BASE_URL}/api/home-tiles`)
+    .then((r) => r.json())
+    .then((tiles) => {
+      document.getElementById("tilesWrap").innerHTML = tiles.map((t) => `
+        <a class="card" href="${t.href}">
+          <span class="icon">${t.icon}</span>
+          <div><div class="title">${t.title}</div><div class="desc">${t.description}</div></div>
+        </a>
+      `).join("");
+    })
+    .catch(() => {
+      document.getElementById("tilesWrap").innerHTML = `<div style="text-align:center;color:var(--faint);font-size:13px">تعذر تحميل قايمة الشاشات - تأكد من الاتصال بالسيرفر</div>`;
+    });
+</script>
 </body>
 </html>
