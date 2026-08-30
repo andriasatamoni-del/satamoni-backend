@@ -73,8 +73,11 @@ const ROLE_PERMISSIONS = {
     // المرحلة 7K: الكاشير يقدر يسجّل مصروف/مشترى نقدي لفرعه بس واليوم بس (مقفول من جوه الراوت نفسه،
     // مش بس بالصلاحية) - لكن معندوش صلاحية "الإصدار" (expenses.review/purchases.review) خالص، ده
     // للمدير/المحاسب بس عمدًا عشان يراجعوا قبل ما تتحسب رسميًا
-    "expenses.create_own_daily", "expenses.view_own_daily",
-    "purchases.create_own_daily", "purchases.view_own_daily",
+    // المرحلة 8.14: edit_own_daily بتسمح للكاشير يعدّل بند/مبلغ مصروفه أو بنود فاتورة مشتراه هو بس -
+    // بس لحد ما تتراجع (SUBMITTED/PENDING)، لأن بعد المراجعة الأرقام دخلت المحاسبة رسميًا وتعديلها
+    // ساعتها بيحتاج مسار عكس قيود منفصل تمامًا (زي /:id/cancel)، مش تعديل مباشر
+    "expenses.create_own_daily", "expenses.view_own_daily", "expenses.edit_own_daily",
+    "purchases.create_own_daily", "purchases.view_own_daily", "purchases.edit_own_daily",
     // المرحلة 7G: الكاشير بيشوف شاشة المطبخ (KDS) بتاعة فرعه ويقدّم حالة الطلبات - هو أكتر حد
     // بيستخدمها فعليًا (واقف عند نقطة البيع/المطبخ في الفروع الصغيرة)
     "kitchen.view", "kitchen.advance",

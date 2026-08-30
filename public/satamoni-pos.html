@@ -265,13 +265,16 @@
   #cashEntryModalErr { color: #F08A83; font-size: 12px; margin-bottom: 8px; min-height: 16px; }
   #cashEntryModalOk { color: var(--green); font-size: 12px; margin-bottom: 8px; }
   #cashEntryModalSubmit { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; margin-top: 6px; }
+  #cashEntryEditCancelBtn { width: 100%; padding: 8px; border: 1px dashed var(--faint); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 12px; margin-top: 6px; }
   #cashEntryModalCancel { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 13px; margin-top: 6px; }
   #cashEntryTodayList { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
   #cashEntryTodayList h4 { font-size: 12px; color: var(--faint); margin: 0 0 6px; }
-  #cashEntryTodayList .row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
-  #cashEntryTodayList .row .badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; }
+  #cashEntryTodayList .row { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; padding: 3px 0; }
+  #cashEntryTodayList .row .row-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #cashEntryTodayList .row .badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; flex-shrink: 0; }
   #cashEntryTodayList .badge.pending { background: rgba(240,138,131,.15); color: #F08A83; }
   #cashEntryTodayList .badge.done { background: rgba(0,200,120,.15); color: var(--green); }
+  #cashEntryTodayList .row-edit-btn { flex-shrink: 0; border: none; background: transparent; color: var(--gold-bright); cursor: pointer; font-size: 13px; padding: 2px 4px; }
 </style>
 </head>
 <body>
@@ -447,6 +450,7 @@
     <div id="cashEntryModalErr"></div>
     <div id="cashEntryModalOk"></div>
     <button id="cashEntryModalSubmit"></button>
+    <button id="cashEntryEditCancelBtn" style="display:none">إلغاء التعديل والرجوع لتسجيل جديد ↩️</button>
     <button id="cashEntryModalCancel">إغلاق</button>
     <div id="cashEntryTodayList"></div>
   </div>
@@ -1145,6 +1149,9 @@ function openCloseShiftModal() {
 // ============================================================
 let expenseCategoriesCache = null;
 let cashEntryTab = "expense";
+// المرحلة 8.14: {type:'expense'|'purchase', id, ...} لما الكاشير يدوس "تعديل" على سطر لسه في انتظار
+// مراجعة - null يعني الفورم في وضع "تسجيل جديد" العادي
+let editingCashEntry = null;
 
 async function loadExpenseCategories() {
   if (expenseCategoriesCache) return expenseCategoriesCache;
@@ -1166,7 +1173,12 @@ function renderCashEntryExpenseForm(categories) {
     <label>ملاحظات (اختياري)</label>
     <input id="cashEntryNotes" placeholder="ملاحظات" />
   `;
-  document.getElementById("cashEntryModalSubmit").textContent = "تسجيل المصروف";
+  document.getElementById("cashEntryModalSubmit").textContent = editingCashEntry ? "حفظ التعديل" : "تسجيل المصروف";
+  if (editingCashEntry && editingCashEntry.type === "expense") {
+    document.getElementById("cashEntryCategory").value = editingCashEntry.categoryId;
+    document.getElementById("cashEntryAmount").value = editingCashEntry.amount;
+    document.getElementById("cashEntryNotes").value = editingCashEntry.notes || "";
+  }
 }
 
 // المرحلة 8.6: فاتورة مشترى مواد خام حقيقية - الكاشير بيختار من كتالوج المواد الخام الموجودة فعلاً
@@ -1206,14 +1218,25 @@ function renderPurchaseItemsTable() {
   });
 }
 
+// المرحلة 8.14: قايمة المواد الخام ممكن تبقى طويلة جدًا في فروع كبيرة - select عادي بيبقى صعب التصفح
+// فيه. input بحث بسيط بيصفّي خيارات الـselect لحظيًا بالاسم بدل ما الكاشير يفضل يمرمط في ليستة طويلة
+function renderPurchaseItemOptions(rawMaterials, query) {
+  const sel = document.getElementById("purchaseItemSelect");
+  if (!sel) return;
+  const prevValue = sel.value;
+  const q = (query || "").trim().toLowerCase();
+  const filtered = q ? rawMaterials.filter((m) => m.name.toLowerCase().includes(q)) : rawMaterials;
+  sel.innerHTML = `<option value="">اختر مادة خام...</option>` +
+    filtered.map((m) => `<option value="${m.id}" data-unit="${m.unit}">${m.name} (${m.unit})</option>`).join("");
+  if (filtered.some((m) => String(m.id) === prevValue)) sel.value = prevValue;
+}
+
 function renderCashEntryPurchaseForm(rawMaterials) {
   document.getElementById("cashEntryModalBody").innerHTML = `
     <label>فاتورة مشترى مواد خام</label>
+    <input id="purchaseItemSearch" placeholder="دور على مادة خام بالاسم..." style="margin-bottom:6px" />
     <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-      <select id="purchaseItemSelect" style="flex:2;min-width:140px">
-        <option value="">اختر مادة خام...</option>
-        ${rawMaterials.map((m) => `<option value="${m.id}" data-unit="${m.unit}">${m.name} (${m.unit})</option>`).join("")}
-      </select>
+      <select id="purchaseItemSelect" style="flex:2;min-width:140px"></select>
       <input id="purchaseItemQty" type="number" min="0.001" step="0.001" placeholder="الكمية" style="flex:1;min-width:70px" />
       <input id="purchaseItemPrice" type="number" min="0" step="0.01" placeholder="سعر الوحدة" style="flex:1;min-width:80px" />
       <button id="purchaseItemAddBtn" type="button">+ إضافة</button>
@@ -1226,8 +1249,12 @@ function renderCashEntryPurchaseForm(rawMaterials) {
     <label>ملاحظات (اختياري، اسم المورد مثلًا)</label>
     <input id="cashEntryNotes" placeholder="ملاحظات" />
   `;
-  document.getElementById("cashEntryModalSubmit").textContent = "تسجيل فاتورة المشترى";
+  document.getElementById("cashEntryModalSubmit").textContent = editingCashEntry ? "حفظ التعديل" : "تسجيل فاتورة المشترى";
+  renderPurchaseItemOptions(rawMaterials, "");
   renderPurchaseItemsTable();
+  document.getElementById("purchaseItemSearch").addEventListener("input", (e) => {
+    renderPurchaseItemOptions(rawMaterials, e.target.value);
+  });
   document.getElementById("purchaseItemAddBtn").onclick = () => {
     const errBox = document.getElementById("cashEntryModalErr");
     errBox.textContent = "";
@@ -1269,33 +1296,120 @@ async function switchCashEntryTab(tab) {
     }
   }
 }
-document.getElementById("cashEntryTabExpense").onclick = () => switchCashEntryTab("expense");
-document.getElementById("cashEntryTabPurchase").onclick = () => switchCashEntryTab("purchase");
+document.getElementById("cashEntryTabExpense").onclick = () => {
+  editingCashEntry = null;
+  document.getElementById("cashEntryEditCancelBtn").style.display = "none";
+  switchCashEntryTab("expense");
+};
+document.getElementById("cashEntryTabPurchase").onclick = () => {
+  editingCashEntry = null;
+  document.getElementById("cashEntryEditCancelBtn").style.display = "none";
+  switchCashEntryTab("purchase");
+};
+
+// المرحلة 8.14: "اظهار مصاريف الشيفت كلها اللي اتسجلت خلال الشيفت" - مش "النهاردة بس" زي الأول.
+// expenses/purchases مالهومش shift_id (مفيش FK)، فبنفلتر بنافذة وقت الشيفت (created_at >= opened_at)
+// بالظبط زي نفس المنطق المُثبت في db/shift-engine.js. لو مفيش شيفت مفتوح، بنرجع لسلوك "النهاردة" القديم.
+let cashEntryListExpenses = [];
+let cashEntryListPurchases = [];
 
 async function loadCashEntryTodayList() {
   const listBox = document.getElementById("cashEntryTodayList");
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const [expRes, purRes] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/expenses?date=${today}`, { headers: { Authorization: `Bearer ${auth.token}` } }),
-      fetch(`${API_BASE_URL}/api/purchases?date=${today}`, { headers: { Authorization: `Bearer ${auth.token}` } }),
-    ]);
-    const expenses = expRes.ok ? await expRes.json() : [];
-    const purchases = purRes.ok ? await purRes.json() : [];
+    const dates = [today];
+    if (state.shift) {
+      const shiftDate = new Date(state.shift.opened_at).toISOString().slice(0, 10);
+      if (shiftDate !== today) dates.push(shiftDate);
+    }
+    const responses = await Promise.all(dates.flatMap((d) => [
+      fetch(`${API_BASE_URL}/api/expenses?date=${d}`, { headers: { Authorization: `Bearer ${auth.token}` } }),
+      fetch(`${API_BASE_URL}/api/purchases?date=${d}`, { headers: { Authorization: `Bearer ${auth.token}` } }),
+    ]));
+    let expenses = [];
+    let purchases = [];
+    for (let i = 0; i < dates.length; i++) {
+      const expRes = responses[i * 2];
+      const purRes = responses[i * 2 + 1];
+      if (expRes.ok) expenses = expenses.concat(await expRes.json());
+      if (purRes.ok) purchases = purchases.concat(await purRes.json());
+    }
+    if (state.shift) {
+      const openedAt = new Date(state.shift.opened_at).getTime();
+      expenses = expenses.filter((e) => new Date(e.created_at).getTime() >= openedAt);
+      purchases = purchases.filter((p) => new Date(p.created_at).getTime() >= openedAt);
+    }
+    cashEntryListExpenses = expenses;
+    cashEntryListPurchases = purchases;
+    // قابل للتعديل هنا: لسه SUBMITTED/PENDING (قبل المراجعة) وهو اللي سجّله بنفسه - نفس شرط السيرفر بالظبط
     const rows = [
-      ...expenses.map((e) => ({ label: e.category, amount: e.amount, done: e.status !== "SUBMITTED" && e.status !== "DRAFT" })),
-      ...purchases.map((p) => ({ label: p.category || "مشترى", amount: p.amount, done: p.status !== "PENDING" })),
+      ...expenses.map((e) => ({
+        type: "expense", id: e.id, label: e.category, amount: e.amount,
+        done: e.status !== "SUBMITTED" && e.status !== "DRAFT",
+        editable: e.status === "SUBMITTED" && String(e.created_by) === String(auth.user.id),
+      })),
+      ...purchases.map((p) => ({
+        type: "purchase", id: p.id, label: p.category || "مشترى", amount: p.amount,
+        done: p.status !== "PENDING",
+        editable: p.status === "PENDING" && String(p.created_by) === String(auth.user.id),
+      })),
     ];
     listBox.innerHTML = rows.length
-      ? `<h4>مصروفات ومشتريات النهاردة (${rows.length})</h4>` + rows.map((r) => `
+      ? `<h4>مصروفات ومشتريات الشيفت (${rows.length})</h4>` + rows.map((r) => `
           <div class="row">
-            <span>${r.label || "-"} — ${money(r.amount)}</span>
+            <span class="row-label">${r.label || "-"} — ${money(r.amount)}</span>
             <span class="badge ${r.done ? "done" : "pending"}">${r.done ? "تمت المراجعة" : "في انتظار المراجعة"}</span>
+            ${r.editable ? `<button type="button" class="row-edit-btn" data-type="${r.type}" data-id="${r.id}" title="تعديل">✏️</button>` : ""}
           </div>
         `).join("")
       : "";
+    listBox.querySelectorAll(".row-edit-btn").forEach((btn) => {
+      btn.onclick = () => {
+        const id = Number(btn.dataset.id);
+        if (btn.dataset.type === "expense") startEditExpense(cashEntryListExpenses.find((e) => e.id === id));
+        else startEditPurchase(cashEntryListPurchases.find((p) => p.id === id));
+      };
+    });
   } catch (e) { listBox.innerHTML = ""; }
 }
+
+// المرحلة 8.14: يفتح فورم "مصروف" مليان ببيانات صف موجود بدل ما يبدأ فاضي - الحفظ بعد كده PATCH مش POST
+async function startEditExpense(row) {
+  if (!row) return;
+  editingCashEntry = { type: "expense", id: row.id, categoryId: row.category_id, amount: row.amount, notes: row.notes };
+  await switchCashEntryTab("expense");
+  document.getElementById("cashEntryEditCancelBtn").style.display = "block";
+}
+
+// نفس الفكرة لفاتورة المشترى - لازم يجيب بنودها الكاملة الأول (اللستة السريعة معندهاش items)
+async function startEditPurchase(row) {
+  if (!row) return;
+  const errBox = document.getElementById("cashEntryModalErr");
+  errBox.textContent = "";
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/purchases/${row.id}`, { headers: { Authorization: `Bearer ${auth.token}` } });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "تعذر تحميل تفاصيل الفاتورة");
+    editingCashEntry = { type: "purchase", id: row.id, notes: data.notes };
+    await switchCashEntryTab("purchase");
+    purchaseInvoiceItems = data.items.map((it) => ({
+      inventoryItemId: it.inventory_item_id, name: it.item_name, unit: it.unit || "",
+      quantity: Number(it.quantity), unitPrice: Number(it.unit_price),
+    }));
+    renderPurchaseItemsTable();
+    document.getElementById("cashEntryNotes").value = data.notes || "";
+    document.getElementById("cashEntryEditCancelBtn").style.display = "block";
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+}
+
+async function cancelCashEntryEdit() {
+  editingCashEntry = null;
+  document.getElementById("cashEntryEditCancelBtn").style.display = "none";
+  await switchCashEntryTab(cashEntryTab);
+}
+document.getElementById("cashEntryEditCancelBtn").onclick = cancelCashEntryEdit;
 
 function closeCashEntryModal() {
   document.getElementById("cashEntryModalOverlay").classList.remove("show");
@@ -1304,6 +1418,8 @@ document.getElementById("cashEntryModalCancel").onclick = closeCashEntryModal;
 
 document.getElementById("cashEntryBtn").onclick = () => {
   document.getElementById("cashEntryModalOverlay").classList.add("show");
+  editingCashEntry = null;
+  document.getElementById("cashEntryEditCancelBtn").style.display = "none";
   switchCashEntryTab("expense");
   loadCashEntryTodayList();
 };
@@ -1317,24 +1433,29 @@ document.getElementById("cashEntryModalSubmit").onclick = async () => {
 
   // المرحلة 8.6: فاتورة مشترى مواد خام - مسار منفصل تمامًا (بنود، مش مبلغ حر) - الإجمالي هنا للعرض
   // بس، السيرفر بيعيد حسابه من سطور الأصناف نفسها
+  // المرحلة 8.14: لو الفورم في وضع "تعديل" (editingCashEntry) بنبعت PATCH لنفس السجل بدل POST جديد
   if (cashEntryTab === "purchase") {
     if (purchaseInvoiceItems.length === 0) { errBox.textContent = "لازم تضيف صنف واحد على الأقل للفاتورة"; return; }
     const notes = document.getElementById("cashEntryNotes").value.trim();
+    const isEdit = editingCashEntry && editingCashEntry.type === "purchase";
     submitBtn.disabled = true;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/purchases`, {
-        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+      const res = await fetch(`${API_BASE_URL}/api/purchases${isEdit ? "/" + editingCashEntry.id : ""}`, {
+        method: isEdit ? "PATCH" : "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
         body: JSON.stringify({
           items: purchaseInvoiceItems.map((it) => ({ inventoryItemId: it.inventoryItemId, quantity: it.quantity, unitPrice: it.unitPrice })),
           notes: notes || null,
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "تعذر تسجيل فاتورة المشترى");
-      okBox.textContent = "✅ تم تسجيل فاتورة المشترى - في انتظار مراجعة المدير/المحاسب";
+      if (!res.ok) throw new Error(data.error || (isEdit ? "تعذر حفظ التعديل" : "تعذر تسجيل فاتورة المشترى"));
+      okBox.textContent = isEdit ? "✅ تم حفظ التعديل" : "✅ تم تسجيل فاتورة المشترى - في انتظار مراجعة المدير/المحاسب";
       purchaseInvoiceItems = [];
       renderPurchaseItemsTable();
       document.getElementById("cashEntryNotes").value = "";
+      editingCashEntry = null;
+      document.getElementById("cashEntryEditCancelBtn").style.display = "none";
+      document.getElementById("cashEntryModalSubmit").textContent = "تسجيل فاتورة المشترى";
       loadCashEntryTodayList();
     } catch (e) {
       errBox.textContent = e.message;
@@ -1350,17 +1471,21 @@ document.getElementById("cashEntryModalSubmit").onclick = async () => {
   if (!category) { errBox.textContent = "لازم تختار بند مصروف"; return; }
   if (!amount || amount <= 0) { errBox.textContent = "لازم تدخل مبلغ أكبر من صفر"; return; }
 
+  const isEditExpense = editingCashEntry && editingCashEntry.type === "expense";
   submitBtn.disabled = true;
   try {
-    const res = await fetch(`${API_BASE_URL}/api/expenses`, {
-      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+    const res = await fetch(`${API_BASE_URL}/api/expenses${isEditExpense ? "/" + editingCashEntry.id : ""}`, {
+      method: isEditExpense ? "PATCH" : "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
       body: JSON.stringify({ categoryId: category, amount, notes: notes || null }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "تعذر التسجيل");
-    okBox.textContent = "✅ تم التسجيل - في انتظار مراجعة المدير/المحاسب";
+    if (!res.ok) throw new Error(data.error || (isEditExpense ? "تعذر حفظ التعديل" : "تعذر التسجيل"));
+    okBox.textContent = isEditExpense ? "✅ تم حفظ التعديل" : "✅ تم التسجيل - في انتظار مراجعة المدير/المحاسب";
     document.getElementById("cashEntryAmount").value = "";
     document.getElementById("cashEntryNotes").value = "";
+    editingCashEntry = null;
+    document.getElementById("cashEntryEditCancelBtn").style.display = "none";
+    document.getElementById("cashEntryModalSubmit").textContent = "تسجيل المصروف";
     loadCashEntryTodayList();
   } catch (e) {
     errBox.textContent = e.message;

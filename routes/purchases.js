@@ -224,6 +224,91 @@ router.post(
   }
 );
 
+// المرحلة 8.14: PATCH /api/purchases/:id - تعديل بنود/ملاحظات فاتورة مشترى لسه في حالة PENDING (قبل
+// المراجعة عبر /:id/confirm) - مفيش ترحيل مخزون ولا قيد محاسبي اتسجل لحد دلوقتي (الترحيل بيحصل وقت
+// التأكيد بس، postPurchaseToInventory)، فالتعديل هنا آمن تمامًا. items لازم تبقى قايمة كاملة بديلة
+// (نفس التحقق اللي POST بيعمله - مواد خام حقيقية موجودة في الكتالوج بس) - بتستبدل كل بنود الفاتورة
+// القديمة، والإجمالي بيتحسب من جديد من السيرفر زي أي إنشاء عادي، مش من العميل
+router.patch("/:id", requireAuth, requirePermission("purchases.create", "purchases.edit_own_daily"), async (req, res) => {
+  const { items, notes } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM purchases WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "المشترى مش موجود" }); }
+    const purchase = existing.rows[0];
+    if (purchase.status !== "PENDING") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "المشترى ده اتراجع بالفعل، مینفعش يتعدّل دلوقتي" });
+    }
+    if ((req.user.role === "branch_manager" || req.user.role === "cashier") && !assertOwnBranch(req.user, purchase.branch_id)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية تعدّل مشترى فرع تاني" });
+    }
+    if (req.user.role === "cashier" && purchase.created_by !== req.user.id) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "تقدر تعدّل بس المشتريات اللي سجّلتها بنفسك" });
+    }
+
+    let newAmount = purchase.amount;
+    if (Array.isArray(items)) {
+      if (items.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ error: "لازم صنف واحد على الأقل في الفاتورة" }); }
+      for (const it of items) {
+        if (!it || !Number.isInteger(Number(it.inventoryItemId)) || !(Number(it.quantity) > 0) || !(Number(it.unitPrice) >= 0)) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: "بيانات بند المشترى غير صحيحة" });
+        }
+      }
+      const ids = items.map((it) => Number(it.inventoryItemId));
+      const catalog = await client.query(
+        `SELECT id, name, unit FROM inventory_items WHERE id = ANY($1::int[]) AND item_type = 'raw'`,
+        [ids]
+      );
+      const catalogById = new Map(catalog.rows.map((r) => [r.id, r]));
+      const validatedItems = [];
+      newAmount = 0;
+      for (const it of items) {
+        const invItem = catalogById.get(Number(it.inventoryItemId));
+        if (!invItem) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: "مادة خام غير موجودة في الكتالوج - الكاشير میقدرش يسجل صنف جديد" });
+        }
+        const lineTotal = Number(it.quantity) * Number(it.unitPrice);
+        newAmount += lineTotal;
+        validatedItems.push({ inventoryItemId: invItem.id, quantity: Number(it.quantity), unit: invItem.unit, unitPrice: Number(it.unitPrice), lineTotal });
+      }
+
+      await client.query("DELETE FROM purchase_items WHERE purchase_id = $1", [req.params.id]);
+      for (const it of validatedItems) {
+        await client.query(
+          `INSERT INTO purchase_items (purchase_id, inventory_item_id, quantity, unit, unit_price, line_total)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [req.params.id, it.inventoryItemId, it.quantity, it.unit, it.unitPrice, it.lineTotal]
+        );
+      }
+    }
+
+    const fields = ["amount = $1"];
+    const values = [newAmount];
+    let i = 2;
+    if (notes !== undefined) { fields.push(`notes = $${i++}`); values.push(notes || null); }
+    values.push(req.params.id);
+    const result = await client.query(`UPDATE purchases SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`, values);
+
+    await logAudit(client, {
+      branchId: purchase.branch_id, userId: req.user.id, action: "PURCHASE_EDITED", entityType: "purchase", entityId: purchase.id,
+      oldValues: { amount: purchase.amount }, newValues: { amount: newAmount, itemCount: Array.isArray(items) ? items.length : undefined }, req,
+    });
+    await client.query("COMMIT");
+    res.json(result.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // المرحلة 7K: POST /api/purchases/:id/confirm - PENDING → CONFIRMED - مدير الفرع/المحاسب بيراجع
 // مشترى الكاشير النقدي ويأكّده - بعدها بس بيتحسب رسميًا في تقارير المشتريات/تحليل التكلفة
 //

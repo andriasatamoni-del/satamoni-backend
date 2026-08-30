@@ -246,6 +246,61 @@ router.post("/", requireAuth, requirePermission("expenses.create", "expenses.cre
   }
 });
 
+// المرحلة 8.14: PATCH /api/expenses/:id - تعديل بند/مبلغ/ملاحظات مصروف لسه في حالة SUBMITTED (قبل
+// ما مدير الفرع/المحاسب يراجعه عبر /:id/review) - مفيش قيد محاسبي اتسجل لحد دلوقتي (الترحيل بيحصل
+// وقت المراجعة بس)، فالتعديل هنا آمن تمامًا من غير أي عكس قيود. الكاشير يقدر يعدّل بس اللي هو سجّله
+// بنفسه؛ مدير الفرع/المحاسب (عندهم expenses.create الكاملة) يقدروا يعدّلوا أي مصروف SUBMITTED في نطاقهم
+router.patch("/:id", requireAuth, requirePermission("expenses.create", "expenses.edit_own_daily"), async (req, res) => {
+  const { categoryId, amount, notes } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query("SELECT * FROM expenses WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "المصروف مش موجود" }); }
+    const expense = existing.rows[0];
+    if (expense.status !== "SUBMITTED") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "المصروف ده اتراجع بالفعل، مینفعش يتعدّل دلوقتي" });
+    }
+    if ((req.user.role === "branch_manager" || req.user.role === "cashier") && !assertOwnBranch(req.user, expense.branch_id)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية تعدّل مصروف فرع تاني" });
+    }
+    if (req.user.role === "cashier" && expense.created_by !== req.user.id) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "تقدر تعدّل بس المصروفات اللي سجّلتها بنفسك" });
+    }
+    if (amount !== undefined && !(Number(amount) > 0)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "المبلغ لازم يكون أكبر من صفر" });
+    }
+
+    const fields = [];
+    const values = [];
+    let i = 1;
+    if (categoryId !== undefined) { fields.push(`category_id = $${i++}`); values.push(categoryId); }
+    if (amount !== undefined) { fields.push(`amount = $${i++}`); values.push(amount); }
+    if (notes !== undefined) { fields.push(`notes = $${i++}`); values.push(notes || null); }
+    if (fields.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ error: "مفيش حاجة تتعدل" }); }
+    values.push(req.params.id);
+
+    const result = await client.query(`UPDATE expenses SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`, values);
+    await logAudit(client, {
+      branchId: expense.branch_id, userId: req.user.id, action: "EXPENSE_EDITED", entityType: "expense", entityId: expense.id,
+      oldValues: { categoryId: expense.category_id, amount: expense.amount, notes: expense.notes },
+      newValues: { categoryId, amount, notes }, req,
+    });
+    await client.query("COMMIT");
+    res.json(result.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (err.code === "23503") return res.status(400).json({ error: "بند المصروف ده مش موجود" });
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/expenses/:id/submit - DRAFT → SUBMITTED
 router.post("/:id/submit", requireAuth, canManage, async (req, res) => {
   try {
