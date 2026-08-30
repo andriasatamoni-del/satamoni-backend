@@ -1721,6 +1721,18 @@ function renderForwardChildren(node) {
   if (!html) html = `<div class="hint">لسه معندهاش أي استخدام تالٍ مسجّل - الدفعة لسه في المخزون.</div>`;
   return html;
 }
+
+// المرحلة 8.18: كان الملف ده من غير الكتلة دي أصلًا - يعني فتح الصفحة مباشرة (أو جوة تاب في
+// satamoni-procurement-hub.html) بعد تسجيل دخول متحقق في صفحة تانية كان بيعرض شاشة تسجيل الدخول
+// تاني من غير داعي بدل ما يكمّل بالجلسة الموجودة فعلًا (نفس النمط الموجود في باقي شاشات الأدمن)
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) bootSafely();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
 </script>
 </body>
 </html>

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ستاموني — المشتريات والتصنيع</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
+  body { display: flex; flex-direction: column; }
+  #topbar { height: 56px; flex: 0 0 auto; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #tabs { flex: 0 0 auto; display: flex; gap: 6px; padding: 10px 16px; flex-wrap: wrap; background: var(--bg-alt); border-bottom: 1px solid var(--line); }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  #frames { flex: 1 1 auto; position: relative; min-height: 0; }
+  .frameWrap { position: absolute; inset: 0; display: none; }
+  .frameWrap.active { display: block; }
+  .frameWrap iframe { width: 100%; height: 100%; border: none; display: block; background: var(--bg); }
+  .frameWrap .placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--faint); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">📦 ستاموني — المشتريات والتصنيع</div>
+</div>
+
+<!-- المرحلة 8.18: دمج طلبيات الفرع/طلبيات السنتر كيتشن/المشتريات/التصنيع/تخطيط التصنيع في شاشة واحدة
+     بتابات علشان "ميبقاش في شاشات كتير" - كل تاب بيعرض الشاشة الأصلية بالظبط من غير أي تعديل في
+     كودها (جوة iframe)، عشان نضمن صفر تعارض بين المتغيرات/الفانكشنز المشتركة بين الشاشات الخمسة
+     (كل واحدة كانت مكتوبة كتطبيق مستقل بنفس أسماء زي boot/api/auth/fmtDate...) - لو دمجناهم في
+     ملف/سكريبت واحد كان ممكن يحصل تعارض هادئ (silent bug) في نظام بيشتغل بيه فلوس وحسابات فعلية.
+     الجلسة (تسجيل الدخول) متبادلة تلقائيًا بين كل التابات لأنها كلها نفس الـorigin وبتستخدم نفس
+     مفاتيح sessionStorage. كل تاب بيتحمّل (src) أول مرة يتفتح بس، مش كلهم مع بعض عند فتح الصفحة. -->
+<div id="tabs">
+  <div class="tabbtn active" data-tab="requisitions" data-src="satamoni-requisitions.html">طلبيات الفرع</div>
+  <div class="tabbtn" data-tab="ck-requisitions" data-src="satamoni-ck-requisitions.html">طلبيات السنتر كيتشن</div>
+  <div class="tabbtn" data-tab="purchasing" data-src="satamoni-purchasing.html">المشتريات</div>
+  <div class="tabbtn" data-tab="manufacturing" data-src="satamoni-manufacturing.html">التصنيع والتعبئة</div>
+  <div class="tabbtn" data-tab="production-planning" data-src="satamoni-production-planning.html">تخطيط التصنيع</div>
+</div>
+
+<div id="frames">
+  <div class="frameWrap active" id="frame-requisitions"><div class="placeholder">جاري التحميل...</div></div>
+  <div class="frameWrap" id="frame-ck-requisitions"><div class="placeholder">جاري التحميل...</div></div>
+  <div class="frameWrap" id="frame-purchasing"><div class="placeholder">جاري التحميل...</div></div>
+  <div class="frameWrap" id="frame-manufacturing"><div class="placeholder">جاري التحميل...</div></div>
+  <div class="frameWrap" id="frame-production-planning"><div class="placeholder">جاري التحميل...</div></div>
+</div>
+
+<script>
+  function loadTab(btn) {
+    const tab = btn.dataset.tab;
+    const wrap = document.getElementById(`frame-${tab}`);
+    if (!wrap.querySelector("iframe")) {
+      const iframe = document.createElement("iframe");
+      iframe.src = btn.dataset.src;
+      iframe.title = btn.textContent;
+      wrap.innerHTML = "";
+      wrap.appendChild(iframe);
+    }
+  }
+
+  document.querySelectorAll(".tabbtn").forEach((btn) => {
+    btn.onclick = () => {
+      document.querySelectorAll(".tabbtn").forEach((b) => b.classList.toggle("active", b === btn));
+      document.querySelectorAll(".frameWrap").forEach((w) => w.classList.toggle("active", w.id === `frame-${btn.dataset.tab}`));
+      loadTab(btn);
+    };
+  });
+
+  // أول تاب (طلبيات الفرع) بيتحمّل فورًا لأنه هو الظاهر افتراضيًا عند فتح الصفحة
+  loadTab(document.querySelector('.tabbtn[data-tab="requisitions"]'));
+</script>
+</body>
+</html>

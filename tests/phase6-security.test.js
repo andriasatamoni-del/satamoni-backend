@@ -73,7 +73,7 @@ describe("6B: هيدرز أمان أساسية على كل رد", () => {
     const { req, res, headers, next } = mockReqRes();
     securityHeaders(req, res, next);
     expect(headers["X-Content-Type-Options"]).toBe("nosniff");
-    expect(headers["X-Frame-Options"]).toBe("DENY");
+    expect(headers["X-Frame-Options"]).toBe("SAMEORIGIN");
     expect(headers["Referrer-Policy"]).toBe("strict-origin-when-cross-origin");
     expect(next).toHaveBeenCalledTimes(1);
   });
@@ -94,7 +94,7 @@ describe("6B: هيدرز أمان أساسية على كل رد", () => {
   test("فحص تكاملي حقيقي: التطبيق الفعلي بيرجّع الهيدرز دي فعلًا", async () => {
     const res = await request(app).get("/health");
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
-    expect(res.headers["x-frame-options"]).toBe("DENY");
+    expect(res.headers["x-frame-options"]).toBe("SAMEORIGIN");
   });
 });
 
