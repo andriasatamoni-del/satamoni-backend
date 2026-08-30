@@ -39,6 +39,8 @@
   .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
   .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
   .hint { color: var(--faint); font-size: 12px; margin-bottom: 8px; }
+  .diffneg { color: #F08A83; font-weight: 700; }
+  .diffpos { color: var(--green); font-weight: 700; }
 
   .pickrow { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
   .pickrow select { flex: 2; }
@@ -118,6 +120,8 @@
     <div class="tabbtn" data-tab="orders">طلبياتي</div>
     <div class="tabbtn" data-tab="receiving">التحويلات الواردة</div>
     <div class="tabbtn" data-tab="stock">المخزون</div>
+    <div class="tabbtn" data-tab="reconcile" style="display:none">جرد المخزون</div>
+    <div class="tabbtn" data-tab="waste" style="display:none">تسجيل هالك</div>
   </div>
 
   <!-- UI-1A: لوحة الفرع - نظرة تشغيلية سريعة على اقتراح اليوم، من غير تفاصيل محاسبية -->
@@ -228,6 +232,52 @@
   <div class="panel" id="panel-stock">
     <h1>مخزون الفرع</h1>
     <table><thead><tr><th>الصنف</th><th>الرصيد</th></tr></thead><tbody id="stockBody"></tbody></table>
+  </div>
+
+  <!-- المرحلة 8.19: تابي "جرد المخزون" و"تسجيل هالك" دول منقولين بالظبط من satamoni-kitchen.html
+       (كان جوه شاشة السنتر كيتشن القديمة، من غير أي بديل تاني ليهم) بعد ما بقى باقي وظائف الشاشة
+       دي زيادة عن اللزوم بعد دمج طلبيات الفرع/السنتر كيتشن/المشتريات/التصنيع في procurement-hub.
+       أدمن/مدير فرع بس (زي ما كانوا بالظبط في الشاشة القديمة) - بيستخدموا نفس currentBranchId()
+       المستخدم في باقي تابات الصفحة دي بدل صندوق اختيار فرع منفصل كان في الشاشة القديمة -->
+  <div class="panel" id="panel-reconcile">
+    <h1>جرد المخزون</h1>
+    <div class="formbox">
+      <div style="font-size:12px;color:var(--faint);margin-bottom:8px">دخّل الكمية الفعلية بعد الجرد لكل صنف، والفرق هيتسجل تلقائيًا كحركة تسوية.</div>
+      <table><thead><tr><th>الصنف</th><th>الرصيد الحالي</th><th>الكمية الفعلية</th><th>الفرق</th><th></th></tr></thead><tbody id="reconcileBody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-waste">
+    <h1>تسجيل هالك (تلف / انتهاء صلاحية / كسر)</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="wasteItem"></select>
+        <input id="wasteQty" type="number" placeholder="الكمية" />
+        <input id="wasteDate" type="date" />
+      </div>
+      <div class="row"><input id="wasteReason" placeholder="السبب (اختياري)" /><button id="wasteSubmit">تسجيل الهالك</button></div>
+      <div class="err" id="wasteErr"></div>
+      <div class="ok" id="wasteOk"></div>
+    </div>
+
+    <h1>تسجيل هالك جماعي (أكتر من صنف مرة واحدة)</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="bulkWasteSearch" placeholder="بحث عن صنف..." />
+        <input id="bulkWasteDate" type="date" />
+        <input id="bulkWasteReason" placeholder="السبب المشترك (اختياري)" />
+      </div>
+      <table>
+        <thead><tr><th></th><th>الصنف</th><th>الوحدة</th><th>الكمية</th></tr></thead>
+        <tbody id="bulkWasteBody"></tbody>
+      </table>
+      <div class="row"><button id="bulkWasteSubmit">🗑 تسجيل هالك للأصناف المحددة</button></div>
+      <div class="err" id="bulkWasteErr"></div>
+      <div class="ok" id="bulkWasteOk"></div>
+    </div>
+
+    <h1>آخر عمليات الهالك المسجّلة</h1>
+    <table><thead><tr><th>التاريخ</th><th>الصنف</th><th>الكمية</th><th>السبب</th><th>سجّله</th></tr></thead><tbody id="wasteBody"></tbody></table>
   </div>
 </div>
 
@@ -351,6 +401,8 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
     if (btn.dataset.tab === "receiving") loadReceivingTab();
     if (btn.dataset.tab === "stock") loadStockTab();
     if (btn.dataset.tab === "dashboard") loadDashboardTab();
+    if (btn.dataset.tab === "reconcile") loadReconcileTable();
+    if (btn.dataset.tab === "waste") loadWasteEntries();
   };
 });
 
@@ -385,6 +437,16 @@ async function boot() {
   document.getElementById("suggestDate").value = new Date().toISOString().slice(0, 10);
   addManualRow();
 
+  // جرد المخزون وتسجيل الهالك لأدمن/مدير فرع بس - زي ما كانوا بالظبط في satamoni-kitchen.html القديمة
+  if (auth.user.role === "admin" || auth.user.role === "branch_manager") {
+    document.querySelector('[data-tab="reconcile"]').style.display = "block";
+    document.querySelector('[data-tab="waste"]').style.display = "block";
+    document.getElementById("wasteItem").innerHTML = itemOptions();
+    document.getElementById("wasteDate").value = new Date().toISOString().slice(0, 10);
+    document.getElementById("bulkWasteDate").value = new Date().toISOString().slice(0, 10);
+    renderBulkWasteTable();
+  }
+
   await loadBranchData();
 }
 
@@ -397,6 +459,8 @@ async function loadBranchData() {
   const activeTab = document.querySelector(".tabbtn.active");
   if (activeTab && activeTab.dataset.tab === "receiving") await loadReceivingTab();
   if (activeTab && activeTab.dataset.tab === "stock") await loadStockTab();
+  if (activeTab && activeTab.dataset.tab === "reconcile") await loadReconcileTable();
+  if (activeTab && activeTab.dataset.tab === "waste") await loadWasteEntries();
 }
 
 // ---------------- لوحة الفرع (UI-1A) ----------------
@@ -876,6 +940,145 @@ async function loadStockTab() {
     <tr><td data-label="الصنف">${s.name}</td><td data-label="الرصيد">${s.quantity} ${s.unit}</td></tr>
   `).join("") || `<tr><td colspan="2">مفيش رصيد مسجل لسه</td></tr>`;
 }
+
+// ---------------- جرد المخزون (منقول من satamoni-kitchen.html - المرحلة 8.19) ----------------
+async function loadReconcileTable() {
+  const branchId = currentBranchId();
+  if (!branchId) { document.getElementById("reconcileBody").innerHTML = ""; return; }
+  const [items, stock] = await Promise.all([
+    inventoryItems.length ? Promise.resolve(inventoryItems) : api("/api/inventory/items"),
+    api(`/api/inventory/stock?branchId=${branchId}`),
+  ]);
+  document.getElementById("reconcileBody").innerHTML = items.map(i => {
+    const s = stock.find(x => x.name === i.name);
+    const current = s ? Number(s.quantity) : 0;
+    return `
+      <tr data-recrow="${i.id}">
+        <td>${i.name} (${i.unit})</td>
+        <td>${current}</td>
+        <td><input type="number" class="rec-actual" style="width:100px;background:var(--bg-alt);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px" value="${current}" /></td>
+        <td class="rec-variance">—</td>
+        <td><button class="linkbtn" data-reconcile="${i.id}" data-current="${current}">تحديث</button></td>
+      </tr>
+    `;
+  }).join("") || `<tr><td colspan="5">مفيش أصناف</td></tr>`;
+
+  document.querySelectorAll("[data-reconcile]").forEach(btn => {
+    btn.onclick = async () => {
+      const row = btn.closest("tr");
+      const actual = Number(row.querySelector(".rec-actual").value);
+      const varianceCell = row.querySelector(".rec-variance");
+      try {
+        const result = await api("/api/inventory/reconcile", {
+          method: "POST",
+          body: JSON.stringify({ branchId, inventoryItemId: btn.dataset.reconcile, actualQuantity: actual }),
+        });
+        const v = Number(result.variance);
+        varianceCell.textContent = v === 0 ? "بدون فرق" : v.toFixed(3);
+        varianceCell.className = `rec-variance ${v < 0 ? "diffneg" : v > 0 ? "diffpos" : ""}`;
+        row.children[1].textContent = result.actualQuantity;
+        btn.dataset.current = result.actualQuantity;
+      } catch (e) { alert(apiErrorMessage(e)); }
+    };
+  });
+}
+
+// ---------------- تسجيل هالك (منقول من satamoni-kitchen.html - المرحلة 8.19) ----------------
+function renderBulkWasteTable() {
+  const q = document.getElementById("bulkWasteSearch").value.trim();
+  const rows = inventoryItems.filter((i) => !q || i.name.includes(q));
+  document.getElementById("bulkWasteBody").innerHTML = rows.map((i) => `
+    <tr>
+      <td><input type="checkbox" data-bulkwastecheck="${i.id}" /></td>
+      <td>${i.name}</td>
+      <td>${i.unit}</td>
+      <td><input type="number" min="0" step="any" data-bulkwasteqty="${i.id}" style="width:90px" disabled /></td>
+    </tr>
+  `).join("") || `<tr><td colspan="4">مفيش أصناف مطابقة</td></tr>`;
+  document.querySelectorAll("[data-bulkwastecheck]").forEach((cb) => {
+    cb.onchange = () => {
+      document.querySelector(`[data-bulkwasteqty="${cb.dataset.bulkwastecheck}"]`).disabled = !cb.checked;
+    };
+  });
+}
+document.getElementById("bulkWasteSearch").addEventListener("input", renderBulkWasteTable);
+document.getElementById("bulkWasteSubmit").onclick = async () => {
+  const branchId = currentBranchId();
+  const businessDate = document.getElementById("bulkWasteDate").value;
+  const reason = document.getElementById("bulkWasteReason").value.trim();
+  const errBox = document.getElementById("bulkWasteErr");
+  const okBox = document.getElementById("bulkWasteOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  if (!branchId) { errBox.textContent = "لازم تحدد الفرع"; return; }
+
+  const selected = Array.from(document.querySelectorAll("[data-bulkwastecheck]:checked")).map((cb) => ({
+    inventoryItemId: cb.dataset.bulkwastecheck,
+    quantity: Number(document.querySelector(`[data-bulkwasteqty="${cb.dataset.bulkwastecheck}"]`).value),
+  }));
+  if (selected.length === 0) { errBox.textContent = "لازم تحدد صنف واحد على الأقل"; return; }
+  if (selected.some((s) => !s.quantity || s.quantity <= 0)) { errBox.textContent = "كل صنف محدد لازم كمية أكبر من صفر"; return; }
+
+  const btn = document.getElementById("bulkWasteSubmit");
+  btn.disabled = true;
+  let succeeded = 0;
+  const failures = [];
+  for (const item of selected) {
+    try {
+      await api("/api/inventory/waste", {
+        method: "POST",
+        body: JSON.stringify({ branchId, inventoryItemId: item.inventoryItemId, quantity: item.quantity, reason: reason || null, businessDate }),
+      });
+      succeeded++;
+    } catch (e) {
+      const name = inventoryItems.find((i) => String(i.id) === String(item.inventoryItemId))?.name || item.inventoryItemId;
+      failures.push(`${name}: ${apiErrorMessage(e)}`);
+    }
+  }
+  btn.disabled = false;
+  if (failures.length === 0) {
+    okBox.textContent = `اتسجّل هالك لـ${succeeded} صنف`;
+    renderBulkWasteTable();
+  } else {
+    errBox.textContent = `اتسجّل ${succeeded} صنف بنجاح، وفشل: ${failures.join(" | ")}`;
+  }
+  await loadWasteEntries();
+};
+async function loadWasteEntries() {
+  const branchId = currentBranchId();
+  const body = document.getElementById("wasteBody");
+  if (!branchId) { body.innerHTML = ""; return; }
+  const now = new Date();
+  const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const to = now.toISOString().slice(0, 10);
+  try {
+    const data = await api(`/api/reports/waste?from=${from}&to=${to}&branchId=${branchId}`);
+    body.innerHTML = data.entries.map(e => `
+      <tr><td>${String(e.businessDate).slice(0, 10)}</td><td>${e.itemName}</td><td>${Number(e.quantity)} ${e.unit}</td><td>${e.notes || "—"}</td><td>${e.recordedBy || "—"}</td></tr>
+    `).join("") || `<tr><td colspan="5">مفيش هالك مسجّل الشهر ده</td></tr>`;
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">${apiErrorMessage(e)}</td></tr>`; }
+}
+document.getElementById("wasteSubmit").onclick = async () => {
+  const branchId = currentBranchId();
+  const inventoryItemId = document.getElementById("wasteItem").value;
+  const quantity = Number(document.getElementById("wasteQty").value);
+  const businessDate = document.getElementById("wasteDate").value;
+  const reason = document.getElementById("wasteReason").value.trim();
+  const errBox = document.getElementById("wasteErr");
+  const okBox = document.getElementById("wasteOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  if (!branchId) { errBox.textContent = "لازم تحدد الفرع"; return; }
+  if (!inventoryItemId || !quantity || quantity <= 0) { errBox.textContent = "لازم تختار صنف وتدخل كمية أكبر من صفر"; return; }
+  try {
+    await api("/api/inventory/waste", {
+      method: "POST",
+      body: JSON.stringify({ branchId, inventoryItemId, quantity, reason: reason || null, businessDate }),
+    });
+    okBox.textContent = "اتسجّل";
+    document.getElementById("wasteQty").value = "";
+    document.getElementById("wasteReason").value = "";
+    await loadWasteEntries();
+  } catch (e) { errBox.textContent = apiErrorMessage(e); }
+};
 
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
