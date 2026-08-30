@@ -36,14 +36,23 @@
   <footer>سجّل دخولك بالحساب اللي عملته وقت الإعداد (ADMIN_EMAIL)</footer>
 </div>
 <script>
+  // المرحلة 8.23: كان بس الكاشير والكول سنتر بيتحوّلوا تلقائيًا لشاشتهم - أي دور تاني (سائق، موظف
+  // بحساب دخول ذاتي) كان بيشوف قايمة الشاشات كاملة (تشمل شاشات أدمن/محاسبة) من غير أي داعي، حتى لو
+  // مش هيقدر يفتحها فعليًا (كل شاشة بتتحقق من الصلاحية بنفسها) - إحراج وتشويش من غير فايدة
   const _u = JSON.parse(sessionStorage.getItem("satamoni_user") || "null");
-  if (_u && _u.role === "cashier") location.replace("satamoni-pos.html");
-  if (_u && _u.role === "callcenter") location.replace("satamoni-callcenter.html");
+  const roleRedirects = {
+    cashier: "satamoni-pos.html",
+    callcenter: "satamoni-callcenter.html",
+    driver: "satamoni-driver-app.html",
+    employee: "satamoni-employee-self.html",
+  };
+  const redirectTarget = _u && roleRedirects[_u.role];
+  if (redirectTarget) location.replace(redirectTarget);
 
   // المرحلة 8.17: البطاقات بقت مخزّنة في الداتابيز (home_tiles) بدل ما تكون ثابتة هنا - المالك يقدر
   // يغيّر اسم/ترتيب أي بطاقة من لوحة الأدمن (satamoni-admin.html) من غير ما يحتاج تعديل كود
   const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
-  fetch(`${API_BASE_URL}/api/home-tiles`)
+  if (!redirectTarget) fetch(`${API_BASE_URL}/api/home-tiles`)
     .then((r) => r.json())
     .then((tiles) => {
       document.getElementById("tilesWrap").innerHTML = tiles.map((t) => `
