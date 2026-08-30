@@ -55,15 +55,19 @@ router.get("/expected", requireAuth, canOperate, async (req, res) => {
     // مبيعات اليوم حسب طريقة الدفع - نفس فلتر "محصّلة فعليًا" (payment_status='collected') اللي محرك
     // الشيفتات بيستخدمه بالظبط (routes/shifts.js -> db/shift-engine.js) عشان طلبات دليفري لسه تحت
     // التحصيل ما تتحسبش كاش موجود في الدرج فعليًا دلوقتي
+    // المرحلة 8.16: نفس منطق db/shift-engine.js بالظبط - أوردرات طلبات مستبعدة من "كاش" العادي (كلها
+    // بترحّل على 1350 بغض النظر عن طريقة الدفع)، والجزء المحصّل كاش فعليًا بس (talabat_cash_collected)
+    // هو اللي بيدخل cash_sales، مش إجمالي الطلب. delivery_app_sales لسه رقم معلوماتي منفصل (إجمالي كل
+    // مبيعات طلبات بصرف النظر عن جزئها النقدي) زي ما كان دايمًا
     const salesRes = await pool.query(
       `SELECT
-         COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'cash'), 0) AS cash_sales,
-         COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'card_or_wallet'), 0) AS card_sales,
-         COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'credit'), 0) AS credit_sales,
-         COALESCE(SUM(o.total) FILTER (WHERE o.source = 'talabat'), 0) AS delivery_app_sales
+         COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'cash' AND o.source <> 'talabat' AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0)
+           + COALESCE(SUM(o.talabat_cash_collected) FILTER (WHERE o.source = 'talabat' AND o.status <> 'cancelled'), 0) AS cash_sales,
+         COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'card_or_wallet' AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0) AS card_sales,
+         COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'credit' AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0) AS credit_sales,
+         COALESCE(SUM(o.total) FILTER (WHERE o.source = 'talabat' AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0) AS delivery_app_sales
        FROM orders o LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
-       WHERE o.branch_id = $1 AND o.created_at::date = $2
-         AND o.status <> 'cancelled' AND o.payment_status = 'collected'`,
+       WHERE o.branch_id = $1 AND o.created_at::date = $2`,
       [branchId, date]
     );
 

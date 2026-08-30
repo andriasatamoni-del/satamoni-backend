@@ -175,6 +175,53 @@ router.post("/items/:id/variants", requireAuth, requireRole("admin"), async (req
   }
 });
 
+// المرحلة 8.16: POST /api/menu/talabat-prices/import - استيراد أسعار طلبات بالجملة على المنيو كامل
+// بدل ما المالك يعدّل كل صنف لوحده. نفس منطق db/import-talabat-prices.js (السكريبت اللي كان بيتشغّل
+// من التيرمينال مباشرة على الداتابيز) بس كـ endpoint فعلي يقدر المالك/الأدمن يستخدمه من واجهة المنيو -
+// عشان معندوش وصول مباشر لتيرمينال السيرفر على staging/production. كل صف بيتعالج لوحده (مش transaction
+// واحدة للكل) عشان الصفوف اللي متطابقتش (اسم صنف/حجم غلط) متمنعش الصفوف الصحيحة من التحديث
+router.post("/talabat-prices/import", requireAuth, requireRole("admin"), async (req, res) => {
+  const { rows } = req.body;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "لازم قايمة صفوف [اسم الصنف, اسم الحجم, السعر]" });
+  }
+  const updated = [];
+  const notFound = [];
+  try {
+    for (const row of rows) {
+      const [itemName, variantLabel, talabatPrice] = Array.isArray(row) ? row : [];
+      if (!itemName || !variantLabel || talabatPrice === undefined || talabatPrice === null || Number.isNaN(Number(talabatPrice))) {
+        notFound.push(`${itemName || "?"} (${variantLabel || "?"}) - بيانات الصف غير صحيحة`);
+        continue;
+      }
+      const before = await pool.query(
+        `SELECT v.id, v.talabat_price FROM menu_item_variants v
+         JOIN menu_items i ON i.id = v.item_id
+         WHERE i.name = $1 AND v.label = $2`,
+        [itemName, variantLabel]
+      );
+      if (before.rows.length === 0) {
+        notFound.push(`${itemName} (${variantLabel}) - مش موجود في المنيو`);
+        continue;
+      }
+      const variantId = before.rows[0].id;
+      await pool.query("UPDATE menu_item_variants SET talabat_price = $1 WHERE id = $2", [Number(talabatPrice), variantId]);
+      await logPriceChange(pool, {
+        entityType: "variant", entityId: variantId, fieldName: "talabat_price",
+        oldPrice: before.rows[0].talabat_price, newPrice: Number(talabatPrice), changedBy: req.user.id,
+      });
+      updated.push({ itemName, variantLabel, oldPrice: before.rows[0].talabat_price, newPrice: Number(talabatPrice) });
+    }
+    await logAudit(pool, {
+      userId: req.user.id, action: "TALABAT_PRICES_BULK_IMPORT", entityType: "menu_item_variant", entityId: null,
+      newValues: { updatedCount: updated.length, notFoundCount: notFound.length }, req,
+    });
+    res.json({ updatedCount: updated.length, updated, notFound });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/menu/variants/:id - تعديل حجم/سعر/سعر طلبات
 router.patch("/variants/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;

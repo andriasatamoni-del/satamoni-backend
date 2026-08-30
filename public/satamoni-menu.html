@@ -154,6 +154,21 @@
       <div class="err" id="itemErr"></div>
     </div>
 
+    <!-- المرحلة 8.16: استيراد أسعار طلبات بالجملة - بدل ما المالك يعدّل كل صنف لوحده من زرار "تعديل
+         سعر طلبات". كل سطر: اسم الصنف, اسم الحجم, السعر - نفس أسماء الأصناف/الأحجام المسجلة بالظبط -->
+    <h1>استيراد أسعار طلبات بالجملة</h1>
+    <div class="formbox">
+      <div style="font-size:11px;color:var(--faint);margin-bottom:6px">
+        كل سطر: اسم الصنف, اسم الحجم, السعر (زي ما هو مسجل في المنيو بالظبط) - مثال: بيتزا مارجريتا, وسط, 100
+      </div>
+      <textarea id="talabatImportText" rows="6" placeholder="بيتزا مارجريتا, وسط, 100&#10;بيتزا مارجريتا, حجم اكبر, 140" style="width:100%;background:var(--bg-alt);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:9px 10px;font-size:13px;font-family:inherit"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="talabatImportSubmit" type="button">استيراد الأسعار</button>
+      </div>
+      <div class="err" id="talabatImportErr"></div>
+      <div id="talabatImportResult" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
     <h1>الأصناف الحالية</h1>
     <!-- المرحلة 7R: تفعيل/تعطيل جماعي - بدل ما كل صنف يتعطّل لوحده وقت نقص مكوّن مشترك بين أصناف كتير -->
     <div id="bulkItemsBar" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
@@ -491,6 +506,37 @@ async function bulkSetActive(isActive) {
 }
 document.getElementById("bulkActivateBtn").onclick = () => bulkSetActive(true);
 document.getElementById("bulkDeactivateBtn").onclick = () => bulkSetActive(false);
+
+// المرحلة 8.16: استيراد أسعار طلبات بالجملة - كل سطر "اسم الصنف, اسم الحجم, السعر"
+document.getElementById("talabatImportSubmit").onclick = async () => {
+  const errBox = document.getElementById("talabatImportErr");
+  const resultBox = document.getElementById("talabatImportResult");
+  errBox.textContent = "";
+  resultBox.innerHTML = "";
+  const lines = document.getElementById("talabatImportText").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) { errBox.textContent = "الصق سطر واحد على الأقل"; return; }
+  const rows = lines.map((line) => {
+    const parts = line.split(",").map((p) => p.trim());
+    const price = Number(parts[2]);
+    return [parts[0], parts[1], Number.isNaN(price) ? null : price];
+  });
+  try {
+    const data = await api("/api/menu/talabat-prices/import", { method: "POST", body: JSON.stringify({ rows }) });
+    resultBox.innerHTML = `
+      <div style="color:var(--green)">✅ اتحدّث سعر طلبات لـ ${data.updatedCount} صنف</div>
+      ${data.notFound.length ? `
+        <div style="color:#F08A83;margin-top:6px">⚠️ ${data.notFound.length} سطر مش اتحدّث - راجعهم:</div>
+        <ul style="margin:4px 0;padding-inline-start:18px;color:#F08A83">
+          ${data.notFound.map((n) => `<li>${n}</li>`).join("")}
+        </ul>
+      ` : ""}
+    `;
+    document.getElementById("talabatImportText").value = "";
+    await loadItems();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
 
 // ---------------- مرفقات الصنف ----------------
 // مكوّنات وصفة الصنف (كل أحجامه) - لقائمة "استبعاد مكوّن" وقت إنشاء مرفق من نوع "بدون" (المرحلة 8.9)

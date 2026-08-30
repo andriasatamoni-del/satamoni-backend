@@ -33,9 +33,14 @@ async function computeShiftFinancials(client, { shiftId, branchId, openedAt, toT
   // كاش موجود دلوقتي - لو اتحسبت هيبقى فيه فرق كاش وهمي وقت القفل مالوش أي علاقة بغلط الكاشير الفعلي.
   // order_count بيفضل بيعدّ كل الطلبات المرتبطة بالشيفت (المحصّلة وغيرها) لأنه رقم تشغيلي (كام طلب
   // اتسجل) مش رقم تسوية كاش - مش بيدخل في معادلة الكاش المتوقع أصلًا (calcExpectedCash تحت)
+  // المرحلة 8.16: أوردرات طلبات (source='talabat') مستبعدة من فلتر "pm.kind = 'cash'" هنا عمدًا -
+  // الطلب كله دايمًا بيترحّل محاسبيًا على حساب 1350 (مستحق من طلبات) بغض النظر عن طريقة الدفع
+  // المختارة، إلا الجزء المحصّل كاش فعليًا في الفرع (talabat_cash_collected) اللي بيتضاف صراحة تحت -
+  // ده هو اللي فعلاً دخل الدرج، مش إجمالي الطلب كله
   const salesRes = await client.query(
     `SELECT
-       COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'cash' AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0) AS cash_sales,
+       COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'cash' AND o.source <> 'talabat' AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0)
+         + COALESCE(SUM(o.talabat_cash_collected) FILTER (WHERE o.source = 'talabat' AND o.status <> 'cancelled'), 0) AS cash_sales,
        COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'card_or_wallet' AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0) AS card_sales,
        COALESCE(SUM(o.total) FILTER (WHERE (pm.kind IS NULL OR pm.kind NOT IN ('cash','card_or_wallet')) AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0) AS other_sales,
        COALESCE(SUM(o.discount) FILTER (WHERE o.status <> 'cancelled'), 0) AS discounts_total,

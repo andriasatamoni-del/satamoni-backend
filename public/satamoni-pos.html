@@ -411,6 +411,16 @@
         <div id="savedAddressesList" style="display:flex;gap:6px;flex-wrap:wrap"></div>
       </div>
     </div>
+
+    <!-- المرحلة 8.16: رقم أوردر طلبات (لسهولة المراجعة بعد كده) + تقسيم الدفع (جزء نقدي محصّل في
+         الفرع + الباقي مستحق من شركة طلبات - بيحصل غالبًا لما يكون في خصم شركة طلبات محمّل عليها) -
+         ظاهرة بس لما القناة تبقى "طلبات" -->
+    <div id="talabatFields" style="display:none;padding:10px 16px;border-bottom:1px solid var(--line)">
+      <input id="talabatOrderIdInput" placeholder="رقم أوردر طلبات (لسهولة المراجعة)" style="width:100%;background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:10px;font-size:13px;margin-bottom:8px" />
+      <label style="font-size:11px;color:var(--faint);display:block;margin-bottom:4px">جزء محصّل نقدي في الفرع (اختياري - الباقي يفضل مستحق من طلبات)</label>
+      <input id="talabatCashInput" type="number" min="0" step="0.01" placeholder="0" style="width:100%;background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:10px;font-size:13px" />
+      <div id="talabatRemainderNote" style="font-size:11px;color:var(--faint);margin-top:4px"></div>
+    </div>
   </div>
 </div>
 
@@ -971,10 +981,25 @@ function renderCart() {
   document.getElementById("subtotalVal").textContent = money(subtotal);
   document.getElementById("deliveryRow").style.display = state.orderType === "delivery" ? "flex" : "none";
   document.getElementById("deliveryVal").textContent = money(deliveryFee);
-  document.getElementById("totalVal").textContent = money(Math.max(subtotal + deliveryFee - currentDiscount(), 0));
+  const total = Math.max(subtotal + deliveryFee - currentDiscount(), 0);
+  document.getElementById("totalVal").textContent = money(total);
   updateDiscountNote();
+  updateTalabatRemainderNote(total);
   updateSubmitState();
 }
+
+// المرحلة 8.16: يوضّح للكاشير لحظيًا الباقي المستحق من طلبات بعد الجزء النقدي اللي هيدخله
+function updateTalabatRemainderNote(total) {
+  const note = document.getElementById("talabatRemainderNote");
+  if (!note || state.channel !== "talabat") return;
+  const cash = Number(document.getElementById("talabatCashInput").value) || 0;
+  if (cash <= 0) { note.textContent = ""; return; }
+  const remainder = Math.max(total - cash, 0);
+  note.textContent = cash > total
+    ? "⚠️ المبلغ النقدي أكبر من إجمالي الطلب"
+    : `الباقي مستحق من طلبات: ${money(remainder)}`;
+}
+document.getElementById("talabatCashInput").addEventListener("input", () => renderCart());
 
 function currentDiscount() {
   return Number(document.getElementById("discountInput").value) || 0;
@@ -1534,9 +1559,13 @@ function updateSubmitState() {
     document.getElementById("nameInput").value.trim() &&
     document.getElementById("phoneInput").value.trim()
   );
-  const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okTable && okDelivery;
+  // المرحلة 8.16: رقم أوردر طلبات لازم يتسجل وقت الإدخال (لسهولة المراجعة بعد كده) - مفيش أوردر
+  // طلبات من غيره
+  const okTalabatOrderId = state.channel !== "talabat" || document.getElementById("talabatOrderIdInput").value.trim();
+  const ok = rows.length > 0 && state.selectedPaymentId && okBranch && okTable && okDelivery && okTalabatOrderId;
   document.getElementById("submitBtn").disabled = !ok;
 }
+document.getElementById("talabatOrderIdInput").addEventListener("input", updateSubmitState);
 
 document.querySelectorAll(".channel-btn").forEach(btn => {
   btn.onclick = () => {
@@ -1550,6 +1579,10 @@ document.querySelectorAll(".channel-btn").forEach(btn => {
     document.querySelectorAll(".channel-btn").forEach(b => b.classList.toggle("active", b === btn));
     document.getElementById("orderTypeRow").style.display = state.channel === "talabat" ? "none" : "flex";
     document.getElementById("extraFields").style.display = state.channel === "talabat" ? "none" : "flex";
+    document.getElementById("talabatFields").style.display = state.channel === "talabat" ? "block" : "none";
+    document.getElementById("talabatOrderIdInput").value = "";
+    document.getElementById("talabatCashInput").value = "";
+    document.getElementById("talabatRemainderNote").textContent = "";
     state.activeCategory = [...new Set(menuForChannel().map(m => m.category))][0];
     renderTabs();
     renderGrid();
@@ -1750,6 +1783,10 @@ document.getElementById("submitBtn").onclick = async () => {
           }
       ),
       idempotencyKey: getOrderAttemptKey(),
+      // المرحلة 8.16: رقم أوردر طلبات (لسهولة المراجعة) + الجزء النقدي المحصّل في الفرع (الباقي يفضل
+      // مستحق من طلبات في حساب 1350)
+      talabatOrderId: isTalabat ? document.getElementById("talabatOrderIdInput").value.trim() : null,
+      talabatCashCollected: isTalabat ? (Number(document.getElementById("talabatCashInput").value) || 0) : 0,
     };
     const res = await fetch(`${API_BASE_URL}/api/orders`, {
       method: "POST",
@@ -1794,6 +1831,9 @@ document.getElementById("newOrderBtn").onclick = () => {
   document.getElementById("markInput").value = "";
   document.getElementById("customerStatus").textContent = "";
   document.getElementById("discountInput").value = "0";
+  document.getElementById("talabatOrderIdInput").value = "";
+  document.getElementById("talabatCashInput").value = "";
+  document.getElementById("talabatRemainderNote").textContent = "";
   document.getElementById("confirmOverlay").classList.remove("show");
   document.getElementById("savedAddressesRow").style.display = "none";
   document.getElementById("savedAddressesList").innerHTML = "";
@@ -1929,6 +1969,7 @@ function renderActiveOrders(orders) {
         </span>
       </div>
       <div class="meta">${o.customer_name || "بدون اسم"} — ${o.customer_phone || "—"}${o.address_details ? " — " + o.address_details : ""}</div>
+      ${o.talabat_order_id ? `<div class="meta">🛵 رقم أوردر طلبات: ${o.talabat_order_id}${Number(o.talabat_cash_collected) > 0 ? ` — نقدي: ${money(o.talabat_cash_collected)}` : ""}</div>` : ""}
       ${o.driver_name ? `<div class="meta">🛵 الطيار: ${o.driver_name}</div>` : ""}
       ${o.voided ? `<div class="meta" style="color:#F08A83">🗑️ استرجاع: ${o.void_reason || "—"}</div>` : ""}
       <div class="meta">الإجمالي: ${money(o.total)} — ${new Date(o.created_at).toLocaleString("ar-EG")}</div>

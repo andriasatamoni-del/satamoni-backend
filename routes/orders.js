@@ -146,7 +146,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       deliveryAreaId, addressDetails, customerName, customerPhone, customerPhone2,
       distinguishingMark, paymentMethodId, items: rawItems, deliveryFee = 0, discount = 0,
       discountApprovedBy, idempotencyKey, inventoryOverrideApprovedBy,
-      loyaltyPointsRedeemed = 0,
+      loyaltyPointsRedeemed = 0, talabatOrderId, talabatCashCollected = 0,
     } = req.body;
 
     if ((source === "pos" || source === "talabat") && !assertOwnBranch(req.user, branchId)) {
@@ -285,6 +285,15 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     const total = subtotal + deliveryFee - discount - loyaltyRedeemValue;
     const createdBy = source === "pos" || source === "callcenter" || source === "talabat" ? req.user.id : null;
 
+    // المرحلة 8.16: جزء نقدي محصّل في الفرع من أوردر طلبات - مفيش معنى له غير لأوردرات طلبات نفسها
+    // (أي مصدر تاني بيتجاهل القيمة دي تمامًا، الطلب كله يفضل زي ما كان بالظبط)، ولازم يكون رقم بين
+    // صفر وإجمالي الطلب (مينفعش يبقى أكبر من قيمة الطلب نفسها)
+    const talabatCashCollectedFinal = source === "talabat" ? Number(talabatCashCollected) || 0 : 0;
+    if (talabatCashCollectedFinal < 0 || talabatCashCollectedFinal > total) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "المبلغ النقدي المحصّل من طلبات لازم يكون بين صفر وإجمالي الطلب" });
+    }
+
     // المرحلة 7H: ضريبة القيمة المضافة - أسعار المنيو شاملة الضريبة بالفعل (قرار صريح)، يعني total مبيتغيرش
     // خالص، والضريبة بتتحسب باستخراجها عكسيًا من total نفسه (مش إضافة فوقه). vat_rate بيتجمّد وقت الإنشاء
     // (نفس فلسفة loyalty_points_earned) عشان لو الفرع غيّر النسبة بعدين الطلبات القديمة تفضل صحيحة تاريخيًا
@@ -352,14 +361,14 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
          address_details, customer_name, customer_phone, payment_method_id,
          created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status,
          loyalty_points_earned, loyalty_points_redeemed, loyalty_redeem_value, idempotency_key, shift_id,
-         dispatch_status, vat_amount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+         dispatch_status, vat_amount, talabat_order_id, talabat_cash_collected)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, customerName, customerPhone, paymentMethodId,
        createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus,
        loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, idempotencyKey || null, shiftId,
-       initialDispatchStatus, vatAmount]
+       initialDispatchStatus, vatAmount, source === "talabat" ? (talabatOrderId || null) : null, talabatCashCollectedFinal]
     );
     const orderId = orderResult.rows[0].id;
 
@@ -598,18 +607,34 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       const costTotal = Number(costRes.rows[0].total_cost);
       const costIncomplete = costRes.rows[0].incomplete;
 
-      let debitAccount;
+      // المرحلة 8.16: أوردر طلبات ممكن يتقسّم بين جزء نقدي محصّل في الفرع (talabatCashCollectedFinal)
+      // والباقي مستحق من شركة طلبات (حساب 1350) - بدل سطر مدين واحد بكل الإجمالي زي ما كان دايمًا.
+      // الافتراضي (talabatCashCollectedFinal=0) لسه بيطابق السلوك القديم بالظبط: سطر واحد بكل الإجمالي
+      // على 1350، فمفيش أي تأثير على أي أوردر طلبات ما فيهوش تقسيم
+      const revenueLines = [];
       if (source === "talabat") {
-        debitAccount = await getAccountByCode(client, "1350");
-      } else if (paymentKind === "cash" && initialPaymentStatus === "collected") {
-        debitAccount = await getOrCreateBranchCashAccount(client, branchId);
-      } else if (initialPaymentStatus === "pending_collection") {
-        debitAccount = await getAccountByCode(client, "1300");
+        const receivableAccount = await getAccountByCode(client, "1350");
+        if (talabatCashCollectedFinal > 0) {
+          const cashAccount = await getOrCreateBranchCashAccount(client, branchId);
+          revenueLines.push({ accountId: cashAccount.id, debit: talabatCashCollectedFinal, description: "جزء نقدي محصّل من أوردر طلبات" });
+          const remainder = total - talabatCashCollectedFinal;
+          if (remainder > 0) {
+            revenueLines.push({ accountId: receivableAccount.id, debit: remainder, description: "الباقي مستحق من طلبات" });
+          }
+        } else {
+          revenueLines.push({ accountId: receivableAccount.id, debit: total, description: "قيمة الطلب" });
+        }
       } else {
-        debitAccount = await getAccountByCode(client, "1200");
+        let debitAccount;
+        if (paymentKind === "cash" && initialPaymentStatus === "collected") {
+          debitAccount = await getOrCreateBranchCashAccount(client, branchId);
+        } else if (initialPaymentStatus === "pending_collection") {
+          debitAccount = await getAccountByCode(client, "1300");
+        } else {
+          debitAccount = await getAccountByCode(client, "1200");
+        }
+        revenueLines.push({ accountId: debitAccount.id, debit: total, description: "قيمة الطلب" });
       }
-
-      const revenueLines = [{ accountId: debitAccount.id, debit: total, description: "قيمة الطلب" }];
       if (subtotal > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4100")).id, credit: subtotal });
       if (deliveryFee > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4200")).id, credit: deliveryFee });
       if (discount > 0) revenueLines.push({ accountId: (await getAccountByCode(client, "4900")).id, debit: discount });
