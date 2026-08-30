@@ -27,6 +27,7 @@
   .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
   .panel { display: none; }
   .panel.active { display: block; }
+  #printingFrameWrap iframe { width: 100%; height: 80vh; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
 
   .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
   .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -117,6 +118,7 @@
     <div class="tabbtn" data-tab="areas">مناطق التوصيل</div>
     <div class="tabbtn" data-tab="payments">طرق الدفع</div>
     <div class="tabbtn" data-tab="combos">العروض</div>
+    <div class="tabbtn" data-tab="printing">إعدادات الطباعة</div>
   </div>
 
   <!-- المنيو -->
@@ -232,6 +234,18 @@
     <h1>العروض الحالية</h1>
     <div id="combosList"></div>
   </div>
+
+  <!-- المرحلة 8.20: نفس شاشة satamoni-printing.html الأصلية بالظبط جوة iframe (من غير أي تعديل في
+       كودها) - عشان نتجنب تعارض متغيرات/فانكشنز مشتركة الاسم بين الشاشتين (كل واحدة كانت مكتوبة
+       كتطبيق مستقل بنفس أسماء زي boot/api/auth). بيتحمّل أول مرة يتفتح التاب بس. ملحوظة: الشاشة
+       الأصلية بيستخدمها أدمن ومدير الفرع، لكن شاشة المنيو دي مقفولة على الأدمن بس - يعني مدير الفرع
+       لسه يقدر يوصل لإعدادات الطباعة من رابط satamoni-printing.html المباشر (لسه شغال بكامل صلاحياته
+       زي ما هو)، بس مش هيلاقي بطاقة منفصلة ليها في الصفحة الرئيسية بعد النهاردة. -->
+  <div class="panel" id="panel-printing">
+    <div id="printingFrameWrap" style="min-height:80vh">
+      <div style="color:var(--faint);font-size:13px">جاري التحميل...</div>
+    </div>
+  </div>
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية أدمن على الحساب ده.</div>
@@ -296,8 +310,20 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    if (btn.dataset.tab === "printing") loadPrintingTab();
   };
 });
+
+// المرحلة 8.20: satamoni-printing.html بتتحمّل جوة iframe أول مرة تاب "إعدادات الطباعة" يتفتح بس
+function loadPrintingTab() {
+  const wrap = document.getElementById("printingFrameWrap");
+  if (wrap.querySelector("iframe")) return;
+  const iframe = document.createElement("iframe");
+  iframe.src = "satamoni-printing.html";
+  iframe.title = "إعدادات الطباعة";
+  wrap.innerHTML = "";
+  wrap.appendChild(iframe);
+}
 
 function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
 
