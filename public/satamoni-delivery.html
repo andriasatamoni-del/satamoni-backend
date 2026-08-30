@@ -116,6 +116,8 @@
   </div>
 </div>
 
+<div id="accessDenied" style="display:none;padding:60px 20px;text-align:center;color:var(--faint)">الحساب ده مالوش صلاحية على شاشة الدليفري.</div>
+
 <div id="main" style="display:none">
   <div id="filters">
     <div class="tab active" data-status="">الكل</div>
@@ -189,6 +191,11 @@ if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-cal
 
 const state = { status: "", branchId: "", paymentStatus: "", orderType: "", branches: [], paymentMethods: [] };
 
+// المرحلة 8.22: القايمة دي كانت متفحوصة وقت تسجيل الدخول بس (لو حد سجل دخول من غير صلاحية من الفورم
+// ده بالظبط) - لكن مش وقت استعادة جلسة موجودة فعلًا (زي سائق مسجل دخول من صفحة تانية وفاتح الرابط
+// ده مباشرة) - كانت شاشة الدليفري بالكامل (بيانات عملاء، تحصيل نقدي، استرجاع) بتفتح له من غير فحص.
+const allowedRoles = ["admin", "callcenter", "branch_manager", "cashier", "accountant"];
+
 function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
 function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
 function setSession(token, user) {
@@ -231,8 +238,7 @@ document.getElementById("loginBtn").onclick = async () => {
   errBox.textContent = "";
   try {
     const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
-    const allowed = ["admin", "callcenter", "branch_manager", "cashier", "accountant"];
-    if (!allowed.includes(data.user.role)) {
+    if (!allowedRoles.includes(data.user.role)) {
       errBox.textContent = "الحساب ده مالوش صلاحية على شاشة الدليفري";
       return;
     }
@@ -642,7 +648,8 @@ async function toggleDetail(card, order) {
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
   hideLogin();
-  boot();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
 } else {
   showLogin();
 }

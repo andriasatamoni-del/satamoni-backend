@@ -313,6 +313,8 @@
   </div>
 </div>
 
+<div id="accessDenied" style="display:none;padding:60px 20px;text-align:center;color:var(--faint)">مفيش صلاحية على الحساب ده لدخول شاشة الكاشير.</div>
+
 <div id="ordersOverlay">
   <div id="ordersTopbar">
     <span class="brand2">🛵 الطلبات الجارية</span>
@@ -353,7 +355,7 @@
 <!-- المرحلة 8.11: نفس تقسيم شاشة الكول سنتر بالظبط - السلة يمين (بس أصناف الطلب)، المنيو في النص
      بمساحة كبيرة، وتفاصيل الطلب (القناة/نوع الطلب/بيانات العميل) في عمود مستقل شمال زي #customerPane
      في الكول سنتر - بدل ما كانت كلها مزحومة جوه عمود السلة الواحد -->
-<div id="main">
+<div id="main" style="display:none">
   <div id="cartPane">
     <div id="cartHeader">
       <span>الطلب الحالي</span>
@@ -545,6 +547,12 @@ const auth = {
 };
 if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
 
+// المرحلة 8.22: كان أي حساب متسجل دخول (زي سائق) يقدر يفتح شاشة الكاشير ويشوف كل حاجة فيها (المنيو،
+// الأسعار، الطلبات الجارية) من غير أي فحص صلاحية - العمليات الفعلية (إرسال أوردر) كانت مرفوضة من
+// السيرفر أصلًا (requireRole في routes/orders.js)، لكن الشاشة نفسها كانت بتفتح وتعرض بيانات حساسة.
+// الأدوار المسموحة هنا بالظبط زي اللي السيرفر بيقبلها لـsource=pos/talabat في routes/orders.js
+const allowedRoles = ["admin", "branch_manager", "cashier"];
+
 const money = (n) => `${n} ج.م`;
 
 function showLogin() {
@@ -591,6 +599,10 @@ document.getElementById("loginBtn").onclick = async () => {
     setSession(data.token, data.user);
     hideLogin();
     document.getElementById("loginPassword").value = "";
+    if (!allowedRoles.includes(data.user.role)) {
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
     loadConfig();
   } catch (e) {
     errBox.textContent = e.message;
@@ -606,6 +618,8 @@ document.getElementById("logoutBtn").onclick = () => {
 };
 
 async function loadConfig() {
+  document.getElementById("main").style.display = "flex";
+  document.getElementById("accessDenied").style.display = "none";
   try {
     const res = await fetch(`${API_BASE_URL}/api/config/full`);
     if (!res.ok) throw new Error("bad response");
@@ -1843,7 +1857,8 @@ document.getElementById("newOrderBtn").onclick = () => {
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
   hideLogin();
-  loadConfig();
+  if (allowedRoles.includes(auth.user.role)) loadConfig();
+  else document.getElementById("accessDenied").style.display = "block";
 } else {
   showLogin();
 }
