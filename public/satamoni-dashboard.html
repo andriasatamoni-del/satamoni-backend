@@ -39,6 +39,11 @@
   .panel.wide { grid-column: 1 / -1; }
   .panel h3 { margin: 0 0 12px; font-size: 14px; color: var(--gold-bright); }
   .panel .empty { color: var(--faint); font-size: 12px; text-align: center; padding: 20px 0; }
+  /* المرحلة 8.15: العمليات الحية - أدمن/المالك بس، مقفولة (لا Presence جديد) على الشيفتات المفتوحة دلوقتي بس */
+  #liveOpsWrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #liveOpsWrap th, #liveOpsWrap td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  #liveOpsWrap th { color: var(--faint); font-weight: 600; }
+  #liveOpsNote { font-size: 11px; color: var(--faint); margin-bottom: 10px; }
 
   /* Bar chart (horizontal) */
   .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
@@ -105,6 +110,15 @@
   <div id="loadingState" style="display:none">...جاري التحميل</div>
 
   <div id="kpiRow"></div>
+
+  <!-- المرحلة 8.15: العمليات الحية - أدمن/المالك بس (مش مدير فرع/محاسب)، شيفتات مفتوحة دلوقتي عبر كل
+       الفروع. "موظفين Online" اتشال عمدًا - النظام مفيش فيه أي تتبع حضور/Presence حقيقي (last_seen/
+       last_login/heartbeat) لحد دلوقتي، فمفيش داعي نبني حاجة جديدة أو نعرض رقم وهمي بدل ما نسأل الأول -->
+  <div class="panel wide" id="liveOpsPanel" style="display:none">
+    <h3>⚡ العمليات الحية (Live Operations)</h3>
+    <div id="liveOpsNote">الشيفتات المفتوحة الآن عبر كل الفروع. "الموظفين Online" مش متاحة - النظام مفيش فيه نظام تتبع حضور لحظي حاليًا.</div>
+    <div id="liveOpsWrap"></div>
+  </div>
 
   <div id="grid">
     <div class="panel wide">
@@ -301,9 +315,40 @@ async function boot() {
         `<option value="">كل الفروع</option>` + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
     } catch (e) { /* تجاهل - الفلتر هيفضل "كل الفروع" بس */ }
   }
+  loadLiveOps();
   await loadDashboard();
 }
-document.getElementById("refreshBtn").onclick = loadDashboard;
+
+// المرحلة 8.15: أدمن/المالك بس - الشيفتات المفتوحة دلوقتي عبر كل الفروع (GET /api/shifts/open-all،
+// مقصورة على الأدمن في الباك إند برضه). ما بتتأثرش بفلاتر الفترة/الفرع بتاعة باقي الداش بورد عمدًا -
+// دي حالة لحظية "دلوقتي" مش تقرير عن فترة زمنية
+async function loadLiveOps() {
+  if (auth.user.role !== "admin") return;
+  document.getElementById("liveOpsPanel").style.display = "block";
+  const wrap = document.getElementById("liveOpsWrap");
+  try {
+    const shifts = await api("/api/shifts/open-all");
+    if (shifts.length === 0) { wrap.innerHTML = `<div class="empty">مفيش شيفتات مفتوحة دلوقتي</div>`; return; }
+    const statusLabels = { ACTIVE: "مفتوح", PENDING_REVIEW: "في انتظار المراجعة" };
+    wrap.innerHTML = `
+      <table>
+        <thead><tr><th>الفرع</th><th>الموظف</th><th>وقت الفتح</th><th>الحالة</th></tr></thead>
+        <tbody>
+          ${shifts.map(s => `
+            <tr>
+              <td>${s.branch_name}</td>
+              <td>${s.cashier_name}</td>
+              <td>${new Date(s.opened_at).toLocaleString("ar-EG")}</td>
+              <td>${statusLabels[s.status] || s.status}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty" style="color:#F08A83">${e.message}</div>`;
+  }
+}
+document.getElementById("refreshBtn").onclick = () => { loadDashboard(); loadLiveOps(); };
 document.getElementById("dashClearRange").onclick = () => {
   document.getElementById("dashFrom").value = "";
   document.getElementById("dashTo").value = "";

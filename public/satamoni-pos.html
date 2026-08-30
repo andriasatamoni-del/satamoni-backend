@@ -161,6 +161,17 @@
   #ordersTopbar .brand2 { font-weight: 800; color: var(--gold-bright); font-size: 15px; margin-left: auto; order: 99; }
   #ordersCloseBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
   .otab { padding: 7px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 12px; }
+  /* المرحلة 8.15: بحث عن أوردر قديم - افتراضيًا الشاشة بتعرض طلبات الشيفت الحالي بس، والفورم ده
+     بيظهر لما الكاشير يدوس على زرار البحث، ومبيدورش على القديم إلا لما يدوس "بحث" جوه الفورم نفسه */
+  #ordersSearchBtn { background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-weight: 700; }
+  #ordersSearchForm { display: none; padding: 10px 16px; background: var(--bg-alt); border-bottom: 1px solid var(--line); gap: 8px; flex-wrap: wrap; align-items: center; }
+  #ordersSearchForm.show { display: flex; }
+  #ordersSearchForm input { background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 7px 10px; font-size: 12px; }
+  #ordersSearchForm button { border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 12px; font-weight: 700; }
+  #ordersSearchApplyBtn { border: none; background: var(--gold); color: #1a1a1a; }
+  #ordersSearchBackBtn { border: 1px solid var(--line); background: transparent; color: var(--faint); }
+  #ordersModeBanner { padding: 8px 16px; font-size: 12px; color: var(--gold-bright); background: rgba(203,161,53,.08); display: none; }
+  #ordersModeBanner.show { display: block; }
   /* المرحلة 7M: شرائح دفتر عناوين العميل */
   .addr-chip { padding: 6px 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .addr-chip.active { background: var(--gold); border-color: var(--gold); color: var(--bg); }
@@ -311,8 +322,22 @@
     <div class="otab" data-ostatus="out_for_delivery">في الطريق</div>
     <div class="otab" data-ostatus="completed">مكتملة</div>
     <div class="otab" data-ostatus="cancelled">ملغاة</div>
+    <button id="ordersSearchBtn">🔍 بحث عن أوردر قديم</button>
     <button id="ordersRefreshBtn">تحديث</button>
   </div>
+  <!-- المرحلة 8.15: مقفولة افتراضيًا على الشيفت الحالي - الفورم ده بيفتح بحث خارج نطاق الشيفت/اليوم
+       الحالي، ومبيحملش أي حاجة إلا لما يتدوس "بحث" -->
+  <div id="ordersSearchForm">
+    <label style="font-size:12px;color:var(--faint)">تاريخ</label>
+    <input id="ordersSearchDate" type="date" />
+    <label style="font-size:12px;color:var(--faint)">رقم الطلب</label>
+    <input id="ordersSearchOrderId" type="number" placeholder="مثال: 1042" style="width:100px" />
+    <label style="font-size:12px;color:var(--faint)">رقم الهاتف</label>
+    <input id="ordersSearchPhone" type="text" placeholder="رقم تليفون العميل" style="width:150px" />
+    <button id="ordersSearchApplyBtn">بحث</button>
+    <button id="ordersSearchBackBtn">↩️ رجوع لطلبات الشيفت الحالي</button>
+  </div>
+  <div id="ordersModeBanner">🔍 عرض نتائج بحث عن طلبات قديمة - مش الشيفت الحالي</div>
   <!-- المرحلة 7L: فصل تيك أواي عن دليفري (وباقي الأنواع) في شاشة متابعة الطلبات -->
   <div id="ordersTypeTabs">
     <div class="otab active" data-otype="">كل الأنواع</div>
@@ -1794,7 +1819,10 @@ async function ordersApi(path, opts = {}) {
   return data;
 }
 
-const ordersState = { status: "", orderType: "" };
+// المرحلة 8.15: "الطلبات الجارية" افتراضيًا بتعرض طلبات الشيفت الحالي بس (أو طلبات النهاردة لو مفيش
+// شيفت مفتوح) - مش كل تاريخ الفرع زي الأول. mode="search" بيتفعّل بس لما الكاشير يدوس "بحث" جوه فورم
+// البحث عن أوردر قديم (تاريخ/رقم طلب/رقم تليفون)، ومبيتفعلش تلقائي أبدًا
+const ordersState = { status: "", orderType: "", mode: "current", searchDate: "", searchOrderId: "", searchPhone: "" };
 const DELAY_THRESHOLD_MINUTES = 45;
 const orderStatusLabels = { preparing: "تحت التحضير", out_for_delivery: "في الطريق", completed: "مكتملة", cancelled: "ملغاة" };
 const orderPaymentLabels = { collected: "محصّل", pending_collection: "تحت التحصيل" };
@@ -1802,10 +1830,35 @@ const orderTypeLabels2 = { delivery: "دليفري", takeaway: "تيك أواي"
 
 document.getElementById("ordersOpenBtn").onclick = () => {
   document.getElementById("ordersOverlay").classList.add("show");
+  // كل مرة الشاشة تتفتح ترجع لوضع "الشيفت الحالي" الافتراضي، حتى لو الكاشير كان سايبها في وضع بحث قديم
+  ordersState.mode = "current";
+  document.getElementById("ordersSearchForm").classList.remove("show");
+  document.getElementById("ordersModeBanner").classList.remove("show");
   loadActiveOrders();
 };
 document.getElementById("ordersCloseBtn").onclick = () => {
   document.getElementById("ordersOverlay").classList.remove("show");
+};
+document.getElementById("ordersSearchBtn").onclick = () => {
+  document.getElementById("ordersSearchForm").classList.toggle("show");
+};
+document.getElementById("ordersSearchApplyBtn").onclick = () => {
+  ordersState.mode = "search";
+  ordersState.searchDate = document.getElementById("ordersSearchDate").value || "";
+  ordersState.searchOrderId = document.getElementById("ordersSearchOrderId").value.trim();
+  ordersState.searchPhone = document.getElementById("ordersSearchPhone").value.trim();
+  document.getElementById("ordersModeBanner").classList.add("show");
+  loadActiveOrders();
+};
+document.getElementById("ordersSearchBackBtn").onclick = () => {
+  ordersState.mode = "current";
+  ordersState.searchDate = ""; ordersState.searchOrderId = ""; ordersState.searchPhone = "";
+  document.getElementById("ordersSearchDate").value = "";
+  document.getElementById("ordersSearchOrderId").value = "";
+  document.getElementById("ordersSearchPhone").value = "";
+  document.getElementById("ordersSearchForm").classList.remove("show");
+  document.getElementById("ordersModeBanner").classList.remove("show");
+  loadActiveOrders();
 };
 // المرحلة 7L: صفين تبويبات منفصلين (حالة/نوع) - كل واحد بيأثر على نفسه بس، مش بيلغي اختيار التاني
 document.querySelectorAll("#ordersTopbar .otab[data-ostatus]").forEach(tab => {
@@ -1834,6 +1887,16 @@ async function loadActiveOrders() {
     if (ordersState.status) qs.set("status", ordersState.status);
     if (ordersState.orderType) qs.set("orderType", ordersState.orderType);
     if (state.selectedBranchId) qs.set("branchId", state.selectedBranchId);
+    if (ordersState.mode === "search") {
+      // بحث عن أوردر قديم - خارج نطاق الشيفت/اليوم الحالي، بس لسه مقفول على فرع الكاشير سيرفر-سايد
+      if (ordersState.searchDate) qs.set("date", ordersState.searchDate);
+      if (ordersState.searchOrderId) qs.set("orderId", ordersState.searchOrderId);
+      if (ordersState.searchPhone) qs.set("phone", ordersState.searchPhone);
+    } else if (state.shift) {
+      qs.set("shiftId", state.shift.id);
+    } else {
+      qs.set("date", new Date().toISOString().slice(0, 10));
+    }
     const orders = await ordersApi(`/api/orders?${qs.toString()}`);
     renderActiveOrders(orders);
   } catch (e) {

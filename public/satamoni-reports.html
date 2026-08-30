@@ -761,7 +761,9 @@ document.getElementById("catalogSort").onchange = () => { dirty.catalog = true; 
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
-  document.getElementById("fromDate").value = monthStartStr();
+  // المرحلة 8.15: افتراضي "النهاردة بس" بدل أول الشهر - النهاردة هو التشغيلي المهم لحظيًا، وأي حد
+  // عايز فترة أوسع (زي أول الشهر) يعدّل فلتر التاريخ الموجود يدوي زي ما كان دايمًا
+  document.getElementById("fromDate").value = todayStr();
   document.getElementById("toDate").value = todayStr();
   try {
     const branches = await api("/api/branches");

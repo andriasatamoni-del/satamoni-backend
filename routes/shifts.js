@@ -124,6 +124,27 @@ router.get("/", requireAuth, requirePermission("shifts.view_branch"), async (req
   }
 });
 
+// GET /api/shifts/open-all - كل الشيفتات المفتوحة (ACTIVE) دلوقتي عبر كل الفروع مع بعض - أدمن/المالك
+// بس (requireRole مباشرة زي غيرها من نقاط النهاية القاصرة على الأدمن في المشروع، مش permission string
+// جديد - شيفت مفتوح لموظف في أي فرع معلومة حساسة عبر كل الفروع، فمقصورة على الأدمن عمدًا وليست
+// shifts.view_branch العادية اللي مقصورة على فرع واحد بس أصلًا). لشاشة "Live Operations" في الداش بورد
+router.get("/open-all", requireAuth, requireRole("admin"), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT ps.id, ps.branch_id, b.name AS branch_name, ps.user_id, u.name AS cashier_name,
+              ps.status, ps.opened_at, ps.opening_cash
+       FROM pos_shifts ps
+       JOIN branches b ON b.id = ps.branch_id
+       JOIN users u ON u.id = ps.user_id
+       WHERE ps.status = 'ACTIVE'
+       ORDER BY ps.opened_at ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/shifts/:id - تفاصيل شيفت (صاحبه، أو مدير فرع/محاسب/أدمن بصلاحية shifts.view_branch لنفس الفرع)
 router.get("/:id", requireAuth, async (req, res) => {
   try {

@@ -682,14 +682,20 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
 // "الطلبات الجارية/الحديثة" التشغيلية، من غير ما يغيّر شكل الاستجابة (لسه array عادي - توافق للخلف)
 const ORDERS_LIST_ROW_LIMIT = 500;
 
-// GET /api/orders?branchId=&date=&status=&orderType= - عرض طلبات فرع (موظفين مسجلين دخول بس)
-// status/orderType بيتفلتروا أوردرات الدليفري في شاشة متابعة دورة الحياة (تحت التحضير/في الطريق/تحصيل)
+// GET /api/orders?branchId=&date=&status=&orderType=&shiftId=&orderId=&phone= - عرض طلبات فرع
+// (موظفين مسجلين دخول بس). status/orderType بيتفلتروا أوردرات الدليفري في شاشة متابعة دورة الحياة
+// (تحت التحضير/في الطريق/تحصيل)
+//
+// المرحلة 8.15: shiftId/orderId/phone اتضافوا عشان شاشة "الطلبات الجارية" في الكاشير تقدر تعرض
+// طلبات الشيفت الحالي بس افتراضيًا (shiftId، بدل كل تاريخ الفرع)، ومع زرار "بحث عن أوردر قديم" يقدر
+// يدوّر برقم الطلب أو رقم تليفون العميل - كلهم اختياريين وإضافيين على الفلاتر الموجودة (AND)، مفيش
+// تغيير في السلوك الافتراضي لأي حد تاني بيستخدم الـendpoint من غير ما يبعتهم
 router.get(
   "/",
   requireAuth,
   requireRole("cashier", "branch_manager", "accountant", "admin", "callcenter"),
   async (req, res) => {
-    let { branchId, date, status, orderType, paymentStatus } = req.query;
+    let { branchId, date, status, orderType, paymentStatus, shiftId, orderId, phone } = req.query;
 
     if (req.user.role === "cashier" || req.user.role === "branch_manager") {
       if (branchId && !assertOwnBranch(req.user, branchId)) {
@@ -706,9 +712,15 @@ router.get(
            AND ($3::text IS NULL OR status = $3)
            AND ($4::text IS NULL OR order_type = $4)
            AND ($5::text IS NULL OR payment_status = $5)
+           AND ($6::int IS NULL OR shift_id = $6)
+           AND ($7::int IS NULL OR id = $7)
+           AND ($8::text IS NULL OR customer_phone ILIKE '%' || $8 || '%')
          ORDER BY created_at DESC
-         LIMIT $6`,
-        [branchId || null, date || null, status || null, orderType || null, paymentStatus || null, ORDERS_LIST_ROW_LIMIT]
+         LIMIT $9`,
+        [
+          branchId || null, date || null, status || null, orderType || null, paymentStatus || null,
+          shiftId || null, orderId || null, phone || null, ORDERS_LIST_ROW_LIMIT,
+        ]
       );
       res.json(result.rows);
     } catch (err) {
