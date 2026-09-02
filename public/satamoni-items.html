@@ -100,6 +100,51 @@
   .variantbox:last-child { margin-bottom: 0; }
   .variantbox h4 { margin: 0 0 10px; font-size: 13px; color: var(--gold-bright); }
 
+  /* ---------------- تعديل/إضافة (أدمن بس) ---------------- */
+  .editbtn {
+    background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 6px;
+    padding: 7px 14px; cursor: pointer; font-size: 12px; font-weight: 700;
+  }
+  #addItemBtn {
+    background: var(--red); color: #fff; border: none; border-radius: 8px; padding: 10px 16px;
+    cursor: pointer; font-size: 13px; font-weight: 700; margin-bottom: 14px; width: 100%;
+  }
+  #modalOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: flex-start;
+    justify-content: center; z-index: 70; overflow-y: auto; padding: 40px 16px;
+  }
+  #modalOverlay.open { display: flex; }
+  #modalBox { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; width: 100%; max-width: 560px; }
+  #modalBox h2 { margin: 0 0 16px; font-size: 16px; color: var(--gold-bright); }
+  .mrow { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .mrow label { display: block; font-size: 11px; color: var(--faint); margin-bottom: 4px; }
+  .mfield { flex: 1; min-width: 140px; }
+  .mfield input, .mfield select {
+    width: 100%; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 6px; padding: 9px 10px; font-size: 13px;
+  }
+  .mtypepicker { display: flex; gap: 8px; margin-bottom: 14px; }
+  .mtypepicker button {
+    flex: 1; padding: 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-alt);
+    color: var(--faint); cursor: pointer; font-size: 12px; font-weight: 700;
+  }
+  .mtypepicker button.active { background: var(--red); color: #fff; border-color: var(--red); }
+  #modalActions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  #modalActions button { padding: 9px 18px; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 700; }
+  #modalCancelBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); }
+  #modalSaveBtn { background: var(--red); color: #fff; }
+  #modalSaveBtn[disabled] { opacity: .6; cursor: default; }
+  #modalErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 14px; }
+
+  .ingredientrow { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .ingredientrow select { flex: 2; }
+  .ingredientrow input { flex: 1; }
+  .ingredientrow button { flex: 0 0 auto; background: transparent; border: 1px solid var(--line); color: var(--err); border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+  #addIngredientRowBtn {
+    background: transparent; border: 1px dashed var(--line); color: var(--faint); border-radius: 6px;
+    padding: 8px 12px; cursor: pointer; font-size: 12px; width: 100%; margin-top: 4px;
+  }
+
   #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
   #loginOverlay.hidden { display: none; }
   #loginBox { width: 320px; text-align: center; }
@@ -146,6 +191,7 @@
 
   <!-- شاشة القائمة -->
   <div id="listView">
+    <button id="addItemBtn" style="display:none">+ إضافة صنف جديد</button>
     <div id="searchBox">
       <input id="itemSearchInput" type="text" placeholder="ابحث باسم الصنف..." autocomplete="off" />
     </div>
@@ -168,6 +214,18 @@
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية على شاشة الأصناف دي.</div>
+
+<div id="modalOverlay">
+  <div id="modalBox">
+    <h2 id="modalTitle"></h2>
+    <div id="modalBody"></div>
+    <div id="modalErr"></div>
+    <div id="modalActions">
+      <button id="modalCancelBtn">إلغاء</button>
+      <button id="modalSaveBtn">حفظ</button>
+    </div>
+  </div>
+</div>
 
 <script src="/js/print-reports.js"></script>
 <script>
@@ -237,6 +295,9 @@ function pct(n) { return n == null ? "—" : `${Number(n).toFixed(1)}%`; }
 
 const CATEGORY_LABELS = { raw: "مواد خام", manufactured: "مواد مصنعة", menu: "صنف منيو" };
 const STOCK_STATUS_LABELS = { NORMAL: "طبيعي", NEEDS_REORDER: "يحتاج طلب", OUT: "نفد" };
+// التعديل/الإضافة أدمن بس (نفس صلاحية كل الـendpoints اللي بيستخدمها: PATCH/POST items، الوصفات،
+// شاشة المنيو) - بيتحدد فعليًا في boot() بعد ما نعرف دور المستخدم المسجّل دخوله
+let canEdit = false;
 
 // ---------------- تحميل القائمة ----------------
 let currentCategory = "all";
@@ -348,10 +409,11 @@ async function openItemDetail(id, category) {
   }
 }
 
-function detailHeaderHtml(name, category, printFn) {
+function detailHeaderHtml(name, category) {
   return `
     <h1>${esc(name)}</h1>
     <span class="typebadge big ${category}">${CATEGORY_LABELS[category]}</span>
+    ${canEdit ? `<button id="editItemBtn" class="editbtn">✏️ تعديل</button>` : ""}
     <button id="printItemBtn">🖨️ طباعة بيانات الصنف</button>
   `;
 }
@@ -390,8 +452,9 @@ function usedInHtml(usedIn) {
 
 function renderInventoryItemDetail(data, category) {
   const { item, stock, lastPurchase, recipe, production, usedIn } = data;
-  document.getElementById("detailHeader").innerHTML = detailHeaderHtml(item.name, item.item_type, null);
+  document.getElementById("detailHeader").innerHTML = detailHeaderHtml(item.name, item.item_type);
   document.getElementById("printItemBtn").onclick = () => printInventoryItem(data);
+  if (canEdit) document.getElementById("editItemBtn").onclick = () => openEditInventoryItemModal(item);
 
   let html = `
     <div class="dcard">
@@ -425,7 +488,10 @@ function renderInventoryItemDetail(data, category) {
         </div>
       </div>
       <div class="dcard">
-        <h3>الريسبي</h3>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <h3 style="margin:0">الريسبي</h3>
+          ${canEdit ? `<button id="editRecipeBtn" class="editbtn">${recipe ? "✏️ تعديل الريسبي" : "+ إضافة ريسبي"}</button>` : ""}
+        </div>
         ${recipeTableHtml(recipe)}
       </div>
       <div class="dcard">
@@ -465,12 +531,16 @@ function renderInventoryItemDetail(data, category) {
   `;
 
   document.getElementById("detailBody").innerHTML = html;
+  if (canEdit && item.item_type === "manufactured") {
+    document.getElementById("editRecipeBtn").onclick = () => openManufacturedRecipeModal(item, recipe);
+  }
 }
 
 function renderMenuItemDetail(data) {
   const { item, variants } = data;
-  document.getElementById("detailHeader").innerHTML = detailHeaderHtml(item.name, "menu", null);
+  document.getElementById("detailHeader").innerHTML = detailHeaderHtml(item.name, "menu");
   document.getElementById("printItemBtn").onclick = () => printMenuItem(data);
+  if (canEdit) document.getElementById("editItemBtn").onclick = () => openEditMenuItemModal(item);
 
   let html = `
     <div class="dcard">
@@ -484,7 +554,10 @@ function renderMenuItemDetail(data) {
 
   html += variants.map((v) => `
     <div class="dcard">
-      <h3>${esc(v.label)}</h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <h3 style="margin:0">${esc(v.label)}</h3>
+        ${canEdit ? `<button class="editbtn editvariantbtn" data-variant-id="${v.id}">✏️ تعديل الحجم</button>` : ""}
+      </div>
       <div class="dgrid" style="margin-bottom:14px">
         <div class="dfield"><div class="flabel">سعر البيع</div><div class="fvalue gold">${money(v.price)}</div></div>
         <div class="dfield"><div class="flabel">تكلفة الريسبي</div><div class="fvalue">${v.recipe?.cost ? money(v.recipe.cost.totalCost) : "—"}</div></div>
@@ -492,12 +565,29 @@ function renderMenuItemDetail(data) {
         <div class="dfield"><div class="flabel">هامش الربح</div><div class="fvalue green">${v.margin != null ? money(v.margin) : "—"}</div></div>
         <div class="dfield"><div class="flabel">هامش الربح %</div><div class="fvalue green">${pct(v.marginPercent)}</div></div>
       </div>
-      <h3 style="font-size:12px">الريسبي</h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <h3 style="font-size:12px;margin:0">الريسبي</h3>
+        ${canEdit ? `<button class="editbtn editvariantrecipebtn" data-variant-id="${v.id}">${v.recipe ? "✏️ تعديل الريسبي" : "+ إضافة ريسبي"}</button>` : ""}
+      </div>
       ${recipeTableHtml(v.recipe)}
     </div>
   `).join("");
 
+  if (canEdit) {
+    html += `<button id="addVariantBtn" class="editbtn" style="width:100%">+ إضافة حجم جديد</button>`;
+  }
+
   document.getElementById("detailBody").innerHTML = html;
+
+  if (canEdit) {
+    document.getElementById("addVariantBtn").onclick = () => openAddVariantModal(item);
+    document.querySelectorAll(".editvariantbtn").forEach((btn) => {
+      btn.onclick = () => openEditVariantModal(variants.find((v) => v.id === Number(btn.dataset.variantId)));
+    });
+    document.querySelectorAll(".editvariantrecipebtn").forEach((btn) => {
+      btn.onclick = () => openVariantRecipeModal(variants.find((v) => v.id === Number(btn.dataset.variantId)));
+    });
+  }
 }
 
 // ---------------- الطباعة ----------------
@@ -538,10 +628,264 @@ function printMenuItem(data) {
   window.SatamoniPrint.openCustomPrint(`صنف منيو: ${item.name}`, body);
 }
 
+// ---------------- تعديل/إضافة (أدمن بس) ----------------
+// كل التعديلات هنا بتستخدم نفس الـendpoints الموجودة بالظبط اللي شاشة المنيو/التصنيع بتستخدمها -
+// مفيش أي منطق كتابة جديد أو مسار موازٍ. مادة خام/مصنّعة: PATCH/POST /api/inventory/items (نفس
+// المسار مفيش له شاشة تانية أصلًا). صنف منيو: PATCH/POST /api/menu/items+variants (نفس شاشة المنيو).
+// ريسبي صنف منيو: PUT /api/inventory/recipe/:variantId (نفس المسار المباشر اللي شاشة المنيو بتستخدمه -
+// بيكتب في menu_item_variant_ingredients مباشرة، نفس الجدول اللي التفاصيل هنا بتتقرا منه، فمفيش أي
+// فجوة مزامنة ممكنة). ريسبي صنف مصنّع: نفس محرك الوصفات الكامل اللي شاشة التصنيع بتستخدمه (نسخة
+// جديدة DRAFT -> submit -> approve -> activate) لأن production.js فعليًا بيتطلب recipe_versions
+// نشطة عشان ينشئ أمر تصنيع - مفيش بديل مختصر آمن هنا.
+function openModal(title, bodyHtml, onSave) {
+  document.getElementById("modalTitle").textContent = title;
+  document.getElementById("modalBody").innerHTML = bodyHtml;
+  document.getElementById("modalErr").textContent = "";
+  const saveBtn = document.getElementById("modalSaveBtn");
+  saveBtn.disabled = false;
+  saveBtn.onclick = async () => {
+    const errBox = document.getElementById("modalErr");
+    errBox.textContent = "";
+    saveBtn.disabled = true;
+    try {
+      await onSave();
+      closeModal();
+    } catch (e) {
+      errBox.textContent = e.message;
+    } finally {
+      saveBtn.disabled = false;
+    }
+  };
+  document.getElementById("modalOverlay").classList.add("open");
+}
+function closeModal() {
+  document.getElementById("modalOverlay").classList.remove("open");
+}
+document.getElementById("modalCancelBtn").onclick = closeModal;
+document.getElementById("modalOverlay").onclick = (e) => { if (e.target.id === "modalOverlay") closeModal(); };
+
+let ingredientOptionsCache = null;
+async function ensureIngredientOptionsCache(forceRefresh) {
+  if (!ingredientOptionsCache || forceRefresh) ingredientOptionsCache = await api("/api/inventory/items");
+  return ingredientOptionsCache;
+}
+let categoriesCache = null;
+async function ensureCategoriesCache() {
+  if (!categoriesCache) categoriesCache = await api("/api/menu/categories");
+  return categoriesCache;
+}
+
+function ingredientOptionsHtml(items, selectedId) {
+  return items.map((i) => `<option value="${i.id}" ${Number(selectedId) === i.id ? "selected" : ""}>${esc(i.name)}${i.item_type === "manufactured" ? " (نصف مصنّع)" : ""}</option>`).join("");
+}
+// بنبني محرر صفوف المكوّنات (كل صف = مكوّن + كمية + زرار حذف) جوه container معيّن، وبنرجّع دالة
+// getIngredients() بترجع بس الصفوف المكتملة (مكوّن محدد + كمية أكبر من صفر) وقت الحفظ
+function buildIngredientEditor(containerEl, items, initialIngredients) {
+  containerEl.innerHTML = `<div id="ingRowsWrap"></div><button type="button" id="addIngredientRowBtn">+ إضافة مكوّن</button>`;
+  const rowsWrap = containerEl.querySelector("#ingRowsWrap");
+  function addRow(ing) {
+    const row = document.createElement("div");
+    row.className = "ingredientrow";
+    row.innerHTML = `
+      <select class="ing-item"><option value="">اختار مكوّن</option>${ingredientOptionsHtml(items, ing?.ingredient_item_id)}</select>
+      <input class="ing-qty" type="number" step="any" min="0" placeholder="الكمية" value="${ing?.quantity ?? ""}" />
+      <button type="button" class="ing-remove">✕</button>
+    `;
+    row.querySelector(".ing-remove").onclick = () => row.remove();
+    rowsWrap.appendChild(row);
+  }
+  (initialIngredients && initialIngredients.length ? initialIngredients : [null]).forEach(addRow);
+  containerEl.querySelector("#addIngredientRowBtn").onclick = () => addRow(null);
+  return () => {
+    const result = [];
+    rowsWrap.querySelectorAll(".ingredientrow").forEach((row) => {
+      const itemId = row.querySelector(".ing-item").value;
+      const qty = row.querySelector(".ing-qty").value;
+      if (itemId && qty && Number(qty) > 0) result.push({ itemId: Number(itemId), quantity: Number(qty) });
+    });
+    return result;
+  };
+}
+
+async function openAddItemModal() {
+  const categories = await ensureCategoriesCache().catch(() => []);
+  let selectedType = "raw";
+  openModal("إضافة صنف جديد", `
+    <div class="mtypepicker">
+      <button type="button" data-type="raw" class="active">مادة خام</button>
+      <button type="button" data-type="manufactured">صنف مصنّع</button>
+      <button type="button" data-type="menu">صنف منيو</button>
+    </div>
+    <div id="addItemFields"></div>
+  `, async () => {
+    if (selectedType === "menu") {
+      const categoryId = document.getElementById("newItemCategory").value;
+      const name = document.getElementById("newItemName").value.trim();
+      const variantLabel = document.getElementById("newItemVariantLabel").value.trim();
+      const price = document.getElementById("newItemVariantPrice").value;
+      if (!categoryId || !name || !variantLabel || price === "") throw new Error("لازم تملى كل الحقول (القسم/الاسم/اسم الحجم/السعر)");
+      const created = await api("/api/menu/items", { method: "POST", body: JSON.stringify({ categoryId: Number(categoryId), name }) });
+      await api(`/api/menu/items/${created.id}/variants`, { method: "POST", body: JSON.stringify({ label: variantLabel, price: Number(price) }) });
+      await loadItemList();
+      openItemDetail(created.id, "menu");
+    } else {
+      const name = document.getElementById("newItemName").value.trim();
+      const unit = document.getElementById("newItemUnit").value.trim();
+      if (!name || !unit) throw new Error("لازم اسم ووحدة قياس");
+      const created = await api("/api/inventory/items", { method: "POST", body: JSON.stringify({ name, unit, itemType: selectedType }) });
+      await loadItemList();
+      openItemDetail(created.id, selectedType);
+    }
+  });
+
+  function renderFields() {
+    const wrap = document.getElementById("addItemFields");
+    if (selectedType === "menu") {
+      wrap.innerHTML = `
+        <div class="mrow"><div class="mfield"><label>القسم</label>
+          <select id="newItemCategory">${categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select>
+        </div></div>
+        <div class="mrow"><div class="mfield"><label>اسم الصنف</label><input id="newItemName" type="text" /></div></div>
+        <div class="mrow">
+          <div class="mfield"><label>اسم الحجم الأول</label><input id="newItemVariantLabel" type="text" placeholder="عادي/وسط/كبير" /></div>
+          <div class="mfield"><label>السعر</label><input id="newItemVariantPrice" type="number" step="0.01" /></div>
+        </div>
+      `;
+    } else {
+      wrap.innerHTML = `
+        <div class="mrow"><div class="mfield"><label>اسم الصنف</label><input id="newItemName" type="text" /></div></div>
+        <div class="mrow"><div class="mfield"><label>وحدة القياس</label><input id="newItemUnit" type="text" placeholder="KG / لتر / قطعة" /></div></div>
+      `;
+    }
+  }
+  renderFields();
+  document.querySelectorAll(".mtypepicker button").forEach((btn) => {
+    btn.onclick = () => {
+      document.querySelectorAll(".mtypepicker button").forEach((b) => b.classList.toggle("active", b === btn));
+      selectedType = btn.dataset.type;
+      renderFields();
+    };
+  });
+}
+
+function openEditInventoryItemModal(item) {
+  openModal(`تعديل: ${item.name}`, `
+    <div class="mrow"><div class="mfield"><label>اسم الصنف</label><input id="editItemName" type="text" value="${esc(item.name)}" /></div></div>
+    <div class="mrow"><div class="mfield"><label>وحدة القياس</label><input id="editItemUnit" type="text" value="${esc(item.unit)}" /></div></div>
+    <div class="mrow"><div class="mfield"><label>تكلفة الوحدة (ج.م)</label><input id="editItemCost" type="number" step="0.01" value="${item.unit_cost ?? ""}" /></div></div>
+  `, async () => {
+    const name = document.getElementById("editItemName").value.trim();
+    const unit = document.getElementById("editItemUnit").value.trim();
+    const unitCost = document.getElementById("editItemCost").value;
+    if (!name || !unit) throw new Error("لازم اسم ووحدة قياس");
+    await api(`/api/inventory/items/${item.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name, unit, ...(unitCost !== "" ? { unitCost: Number(unitCost) } : {}) }),
+    });
+    await loadItemList();
+    openItemDetail(item.id, item.item_type);
+  });
+}
+
+function openEditMenuItemModal(item) {
+  openModal(`تعديل: ${item.name}`, `
+    <div class="mrow"><div class="mfield"><label>اسم الصنف</label><input id="editMenuItemName" type="text" value="${esc(item.name)}" /></div></div>
+  `, async () => {
+    const name = document.getElementById("editMenuItemName").value.trim();
+    if (!name) throw new Error("لازم اسم الصنف");
+    await api(`/api/menu/items/${item.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    await loadItemList();
+    openItemDetail(item.id, "menu");
+  });
+}
+
+function openAddVariantModal(item) {
+  openModal(`إضافة حجم — ${item.name}`, `
+    <div class="mrow">
+      <div class="mfield"><label>اسم الحجم</label><input id="newVariantLabel" type="text" placeholder="عادي/وسط/كبير" /></div>
+      <div class="mfield"><label>السعر</label><input id="newVariantPrice" type="number" step="0.01" /></div>
+    </div>
+  `, async () => {
+    const label = document.getElementById("newVariantLabel").value.trim();
+    const price = document.getElementById("newVariantPrice").value;
+    if (!label || price === "") throw new Error("لازم اسم الحجم والسعر");
+    await api(`/api/menu/items/${item.id}/variants`, { method: "POST", body: JSON.stringify({ label, price: Number(price) }) });
+    openItemDetail(item.id, "menu");
+  });
+}
+
+function openEditVariantModal(variant) {
+  openModal(`تعديل الحجم: ${variant.label}`, `
+    <div class="mrow">
+      <div class="mfield"><label>اسم الحجم</label><input id="editVariantLabel" type="text" value="${esc(variant.label)}" /></div>
+      <div class="mfield"><label>السعر</label><input id="editVariantPrice" type="number" step="0.01" value="${variant.price}" /></div>
+    </div>
+  `, async () => {
+    const label = document.getElementById("editVariantLabel").value.trim();
+    const price = document.getElementById("editVariantPrice").value;
+    if (!label || price === "") throw new Error("لازم اسم الحجم والسعر");
+    await api(`/api/menu/variants/${variant.id}`, { method: "PATCH", body: JSON.stringify({ label, price: Number(price) }) });
+    openItemDetail(variant.item_id, "menu");
+  });
+}
+
+async function openVariantRecipeModal(variant) {
+  const items = await ensureIngredientOptionsCache();
+  let getIngredients = () => [];
+  openModal(`الريسبي — ${variant.label}`, `<div id="ingredientEditor"></div>`, async () => {
+    const ingredients = getIngredients();
+    if (ingredients.length === 0) throw new Error("لازم مكوّن واحد على الأقل بكمية أكبر من صفر");
+    await api(`/api/inventory/recipe/${variant.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ ingredients: ingredients.map((r) => ({ inventoryItemId: r.itemId, quantityPerUnit: r.quantity })) }),
+    });
+    openItemDetail(variant.item_id, "menu");
+  });
+  const existing = (variant.recipe?.ingredients || []).map((ing) => ({ ingredient_item_id: ing.ingredient_item_id, quantity: ing.quantity }));
+  getIngredients = buildIngredientEditor(document.getElementById("ingredientEditor"), items, existing);
+}
+
+async function openManufacturedRecipeModal(item, recipe) {
+  const items = (await ensureIngredientOptionsCache()).filter((i) => i.id !== item.id);
+  let getIngredients = () => [];
+  openModal(`الريسبي — ${item.name}`, `
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">حفظ الريسبي هنا بيعمل نسخة جديدة ويفعّلها فورًا (نفس اللي شاشة التصنيع بتعمله) - مفيش خطوة موافقة منفصلة.</div>
+    <div id="ingredientEditor"></div>
+  `, async () => {
+    const ingredients = getIngredients();
+    if (ingredients.length === 0) throw new Error("لازم مكوّن واحد على الأقل بكمية أكبر من صفر");
+    const payloadIngredients = ingredients.map((r) => ({ ingredientItemId: r.itemId, quantity: r.quantity }));
+    let versionId;
+    const recipeId = recipe?.version?.recipe_id;
+    if (recipeId) {
+      const version = await api(`/api/recipes/${recipeId}/versions`, {
+        method: "POST", body: JSON.stringify({ yieldQuantity: 1, yieldUnit: item.unit, ingredients: payloadIngredients }),
+      });
+      versionId = version.id;
+    } else {
+      const created = await api("/api/recipes", {
+        method: "POST",
+        body: JSON.stringify({ recipeType: "manufactured_item", inventoryItemId: item.id, yieldQuantity: 1, yieldUnit: item.unit, ingredients: payloadIngredients }),
+      });
+      versionId = created.version.id;
+    }
+    await api(`/api/recipes/versions/${versionId}/submit`, { method: "POST", body: "{}" });
+    await api(`/api/recipes/versions/${versionId}/approve`, { method: "POST", body: "{}" });
+    await api(`/api/recipes/versions/${versionId}/activate`, { method: "POST", body: "{}" });
+    openItemDetail(item.id, "manufactured");
+  });
+  const existing = (recipe?.ingredients || []).map((ing) => ({ ingredient_item_id: ing.ingredient_item_id, quantity: ing.quantity }));
+  getIngredients = buildIngredientEditor(document.getElementById("ingredientEditor"), items, existing);
+}
+
 // ---------------- بدء التشغيل ----------------
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
+  canEdit = auth.user.role === "admin";
+  const addBtn = document.getElementById("addItemBtn");
+  addBtn.style.display = canEdit ? "block" : "none";
+  if (canEdit) addBtn.onclick = () => openAddItemModal();
   await loadItemList();
 }
 

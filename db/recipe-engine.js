@@ -209,22 +209,35 @@ async function getActiveRecipeForConsumer(client, { variantId, inventoryItemId }
   return result.rows[0] || null;
 }
 
-// المرحلة 8.29: كل الوصفات (النشطة بس) اللي بتستخدم المكوّن ده - "يستخدم في" لشاشة الأصناف (مادة خام
-// أو مصنّعة). مجرد join مباشر على recipe_ingredients، من غير أي فك وصفة أو حساب تكلفة
+// المرحلة 8.29 (مُصلَّحة): كل الأماكن اللي المكوّن ده مستخدم فيها - "يستخدم في" لشاشة الأصناف. لأصناف
+// المنيو (sellable_variant) بنقرا من menu_item_variant_ingredients **مباشرة** - ده الجدول اللي orders.js
+// فعليًا بيحسب منه cost_at_sale الحقيقية وقت البيع (مش recipe_ingredients/recipe_versions، اللي
+// لأصناف المنيو مجرد رابط تتبّع تاريخي اختياري منفصل تمامًا عن التكلفة - راجع routes/orders.js حوالين
+// "المرحلة 3: تسجيل نسخة الوصفة اللي كانت ACTIVE وقت البيع"). لو اعتمدنا على recipe_versions هنا زي
+// قبل كده، أي صنف منيو اتضافت وصفته من شاشة المنيو القديمة (PUT /api/inventory/recipe/:variantId) من
+// غير ما يمر بمحرك الوصفات هيفضل مش ظاهر هنا رغم إن له وصفة وتكلفة حقيقية شغالة فعليًا وقت البيع.
+// للأصناف المصنّعة (manufactured_item) recipe_versions لسه المصدر الصح (production.js بيتطلبها فعليًا).
 async function getIngredientUsage(client, ingredientItemId) {
   const result = await client.query(
-    `SELECT r.recipe_type, r.id AS recipe_id, rv.id AS version_id, rv.version_number,
-            ri.quantity, ri.unit,
+    `SELECT 'sellable_variant' AS recipe_type, NULL::int AS recipe_id, NULL::int AS version_id, NULL::int AS version_number,
+            mvi.quantity_per_unit AS quantity, NULL::text AS unit,
             v.id AS variant_id, v.label AS variant_label, mi.id AS menu_item_id, mi.name AS menu_item_name,
+            NULL::int AS manufactured_item_id, NULL::text AS manufactured_item_name
+     FROM menu_item_variant_ingredients mvi
+     JOIN menu_item_variants v ON v.id = mvi.variant_id
+     JOIN menu_items mi ON mi.id = v.item_id
+     WHERE mvi.inventory_item_id = $1
+     UNION ALL
+     SELECT r.recipe_type, r.id AS recipe_id, rv.id AS version_id, rv.version_number,
+            ri.quantity, ri.unit,
+            NULL::int AS variant_id, NULL::text AS variant_label, NULL::int AS menu_item_id, NULL::text AS menu_item_name,
             ii2.id AS manufactured_item_id, ii2.name AS manufactured_item_name
      FROM recipe_ingredients ri
      JOIN recipe_versions rv ON rv.id = ri.recipe_version_id AND rv.status = 'ACTIVE'
-     JOIN recipes r ON r.id = rv.recipe_id
-     LEFT JOIN menu_item_variants v ON v.id = r.variant_id
-     LEFT JOIN menu_items mi ON mi.id = v.item_id
-     LEFT JOIN inventory_items ii2 ON ii2.id = r.inventory_item_id
+     JOIN recipes r ON r.id = rv.recipe_id AND r.recipe_type = 'manufactured_item'
+     JOIN inventory_items ii2 ON ii2.id = r.inventory_item_id
      WHERE ri.ingredient_item_id = $1
-     ORDER BY mi.name, ii2.name`,
+     ORDER BY menu_item_name, manufactured_item_name`,
     [ingredientItemId]
   );
   return result.rows;

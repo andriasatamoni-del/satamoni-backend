@@ -227,7 +227,12 @@ describe("تفاصيل صنف منيو", () => {
     expect(v.id).toBe(variantId);
     expect(Number(v.price)).toBe(100);
     expect(v.recipe).not.toBeNull();
-    expect(v.recipe.version.id).toBe(variantVersionId);
+    // المرحلة 8.29 المُصلَّحة: الوصفة والتكلفة هنا بتتقرا من menu_item_variant_ingredients مباشرة (نفس
+    // مصدر cost_at_sale الحقيقي وقت البيع في orders.js) - مش من recipe_versions، فمفيش object "version"
+    // هنا خالص. النسخة اتفعّلت في beforeAll فقط عشان تسقط بياناتها على الجدول ده (projectVersionToLegacyTable)
+    expect(v.recipe.ingredients.length).toBe(1);
+    expect(v.recipe.ingredients[0].ingredient_item_id).toBe(flourId);
+    expect(Number(v.recipe.ingredients[0].line_cost)).toBe(5); // 0.5 كجم × 10
     expect(Number(v.recipe.cost.totalCost)).toBe(5); // 0.5 كجم × 10
     expect(Number(v.foodCostPercent)).toBeCloseTo(5, 5);
     expect(Number(v.margin)).toBeCloseTo(95, 5);
@@ -236,6 +241,47 @@ describe("تفاصيل صنف منيو", () => {
 
   test("معرّف صنف منيو غير موجود بيرجّع 404", async () => {
     await request(app).get("/api/menu/items/999999999/detail").set(authed(adminToken)).expect(404);
+  });
+
+  // إعادة إنتاج الباج المُبلَّغ (شاشة الأصناف على staging): صنف منيو الريسبي بتاعه اتضاف من شاشة المنيو
+  // العادية (PUT /api/inventory/recipe/:variantId - المسار الوحيد اللي satamoni-menu.html بيستخدمه)،
+  // من غير ما يمر أبدًا بمحرك الوصفات (POST /api/recipes...). قبل الإصلاح كانت شاشة الأصناف بتقرا من
+  // recipe_versions بس فكانت بتقول "مفيش وصفة نشطة" رغم إن الريسبي موجود وشغّال فعليًا وقت البيع
+  test("ريسبي مضاف من شاشة المنيو القديمة (من غير محرك الوصفات) بيظهر برضو في شاشة الأصناف", async () => {
+    const cat = await pool.query("INSERT INTO menu_categories (name) VALUES ('برجر-اصناف-جست') RETURNING id");
+    const mi = await pool.query(
+      "INSERT INTO menu_items (category_id, name) VALUES ($1,'بيتزا برجر اصناف جست') RETURNING id",
+      [cat.rows[0].id]
+    );
+    const legacyMenuItemId = mi.rows[0].id;
+    const v = await pool.query(
+      "INSERT INTO menu_item_variants (item_id, label, price) VALUES ($1,'عادي',160) RETURNING id",
+      [legacyMenuItemId]
+    );
+    const legacyVariantId = v.rows[0].id;
+
+    // مفيش أي recipes/recipe_versions اتعملت هنا خالص - نفس اللي شاشة المنيو القديمة بتعمله بالظبط
+    await request(app)
+      .put(`/api/inventory/recipe/${legacyVariantId}`)
+      .set(authed(adminToken))
+      .send({ ingredients: [{ inventoryItemId: flourId, quantityPerUnit: 1.5 }] })
+      .expect(200);
+
+    const res = await request(app).get(`/api/menu/items/${legacyMenuItemId}/detail`).set(authed(adminToken)).expect(200);
+    const lv = res.body.variants[0];
+    expect(lv.recipe).not.toBeNull();
+    expect(lv.recipe.ingredients.length).toBe(1);
+    expect(lv.recipe.ingredients[0].ingredient_item_id).toBe(flourId);
+    expect(Number(lv.recipe.cost.totalCost)).toBe(15); // 1.5 كجم × 10
+    expect(Number(lv.foodCostPercent)).toBeCloseTo(9.375, 3);
+    expect(Number(lv.margin)).toBeCloseTo(145, 5);
+
+    // ولازم "يستخدم في" بتاعة الدقيق نفسه تلاقي الصنف ده برضو (نفس الإصلاح في getIngredientUsage)
+    const flourDetail = await request(app).get(`/api/inventory/items/${flourId}/detail`).set(authed(adminToken)).expect(200);
+    const usage = flourDetail.body.usedIn.find((u) => u.variant_id === legacyVariantId);
+    expect(usage).toBeTruthy();
+    expect(usage.menu_item_name).toBe("بيتزا برجر اصناف جست");
+    expect(Number(usage.quantity)).toBe(1.5);
   });
 });
 
@@ -312,6 +358,9 @@ describe("لا يمس السلوك القديم", () => {
 
   test("GET /api/recipes/usage/:itemId بيرجّع الاستخدامات النشطة للصنف", async () => {
     const res = await request(app).get(`/api/recipes/usage/${flourId}`).set(authed(adminToken)).expect(200);
-    expect(res.body.length).toBe(2);
+    // 3 مش 2: العجينة (وصفة تصنيع) + بيتزا اصناف (وصفة كاملة من محرك الوصفات) + بيتزا برجر (وصفة
+    // مضافة من شاشة المنيو القديمة - describe "ريسبي مضاف من شاشة المنيو القديمة" فوق) - الإصلاح
+    // في getIngredientUsage خلّى الثلاثة يظهروا هنا مع بعض بدل ما يتفوت التالت
+    expect(res.body.length).toBe(3);
   });
 });

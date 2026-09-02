@@ -5,7 +5,6 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { logPriceChange } = require("../db/menu-price-history");
-const { getActiveRecipeForConsumer, getRecipeVersionDetail } = require("../db/recipe-engine");
 
 // المرحلة 8.29 (شاشة الأصناف): admin/branch_manager(بما فيهم مدير السنتر كيتشن)/accountant - نفس
 // مجموعة الأدوار اللي عندها inventory.view بالظبط، عشان شاشة الأصناف تقدر تعرض أصناف المنيو وتفاصيلها.
@@ -123,9 +122,14 @@ router.get("/items", requireAuth, menuReaders, async (req, res) => {
   }
 });
 
-// GET /api/menu/items/:id/detail - المرحلة 8.29: شاشة "الأصناف" - صنف منيو بكل تفاصيله (بيانات أساسية +
-// كل حجم/variant بسعره ووصفته وتكلفته وهامش ربحه). قراءة بس، بيستخدم recipe-engine الموجود من غير أي
-// حساب تكلفة جديد
+// GET /api/menu/items/:id/detail - المرحلة 8.29 (مُصلَّحة): شاشة "الأصناف" - صنف منيو بكل تفاصيله
+// (بيانات أساسية + كل حجم/variant بسعره ووصفته وتكلفته وهامش ربحه). الوصفة والتكلفة هنا بتتقرا **مباشرة
+// من menu_item_variant_ingredients** بدل recipe_versions - ده الجدول اللي orders.js فعليًا بيحسب منه
+// cost_at_sale الحقيقية وقت البيع (نفس المعادلة بالظبط: SUM(quantity_per_unit × unit_cost)). كان
+// الكود القديم بيقرا من recipe_versions اللي لأصناف المنيو (sellable_variant) مجرد رابط تتبّع تاريخي
+// اختياري منفصل عن التكلفة الحقيقية - فأي صنف اتضافت وصفته من شاشة المنيو (PUT /api/inventory/recipe/
+// :variantId، المسار الوحيد اللي شاشة المنيو بتستخدمه) كان بيظهر هنا "مفيش وصفة" رغم إن له وصفة وتكلفة
+// حقيقية شغالة فعليًا وقت البيع - نفس الجدول قراءة وكتابة هنا يقفل الفجوة دي نهائيًا
 router.get("/items/:id/detail", requireAuth, menuReaders, async (req, res) => {
   try {
     const itemRes = await pool.query(
@@ -142,9 +146,26 @@ router.get("/items/:id/detail", requireAuth, menuReaders, async (req, res) => {
     );
     const variants = [];
     for (const v of variantsRes.rows) {
-      const activeRecipe = await getActiveRecipeForConsumer(pool, { variantId: v.id });
+      const ingRes = await pool.query(
+        `SELECT mvi.inventory_item_id, mvi.quantity_per_unit, ii.name AS item_name, ii.unit AS item_unit,
+                ii.item_type, ii.unit_cost
+         FROM menu_item_variant_ingredients mvi
+         JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+         WHERE mvi.variant_id = $1
+         ORDER BY ii.name`,
+        [v.id]
+      );
       let recipe = null;
-      if (activeRecipe) recipe = await getRecipeVersionDetail(pool, activeRecipe.version_id);
+      if (ingRes.rows.length > 0) {
+        const ingredients = ingRes.rows.map((r) => ({
+          ingredient_item_id: r.inventory_item_id, quantity: Number(r.quantity_per_unit),
+          item_name: r.item_name, item_unit: r.item_unit, item_type: r.item_type, unit_cost: r.unit_cost,
+          line_cost: r.unit_cost != null ? Number(r.unit_cost) * Number(r.quantity_per_unit) : null,
+        }));
+        const totalCost = ingredients.reduce((s, i) => s + (i.line_cost || 0), 0);
+        const incomplete = ingredients.some((i) => i.unit_cost == null);
+        recipe = { ingredients, cost: { totalCost, incomplete } };
+      }
       const cost = recipe?.cost?.totalCost ?? null;
       const price = Number(v.price);
       const margin = cost != null ? price - cost : null;
