@@ -128,6 +128,7 @@
     <div class="tabbtn" data-tab="pr">طلبات الشراء</div>
     <div class="tabbtn" data-tab="po">أوامر الشراء</div>
     <div class="tabbtn" data-tab="grn">استلام المشتريات</div>
+    <div class="tabbtn" data-tab="returns">مرتجعات المشتريات</div>
     <div class="tabbtn" data-tab="invoices">فواتير الموردين</div>
     <div class="tabbtn" data-tab="payments">سداد الموردين</div>
     <div class="tabbtn" data-tab="suppliers">الموردون</div>
@@ -297,6 +298,55 @@
       <h2>تفاصيل سند الاستلام</h2>
       <div class="formbox" id="grnDetailsContent"></div>
       <button class="secondary" id="grnDetailsCloseBtn">إغلاق</button>
+    </div>
+  </div>
+
+  <!-- المرحلة 8.24: مرتجعات المشتريات (routes/purchase-returns.js كان جاهز من المرحلة 7N من غير أي
+       شاشة تستخدمه) - إرجاع بضاعة تالفة/غلط/منتهية الصلاحية للمورد، مستقل عن إلغاء سند استلام كامل -->
+  <div class="panel" id="panel-returns">
+    <h1>مرتجعات المشتريات</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="field-label">الحالة:</label>
+        <select id="retStatusFilter">
+          <option value="">الكل</option>
+          <option value="DRAFT">مسودة</option>
+          <option value="POSTED">مرحّل</option>
+          <option value="CANCELLED">ملغي</option>
+        </select>
+        <button id="retFilterBtn">فلترة</button>
+        <button class="secondary" id="retNewBtn">+ مرتجع جديد</button>
+      </div>
+    </div>
+    <div id="retListBox"><div class="hint">جاري التحميل...</div></div>
+
+    <div id="retCreateBox" style="display:none">
+      <h2>مرتجع مشتريات جديد</h2>
+      <div class="formbox">
+        <div class="row">
+          <label class="field-label">الفرع:</label>
+          <select id="retBranchSelect"></select>
+          <label class="field-label">المورد (اختياري):</label>
+          <select id="retSupplierSelect"><option value="">— بدون مورد محدد —</option></select>
+        </div>
+        <div class="row"><input id="retReason" placeholder="سبب المرتجع (إلزامي: تالف/غلط/منتهي الصلاحية...)" /></div>
+        <div class="row"><textarea id="retNotes" placeholder="ملاحظات (اختياري)" rows="2"></textarea></div>
+        <h2>الأصناف المرتجعة</h2>
+        <div id="retItemRows"></div>
+        <button class="addrow-link" id="retAddRowBtn">+ صنف</button>
+        <div class="row">
+          <button id="retSaveBtn">حفظ المرتجع (مسودة)</button>
+          <button class="secondary" id="retCancelCreateBtn">إلغاء</button>
+        </div>
+        <div class="err" id="retCreateErr"></div>
+        <div class="ok" id="retCreateOk"></div>
+      </div>
+    </div>
+
+    <div id="retDetailsBox" style="display:none">
+      <h2>تفاصيل مرتجع المشتريات</h2>
+      <div class="formbox" id="retDetailsContent"></div>
+      <button class="secondary" id="retDetailsCloseBtn">إغلاق</button>
     </div>
   </div>
 
@@ -480,6 +530,7 @@ const auth = {
 const PR_STATUS_LABELS = { DRAFT: "مسودة", SUBMITTED: "في انتظار الاعتماد", APPROVED: "معتمد", REJECTED: "مرفوض", CONVERTED_TO_PO: "تم تحويله لأمر شراء", CANCELLED: "ملغي" };
 const PO_STATUS_LABELS = { DRAFT: "مسودة", SUBMITTED: "في انتظار الاعتماد", APPROVED: "معتمد", PARTIALLY_RECEIVED: "مستلم جزئياً", FULLY_RECEIVED: "مستلم بالكامل", CLOSED: "مقفول", CANCELLED: "ملغي" };
 const GRN_STATUS_LABELS = { DRAFT: "مسودة (لسه ماترحّلش)", POSTED: "مرحّل", CANCELLED: "ملغي" };
+const RET_STATUS_LABELS = { DRAFT: "مسودة (لسه ماترحّلش)", POSTED: "مرحّل", CANCELLED: "ملغي" };
 const INV_STATUS_LABELS = { DRAFT: "مسودة", MATCHED: "مطابقة", VARIANCE_PENDING: "يوجد فرق", APPROVED: "معتمدة", PARTIALLY_PAID: "مدفوعة جزئياً", PAID: "مدفوعة بالكامل", CANCELLED: "ملغاة" };
 const PR_WORKFLOW_STEPS = ["DRAFT", "SUBMITTED", "APPROVED", "CONVERTED_TO_PO"];
 const PO_WORKFLOW_STEPS = ["DRAFT", "SUBMITTED", "APPROVED", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "CLOSED"];
@@ -579,6 +630,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
     if (btn.dataset.tab === "pr") loadPrList();
     if (btn.dataset.tab === "po") loadPoList();
     if (btn.dataset.tab === "grn") loadGrnList();
+    if (btn.dataset.tab === "returns") loadReturnsList();
     if (btn.dataset.tab === "invoices") loadInvList();
     if (btn.dataset.tab === "payments") loadPayList();
     if (btn.dataset.tab === "suppliers") loadSupplierList();
@@ -586,6 +638,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 });
 function hideAllCreateAndDetailBoxes() {
   ["prCreateBox", "prDetailsBox", "poCreateBox", "poDetailsBox", "grnCreateBox", "grnDetailsBox",
+   "retCreateBox", "retDetailsBox",
    "invCreateBox", "invDetailsBox", "payCreateBox", "supCreateBox", "supDetailsBox"].forEach(id => {
     document.getElementById(id).style.display = "none";
   });
@@ -621,7 +674,7 @@ async function boot() {
 function itemOptions() { return inventoryItems.map(i => `<option value="${i.id}" data-unit="${i.unit}">${i.name} (${i.unit})</option>`).join(""); }
 function populateBranchSelects() {
   const opts = allBranches.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
-  ["prBranchSelect", "poBranchSelect", "invBranchSelect", "payBranchSelect"].forEach(id => {
+  ["prBranchSelect", "poBranchSelect", "invBranchSelect", "payBranchSelect", "retBranchSelect"].forEach(id => {
     const el = document.getElementById(id);
     el.innerHTML = opts;
     if (auth.user.branchId) el.value = auth.user.branchId;
@@ -633,6 +686,7 @@ function populateSupplierSelects() {
   ["poSupplierFilter", "paySupplierFilter"].forEach(id => {
     document.getElementById(id).innerHTML = `<option value="">الكل</option>` + opts;
   });
+  document.getElementById("retSupplierSelect").innerHTML = `<option value="">— بدون مورد محدد —</option>` + opts;
 }
 function populatePaymentMethodSelect() {
   document.getElementById("payMethodSelect").innerHTML = `<option value="">نقدي (افتراضي)</option>` +
@@ -1343,6 +1397,153 @@ async function showGrnDetails(id) {
   }
 }
 document.getElementById("grnDetailsCloseBtn").onclick = () => { document.getElementById("grnDetailsBox").style.display = "none"; };
+
+// ================= المرحلة 8.24: مرتجعات المشتريات =================
+document.getElementById("retFilterBtn").onclick = loadReturnsList;
+async function loadReturnsList() {
+  const box = document.getElementById("retListBox");
+  box.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  const status = document.getElementById("retStatusFilter").value;
+  try {
+    const qs = new URLSearchParams();
+    if (status) qs.set("status", status);
+    if (auth.user.role === "branch_manager") qs.set("branchId", auth.user.branchId);
+    const list = await api(`/api/purchase-returns?${qs.toString()}`);
+    box.innerHTML = list.length ? `
+      <table><thead><tr>
+        <th>رقم المرتجع</th><th>الفرع</th><th>المورد</th><th>السبب</th><th>التاريخ</th><th>القيمة</th><th>الحالة</th><th></th>
+      </tr></thead><tbody>
+        ${list.map(ret => `<tr>
+          <td data-label="رقم المرتجع">#${ret.id}</td>
+          <td data-label="الفرع">${ret.branch_name}</td>
+          <td data-label="المورد">${ret.supplier_name || "-"}</td>
+          <td data-label="السبب">${ret.reason}</td>
+          <td data-label="التاريخ">${fmtDate(ret.created_at)}</td>
+          <td data-label="القيمة">${ret.total_value != null ? fmtMoney(ret.total_value) : "-"}</td>
+          <td data-label="الحالة"><span class="badge ${ret.status}">${RET_STATUS_LABELS[ret.status] || ret.status}</span></td>
+          <td data-label=""><button class="linkbtn" data-view="${ret.id}">تفاصيل</button></td>
+        </tr>`).join("")}
+      </tbody></table>
+    ` : `<div class="hint">مفيش مرتجعات مشتريات مطابقة</div>`;
+    box.querySelectorAll("[data-view]").forEach(btn => { btn.onclick = () => showReturnDetails(btn.dataset.view); });
+  } catch (e) {
+    box.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+
+document.getElementById("retNewBtn").onclick = () => {
+  hideAllCreateAndDetailBoxes();
+  document.getElementById("retCreateBox").style.display = "block";
+  document.getElementById("retReason").value = "";
+  document.getElementById("retNotes").value = "";
+  document.getElementById("retItemRows").innerHTML = "";
+  addReturnRow();
+  document.getElementById("retCreateErr").textContent = "";
+  document.getElementById("retCreateOk").textContent = "";
+  document.getElementById("retCreateBox").scrollIntoView({ behavior: "smooth" });
+};
+document.getElementById("retCancelCreateBtn").onclick = () => { document.getElementById("retCreateBox").style.display = "none"; };
+function addReturnRow() {
+  const wrap = document.getElementById("retItemRows");
+  const row = document.createElement("div");
+  row.className = "pickrow";
+  row.innerHTML = `
+    <select class="ret-item">${itemOptions()}</select>
+    <input class="ret-qty" type="number" min="0" step="any" placeholder="الكمية" />
+    <input class="ret-cost" type="number" min="0" step="any" placeholder="تكلفة الوحدة (اختياري)" />
+    <button type="button" class="ret-remove">×</button>
+  `;
+  row.querySelector(".ret-remove").onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+document.getElementById("retAddRowBtn").onclick = addReturnRow;
+
+function collectReturnItems() {
+  return [...document.querySelectorAll("#retItemRows .pickrow")].map(row => {
+    const sel = row.querySelector(".ret-item");
+    const cost = row.querySelector(".ret-cost").value;
+    return {
+      inventoryItemId: Number(sel.value),
+      quantity: Number(row.querySelector(".ret-qty").value),
+      unit: sel.selectedOptions[0]?.dataset.unit || null,
+      unitCost: cost ? Number(cost) : undefined,
+    };
+  }).filter(it => it.quantity > 0);
+}
+document.getElementById("retSaveBtn").onclick = async () => {
+  const errBox = document.getElementById("retCreateErr");
+  const okBox = document.getElementById("retCreateOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const reason = document.getElementById("retReason").value.trim();
+  if (!reason) { errBox.textContent = "سبب المرتجع إلزامي"; return; }
+  const items = collectReturnItems();
+  if (items.length === 0) { errBox.textContent = "لازم صنف واحد على الأقل بكمية أكبر من صفر"; return; }
+  try {
+    const created = await api("/api/purchase-returns", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId: Number(document.getElementById("retBranchSelect").value),
+        supplierId: document.getElementById("retSupplierSelect").value || null,
+        reason,
+        notes: document.getElementById("retNotes").value.trim() || null,
+        items,
+      }),
+    });
+    okBox.textContent = `تم حفظ المرتجع #${created.id} كمسودة`;
+    await loadReturnsList();
+    setTimeout(() => showReturnDetails(created.id), 400);
+  } catch (e) { errBox.textContent = apiErrorMessage(e); }
+};
+
+async function showReturnDetails(id) {
+  hideAllCreateAndDetailBoxes();
+  const wrap = document.getElementById("retDetailsBox");
+  const content = document.getElementById("retDetailsContent");
+  wrap.style.display = "block";
+  content.innerHTML = `<div class="hint">جاري التحميل...</div>`;
+  wrap.scrollIntoView({ behavior: "smooth" });
+  try {
+    const ret = await api(`/api/purchase-returns/${id}`);
+    const canPost = ret.status === "DRAFT" && hasPerm("purchasing.create", "purchasing.approve");
+    const canCancel = ret.status === "DRAFT" && hasPerm("purchasing.cancel");
+    content.innerHTML = `
+      <div style="font-weight:800;font-size:15px">مرتجع مشتريات #${ret.id} - ${ret.branch_name}</div>
+      <div style="font-size:12px;color:var(--faint);margin:6px 0">
+        المورد: ${ret.supplier_name || "-"} — تاريخ الإنشاء: ${fmtDate(ret.created_at)} — الحالة: <span class="badge ${ret.status}">${RET_STATUS_LABELS[ret.status] || ret.status}</span>
+      </div>
+      <div style="font-size:12px;color:var(--faint)">السبب: ${ret.reason}</div>
+      ${ret.notes ? `<div style="font-size:12px;color:var(--faint)">ملاحظات: ${ret.notes}</div>` : ""}
+      <table style="margin-top:10px"><thead><tr><th>الصنف</th><th>الكمية</th><th>تكلفة الوحدة</th><th>القيمة</th></tr></thead><tbody>
+        ${ret.items.map(it => `<tr>
+          <td data-label="الصنف">${it.item_name}</td>
+          <td data-label="الكمية">${Number(it.quantity).toFixed(2)} ${it.unit}</td>
+          <td data-label="تكلفة الوحدة">${it.unit_cost != null ? fmtMoney(it.unit_cost) : "-"}</td>
+          <td data-label="القيمة">${it.line_value != null ? fmtMoney(it.line_value) : "-"}</td>
+        </tr>`).join("")}
+      </tbody></table>
+      <div style="margin-top:8px;font-weight:700">الإجمالي: ${ret.total_value != null ? fmtMoney(ret.total_value) : "غير مكتمل (تكلفة ناقصة لبعض الأصناف)"}</div>
+      <div class="row" style="margin-top:12px">
+        ${canPost ? `<button data-postret="${ret.id}">ترحيل المرتجع (خصم من المخزون + قيد محاسبي)</button>` : ""}
+        ${canCancel ? `<button class="secondary" data-cancelret="${ret.id}">إلغاء</button>` : ""}
+      </div>
+      <div class="err" id="retActionErr"></div>
+    `;
+    const errBox = () => document.getElementById("retActionErr");
+    content.querySelector("[data-postret]")?.addEventListener("click", async () => {
+      if (!confirm("تأكيد ترحيل المرتجع؟ الكمية هتتخصم من المخزون فعليًا فورًا وهيتعمل قيد محاسبي.")) return;
+      try { await api(`/api/purchase-returns/${ret.id}/post`, { method: "POST" }); await showReturnDetails(ret.id); await loadReturnsList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+    content.querySelector("[data-cancelret]")?.addEventListener("click", async () => {
+      if (!confirm("تأكيد إلغاء المرتجع؟")) return;
+      try { await api(`/api/purchase-returns/${ret.id}/cancel`, { method: "POST" }); await showReturnDetails(ret.id); await loadReturnsList(); }
+      catch (e) { errBox().textContent = apiErrorMessage(e); }
+    });
+  } catch (e) {
+    content.innerHTML = `<div class="err">${apiErrorMessage(e)}</div>`;
+  }
+}
+document.getElementById("retDetailsCloseBtn").onclick = () => { document.getElementById("retDetailsBox").style.display = "none"; };
 
 // ================= UI-2J/K/L: فواتير الموردين =================
 document.getElementById("invFilterBtn").onclick = loadInvList;
