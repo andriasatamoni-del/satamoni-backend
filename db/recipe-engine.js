@@ -164,4 +164,73 @@ async function projectVersionToLegacyTable(client, recipeVersionId) {
   }
 }
 
-module.exports = { effectiveQuantityPerUnit, explodeRecipeConsumption, computeRecipeCost, projectVersionToLegacyTable };
+// المرحلة 8.29 (شاشة الأصناف): نسخة وصفة بالتفصيل - مكوناتها المباشرة (مش مفكوكة) + تكلفة كل سطر (كمية
+// × unit_cost الحالي للمكوّن نفسه) + التكلفة الإجمالية النظرية (من computeRecipeCost، بتاخد في الاعتبار
+// أي وصفات فرعية متداخلة صح). مستخرجة من منطق GET /api/recipes/versions/:versionId الأصلي بالظبط -
+// نفس الاستعلام والحساب، من غير أي تكرار لمنطق التسعير - بس بقت دالة قابلة لإعادة الاستخدام من شاشات تانية
+// (زي شاشة الأصناف) بدل ما تتكرر
+async function getRecipeVersionDetail(client, recipeVersionId) {
+  const version = await client.query("SELECT * FROM recipe_versions WHERE id = $1", [recipeVersionId]);
+  if (version.rows.length === 0) return null;
+  const ingredients = await client.query(
+    `SELECT ri.*, ii.name AS item_name, ii.unit AS item_unit, ii.item_type, ii.unit_cost
+     FROM recipe_ingredients ri JOIN inventory_items ii ON ii.id = ri.ingredient_item_id
+     WHERE ri.recipe_version_id = $1`,
+    [recipeVersionId]
+  );
+  let cost = null;
+  try {
+    cost = await computeRecipeCost(client, recipeVersionId, 1);
+  } catch (e) { /* لو فيه مشكلة تحويل وحدات، رجّع النسخة من غيرها بس */ }
+  const ingredientsWithLineCost = ingredients.rows.map((ing) => ({
+    ...ing,
+    line_cost: ing.unit_cost != null ? Number(ing.unit_cost) * Number(ing.quantity) : null,
+  }));
+  return {
+    version: version.rows[0],
+    ingredients: ingredientsWithLineCost,
+    cost: cost ? { totalCost: cost.totalCost, incomplete: cost.incomplete } : null,
+  };
+}
+
+// المرحلة 8.29: الوصفة النشطة (لو موجودة) لصنف مباع (variantId) أو صنف مصنّع (inventoryItemId) - بيرجّع
+// {recipeId, versionId, versionNumber} أو null. استعلام مباشر على recipes/recipe_versions، مفيش أي
+// حساب أو فك وصفة هنا خالص
+async function getActiveRecipeForConsumer(client, { variantId, inventoryItemId }) {
+  const column = variantId ? "variant_id" : "inventory_item_id";
+  const value = variantId || inventoryItemId;
+  if (!value) return null;
+  const result = await client.query(
+    `SELECT r.id AS recipe_id, rv.id AS version_id, rv.version_number
+     FROM recipes r JOIN recipe_versions rv ON rv.recipe_id = r.id
+     WHERE r.${column} = $1 AND rv.status = 'ACTIVE'`,
+    [value]
+  );
+  return result.rows[0] || null;
+}
+
+// المرحلة 8.29: كل الوصفات (النشطة بس) اللي بتستخدم المكوّن ده - "يستخدم في" لشاشة الأصناف (مادة خام
+// أو مصنّعة). مجرد join مباشر على recipe_ingredients، من غير أي فك وصفة أو حساب تكلفة
+async function getIngredientUsage(client, ingredientItemId) {
+  const result = await client.query(
+    `SELECT r.recipe_type, r.id AS recipe_id, rv.id AS version_id, rv.version_number,
+            ri.quantity, ri.unit,
+            v.id AS variant_id, v.label AS variant_label, mi.id AS menu_item_id, mi.name AS menu_item_name,
+            ii2.id AS manufactured_item_id, ii2.name AS manufactured_item_name
+     FROM recipe_ingredients ri
+     JOIN recipe_versions rv ON rv.id = ri.recipe_version_id AND rv.status = 'ACTIVE'
+     JOIN recipes r ON r.id = rv.recipe_id
+     LEFT JOIN menu_item_variants v ON v.id = r.variant_id
+     LEFT JOIN menu_items mi ON mi.id = v.item_id
+     LEFT JOIN inventory_items ii2 ON ii2.id = r.inventory_item_id
+     WHERE ri.ingredient_item_id = $1
+     ORDER BY mi.name, ii2.name`,
+    [ingredientItemId]
+  );
+  return result.rows;
+}
+
+module.exports = {
+  effectiveQuantityPerUnit, explodeRecipeConsumption, computeRecipeCost, projectVersionToLegacyTable,
+  getRecipeVersionDetail, getActiveRecipeForConsumer, getIngredientUsage,
+};

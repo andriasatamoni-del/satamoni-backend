@@ -2,8 +2,15 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { logPriceChange } = require("../db/menu-price-history");
+const { getActiveRecipeForConsumer, getRecipeVersionDetail } = require("../db/recipe-engine");
+
+// المرحلة 8.29 (شاشة الأصناف): admin/branch_manager(بما فيهم مدير السنتر كيتشن)/accountant - نفس
+// مجموعة الأدوار اللي عندها inventory.view بالظبط، عشان شاشة الأصناف تقدر تعرض أصناف المنيو وتفاصيلها.
+// بيانات المنيو مش حساسة أصلًا (متاحة بالكامل من غير أي auth عبر GET /api/menu العام)
+const menuReaders = requireRole("admin", "branch_manager", "accountant");
 
 // GET /api/menu - المنيو النشط بس مع الأصناف والأسعار (شكل جاهز للموقع/الكاشير)
 // كل صنف بييجي بمرفقاته المتاحة (modifiers) عشان شاشة البيع تعرضها وقت الإضافة للسلة
@@ -93,8 +100,10 @@ router.patch("/categories/:id", requireAuth, requireRole("admin"), async (req, r
   }
 });
 
-// GET /api/menu/items - كل الأصناف (نشطة وغير نشطة) لشاشة إدارة المنيو
-router.get("/items", requireAuth, requireRole("admin"), async (req, res) => {
+// GET /api/menu/items?search= - كل الأصناف (نشطة وغير نشطة) لشاشة إدارة المنيو
+// المرحلة 8.29: بحث اختياري بالاسم (بحث جزئي غير حساس لحالة الحروف) - إضافي بالكامل
+router.get("/items", requireAuth, menuReaders, async (req, res) => {
+  const { search } = req.query;
   try {
     const items = await pool.query(`
       SELECT mi.id, mi.name, mi.description, mi.image_url, mi.is_best, mi.is_active,
@@ -104,10 +113,51 @@ router.get("/items", requireAuth, requireRole("admin"), async (req, res) => {
       FROM menu_items mi
       JOIN menu_categories mc ON mc.id = mi.category_id
       LEFT JOIN menu_item_variants v ON v.item_id = mi.id
+      ${search ? "WHERE mi.name ILIKE $1" : ""}
       GROUP BY mi.id, mc.name, mc.display_order
       ORDER BY mc.display_order, mc.name, mi.id
-    `);
+    `, search ? [`%${search}%`] : []);
     res.json(items.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/menu/items/:id/detail - المرحلة 8.29: شاشة "الأصناف" - صنف منيو بكل تفاصيله (بيانات أساسية +
+// كل حجم/variant بسعره ووصفته وتكلفته وهامش ربحه). قراءة بس، بيستخدم recipe-engine الموجود من غير أي
+// حساب تكلفة جديد
+router.get("/items/:id/detail", requireAuth, menuReaders, async (req, res) => {
+  try {
+    const itemRes = await pool.query(
+      `SELECT mi.*, mc.name AS category_name FROM menu_items mi
+       JOIN menu_categories mc ON mc.id = mi.category_id WHERE mi.id = $1`,
+      [req.params.id]
+    );
+    if (itemRes.rows.length === 0) return res.status(404).json({ error: "الصنف مش موجود" });
+    const item = itemRes.rows[0];
+
+    const variantsRes = await pool.query(
+      "SELECT * FROM menu_item_variants WHERE item_id = $1 ORDER BY id",
+      [req.params.id]
+    );
+    const variants = [];
+    for (const v of variantsRes.rows) {
+      const activeRecipe = await getActiveRecipeForConsumer(pool, { variantId: v.id });
+      let recipe = null;
+      if (activeRecipe) recipe = await getRecipeVersionDetail(pool, activeRecipe.version_id);
+      const cost = recipe?.cost?.totalCost ?? null;
+      const price = Number(v.price);
+      const margin = cost != null ? price - cost : null;
+      variants.push({
+        ...v,
+        recipe,
+        foodCostPercent: cost != null && price > 0 ? (cost / price) * 100 : null,
+        margin,
+        marginPercent: margin != null && price > 0 ? (margin / price) * 100 : null,
+      });
+    }
+
+    res.json({ item, variants });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

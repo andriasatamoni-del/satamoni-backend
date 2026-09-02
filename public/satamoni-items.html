@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ستاموني — الأصناف</title>
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
+    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 900px; margin: 0 auto; padding: 20px 16px 60px; }
+
+  #searchBox { position: relative; margin-bottom: 14px; }
+  #itemSearchInput {
+    width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 10px; padding: 12px 14px; font-size: 15px;
+  }
+  #itemSearchInput:focus { outline: none; border-color: var(--gold); }
+
+  #catTabs { display: flex; gap: 6px; margin-bottom: 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .cattab {
+    padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card);
+    color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; white-space: nowrap; flex: 0 0 auto;
+  }
+  .cattab.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .cattab .count { opacity: .75; font-size: 11px; margin-inline-start: 4px; }
+
+  #itemListWrap { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .itemrow {
+    display: flex; align-items: center; justify-content: space-between; padding: 14px 16px;
+    border-bottom: 1px solid var(--line); cursor: pointer; transition: background .1s;
+  }
+  .itemrow:last-child { border-bottom: none; }
+  .itemrow:hover { background: var(--bg-alt); }
+  .itemrow .name { font-weight: 700; font-size: 14px; }
+  .itemrow .typebadge { font-size: 11px; padding: 3px 9px; border-radius: 10px; font-weight: 700; white-space: nowrap; }
+  .typebadge.raw { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .typebadge.manufactured { background: rgba(74,144,217,.15); color: #7FB2ED; }
+  .typebadge.menu { background: rgba(63,163,77,.15); color: var(--green); }
+
+  .statemsg { padding: 40px 20px; text-align: center; color: var(--faint); font-size: 13px; }
+  .statemsg.errormsg { color: #F08A83; }
+
+  /* ---------------- تفاصيل الصنف ---------------- */
+  #detailView { display: none; }
+  #backToListBtn {
+    background: transparent; border: 1px solid var(--line); color: var(--ink); border-radius: 8px;
+    padding: 8px 14px; cursor: pointer; font-size: 13px; margin-bottom: 14px;
+  }
+  #detailHeader { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  #detailHeader h1 { margin: 0; font-size: 20px; color: var(--ink); }
+  .typebadge.big { font-size: 12px; padding: 5px 12px; }
+  #printItemBtn {
+    margin-inline-start: auto; background: transparent; border: 1px solid var(--gold); color: var(--gold-bright);
+    border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 12px; font-weight: 700;
+  }
+
+  .dcard { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .dcard h3 { margin: 0 0 12px; font-size: 14px; color: var(--gold-bright); }
+  .dgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .dfield .flabel { font-size: 11px; color: var(--faint); margin-bottom: 3px; }
+  .dfield .fvalue { font-size: 15px; font-weight: 700; font-family: 'Courier New', monospace; }
+  .dfield .fvalue.gold { color: var(--gold-bright); }
+  .dfield .fvalue.green { color: var(--green); }
+  .dfield .fvalue.red { color: #F08A83; }
+
+  .stockrow { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 14px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .stockrow:last-child { border-bottom: none; }
+  .statuspill { font-size: 11px; padding: 3px 9px; border-radius: 10px; font-weight: 700; }
+  .statuspill.NORMAL { background: rgba(63,163,77,.15); color: var(--green); }
+  .statuspill.NEEDS_REORDER { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .statuspill.OUT { background: rgba(194,42,36,.15); color: #F08A83; }
+
+  table.rtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.rtable th, table.rtable td { padding: 8px 9px; text-align: right; border-bottom: 1px solid var(--line); }
+  table.rtable th { color: var(--faint); font-weight: 700; }
+  table.rtable tr:last-child td { border-bottom: none; }
+  .tablewrap { overflow-x: auto; }
+
+  .linklist a, .linklist .linkitem {
+    display: block; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink);
+    text-decoration: none; cursor: pointer;
+  }
+  .linklist a:hover, .linklist .linkitem:hover { color: var(--gold-bright); }
+  .linklist :last-child { border-bottom: none; }
+
+  .variantbox { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .variantbox:last-child { margin-bottom: 0; }
+  .variantbox h4 { margin: 0 0 10px; font-size: 13px; color: var(--gold-bright); }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+
+  @media (max-width: 820px) {
+    #main { max-width: 100%; padding: 16px 12px 50px; }
+    .dgrid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+  }
+  @media (max-width: 480px) {
+    .dgrid { grid-template-columns: 1fr 1fr; }
+    #detailHeader h1 { font-size: 17px; }
+    .itemrow { padding: 12px; }
+    table.rtable th, table.rtable td { padding: 6px 7px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🗂️ ستاموني — الأصناف</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🗂️ تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+
+  <!-- شاشة القائمة -->
+  <div id="listView">
+    <div id="searchBox">
+      <input id="itemSearchInput" type="text" placeholder="ابحث باسم الصنف..." autocomplete="off" />
+    </div>
+    <div id="catTabs">
+      <div class="cattab active" data-cat="all">كل الأصناف <span class="count" id="count-all"></span></div>
+      <div class="cattab" data-cat="raw">مواد خام <span class="count" id="count-raw"></span></div>
+      <div class="cattab" data-cat="manufactured">مواد مصنعة <span class="count" id="count-manufactured"></span></div>
+      <div class="cattab" data-cat="menu">أصناف المنيو <span class="count" id="count-menu"></span></div>
+    </div>
+    <div id="itemListWrap"></div>
+  </div>
+
+  <!-- شاشة تفاصيل الصنف -->
+  <div id="detailView">
+    <button id="backToListBtn">→ رجوع للقائمة</button>
+    <div id="detailHeader"></div>
+    <div id="detailBody"></div>
+  </div>
+
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على شاشة الأصناف دي.</div>
+
+<script src="/js/print-reports.js"></script>
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+// المرحلة 8.29: نفس مجموعة الأدوار اللي عندها inventory.view (أدمن/مدير فرع بما فيهم مدير السنتر
+// كيتشن/محاسب) - الكاشير والكول سنتر والسائق ملهمش وصول للشاشة دي خالص
+const allowedRoles = ["admin", "accountant", "branch_manager"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+if (auth.user && auth.user.role === "cashier") location.replace("satamoni-pos.html");
+if (auth.user && auth.user.role === "callcenter") location.replace("satamoni-callcenter.html");
+if (auth.user && auth.user.role === "driver") location.replace("satamoni-driver-app.html");
+if (auth.user && auth.user.role === "employee") location.replace("satamoni-employee-self.html");
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      document.getElementById("accessDenied").style.display = "block";
+      hideLogin();
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+function esc(s) { return SatamoniPrint.esc(s); }
+function money(n) { return n == null ? "—" : `${Number(n).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م`; }
+function num(n) { return n == null ? "—" : Number(n).toLocaleString("ar-EG", { maximumFractionDigits: 2 }); }
+function pct(n) { return n == null ? "—" : `${Number(n).toFixed(1)}%`; }
+
+const CATEGORY_LABELS = { raw: "مواد خام", manufactured: "مواد مصنعة", menu: "صنف منيو" };
+const STOCK_STATUS_LABELS = { NORMAL: "طبيعي", NEEDS_REORDER: "يحتاج طلب", OUT: "نفد" };
+
+// ---------------- تحميل القائمة ----------------
+let currentCategory = "all";
+let searchDebounceTimer = null;
+
+async function loadItemList() {
+  const wrap = document.getElementById("itemListWrap");
+  wrap.innerHTML = `<div class="statemsg">جاري التحميل...</div>`;
+  const term = document.getElementById("itemSearchInput").value.trim();
+
+  try {
+    const needInventory = currentCategory === "all" || currentCategory === "raw" || currentCategory === "manufactured";
+    const needMenu = currentCategory === "all" || currentCategory === "menu";
+
+    const invQs = new URLSearchParams();
+    if (term) invQs.set("search", term);
+    if (currentCategory === "raw" || currentCategory === "manufactured") invQs.set("itemType", currentCategory);
+
+    const menuQs = new URLSearchParams();
+    if (term) menuQs.set("search", term);
+
+    const [invItems, menuItems] = await Promise.all([
+      needInventory ? api(`/api/inventory/items?${invQs.toString()}`) : Promise.resolve([]),
+      needMenu ? api(`/api/menu/items?${menuQs.toString()}`) : Promise.resolve([]),
+    ]);
+
+    const combined = [
+      ...invItems.map((i) => ({ id: i.id, name: i.name, category: i.item_type })),
+      ...menuItems.map((i) => ({ id: i.id, name: i.name, category: "menu" })),
+    ].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+
+    renderItemList(combined);
+
+    // العدّاد: بس لما مفيش بحث نشط (يمثّل إجمالي كل تبويب) - يتحمّل مرة واحدة بس عشان "رخيص"
+    if (!term && currentCategory === "all") updateCategoryCounts(invItems, menuItems);
+  } catch (e) {
+    wrap.innerHTML = `<div class="statemsg errormsg">${esc(e.message)}</div>`;
+  }
+}
+
+let baselineCounts = null;
+async function updateCategoryCounts(invItemsAll, menuItemsAll) {
+  const rawCount = invItemsAll.filter((i) => i.item_type === "raw").length;
+  const manufacturedCount = invItemsAll.filter((i) => i.item_type === "manufactured").length;
+  const menuCount = menuItemsAll.length;
+  baselineCounts = { raw: rawCount, manufactured: manufacturedCount, menu: menuCount, all: rawCount + manufacturedCount + menuCount };
+  document.getElementById("count-all").textContent = baselineCounts.all;
+  document.getElementById("count-raw").textContent = baselineCounts.raw;
+  document.getElementById("count-manufactured").textContent = baselineCounts.manufactured;
+  document.getElementById("count-menu").textContent = baselineCounts.menu;
+}
+
+function renderItemList(items) {
+  const wrap = document.getElementById("itemListWrap");
+  if (items.length === 0) {
+    wrap.innerHTML = `<div class="statemsg">مفيش أصناف مطابقة</div>`;
+    return;
+  }
+  wrap.innerHTML = items.map((it) => `
+    <div class="itemrow" data-openitem data-id="${it.id}" data-category="${it.category}">
+      <span class="name">${esc(it.name)}</span>
+      <span class="typebadge ${it.category}">${CATEGORY_LABELS[it.category]}</span>
+    </div>
+  `).join("");
+  wrap.querySelectorAll("[data-openitem]").forEach((row) => {
+    row.onclick = () => openItemDetail(row.dataset.id, row.dataset.category);
+  });
+}
+
+document.querySelectorAll(".cattab").forEach((tab) => {
+  tab.onclick = () => {
+    document.querySelectorAll(".cattab").forEach((t) => t.classList.toggle("active", t === tab));
+    currentCategory = tab.dataset.cat;
+    loadItemList();
+  };
+});
+
+document.getElementById("itemSearchInput").addEventListener("input", () => {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(loadItemList, 250);
+});
+
+// ---------------- تفاصيل الصنف ----------------
+function showListView() {
+  document.getElementById("detailView").style.display = "none";
+  document.getElementById("listView").style.display = "block";
+}
+function showDetailView() {
+  document.getElementById("listView").style.display = "none";
+  document.getElementById("detailView").style.display = "block";
+  window.scrollTo(0, 0);
+}
+document.getElementById("backToListBtn").onclick = showListView;
+
+async function openItemDetail(id, category) {
+  showDetailView();
+  document.getElementById("detailHeader").innerHTML = "";
+  document.getElementById("detailBody").innerHTML = `<div class="statemsg">جاري التحميل...</div>`;
+  try {
+    if (category === "menu") {
+      const data = await api(`/api/menu/items/${id}/detail`);
+      renderMenuItemDetail(data);
+    } else {
+      const data = await api(`/api/inventory/items/${id}/detail`);
+      renderInventoryItemDetail(data, category);
+    }
+  } catch (e) {
+    document.getElementById("detailBody").innerHTML = `<div class="statemsg errormsg">${esc(e.message)}</div>`;
+  }
+}
+
+function detailHeaderHtml(name, category, printFn) {
+  return `
+    <h1>${esc(name)}</h1>
+    <span class="typebadge big ${category}">${CATEGORY_LABELS[category]}</span>
+    <button id="printItemBtn">🖨️ طباعة بيانات الصنف</button>
+  `;
+}
+
+function recipeTableHtml(recipe) {
+  if (!recipe) return `<div class="statemsg">مفيش وصفة نشطة مسجّلة للصنف ده</div>`;
+  const rows = recipe.ingredients.map((ing) => `
+    <tr>
+      <td>${esc(ing.item_name)}${ing.item_type === "manufactured" ? " (نصف مصنّع)" : ""}</td>
+      <td>${num(ing.quantity)}</td>
+      <td>${esc(ing.unit || ing.item_unit)}</td>
+      <td>${ing.line_cost != null ? money(ing.line_cost) : "—"}</td>
+    </tr>
+  `).join("");
+  return `
+    <div class="tablewrap"><table class="rtable">
+      <thead><tr><th>المكوّن</th><th>الكمية</th><th>الوحدة</th><th>تكلفة المكوّن</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="dfield" style="margin-top:12px">
+      <div class="flabel">إجمالي تكلفة الريسبي${recipe.cost?.incomplete ? " (بيانات ناقصة)" : ""}</div>
+      <div class="fvalue gold">${recipe.cost ? money(recipe.cost.totalCost) : "—"}</div>
+    </div>
+  `;
+}
+
+function usedInHtml(usedIn) {
+  if (!usedIn || usedIn.length === 0) return `<div class="statemsg">الصنف ده مش مستخدم في أي وصفة نشطة حاليًا</div>`;
+  return `<div class="linklist">${usedIn.map((u) => {
+    const label = u.recipe_type === "sellable_variant"
+      ? `${esc(u.menu_item_name || "")} (${esc(u.variant_label || "")})`
+      : esc(u.manufactured_item_name || "");
+    return `<div class="linkitem">${label} — ${num(u.quantity)} ${esc(u.unit || "")}</div>`;
+  }).join("")}</div>`;
+}
+
+function renderInventoryItemDetail(data, category) {
+  const { item, stock, lastPurchase, recipe, production, usedIn } = data;
+  document.getElementById("detailHeader").innerHTML = detailHeaderHtml(item.name, item.item_type, null);
+  document.getElementById("printItemBtn").onclick = () => printInventoryItem(data);
+
+  let html = `
+    <div class="dcard">
+      <h3>المعلومات الأساسية</h3>
+      <div class="dgrid">
+        <div class="dfield"><div class="flabel">الوحدة</div><div class="fvalue">${esc(item.unit)}</div></div>
+        <div class="dfield"><div class="flabel">نوع الصنف</div><div class="fvalue">${CATEGORY_LABELS[item.item_type]}</div></div>
+        <div class="dfield"><div class="flabel">سياسة الرصيد السالب</div><div class="fvalue">${item.negative_stock_policy === "STRICT" ? "صارم" : "مسموح بموافقة"}</div></div>
+      </div>
+    </div>
+  `;
+
+  if (item.item_type === "raw") {
+    html += `
+      <div class="dcard">
+        <h3>الشراء</h3>
+        <div class="dgrid">
+          <div class="dfield"><div class="flabel">سعر الشراء الحالي (المعتمد للتسعير)</div><div class="fvalue gold">${item.unit_cost != null ? money(item.unit_cost) : "—"}</div></div>
+          <div class="dfield"><div class="flabel">آخر سعر شراء فعلي</div><div class="fvalue">${lastPurchase ? money(lastPurchase.unit_price) : "—"}</div></div>
+          <div class="dfield"><div class="flabel">آخر مورد</div><div class="fvalue" style="font-family:inherit;font-size:13px">${lastPurchase ? esc(lastPurchase.supplier_name) : "—"}</div></div>
+          <div class="dfield"><div class="flabel">تاريخ آخر شراء</div><div class="fvalue" style="font-family:inherit;font-size:13px">${lastPurchase ? new Date(lastPurchase.received_at).toLocaleDateString("ar-EG") : "—"}</div></div>
+        </div>
+      </div>
+    `;
+  } else {
+    html += `
+      <div class="dcard">
+        <h3>التكلفة</h3>
+        <div class="dgrid">
+          <div class="dfield"><div class="flabel">تكلفة الصنف (المعتمدة للتسعير)</div><div class="fvalue gold">${item.unit_cost != null ? money(item.unit_cost) : "—"}</div></div>
+        </div>
+      </div>
+      <div class="dcard">
+        <h3>الريسبي</h3>
+        ${recipeTableHtml(recipe)}
+      </div>
+      <div class="dcard">
+        <h3>الإنتاج (آخر ${production.length} أمر)</h3>
+        ${production.length === 0 ? `<div class="statemsg">مفيش أوامر تصنيع مسجّلة للصنف ده</div>` : `
+          <div class="tablewrap"><table class="rtable">
+            <thead><tr><th>#</th><th>الفرع</th><th>الحالة</th><th>المخطط</th><th>الفعلي</th><th>التاريخ</th><th>رقم الدفعة</th></tr></thead>
+            <tbody>${production.map((p) => `
+              <tr>
+                <td>#${p.id}</td><td>${esc(p.branch_name)}</td><td>${esc(p.status)}</td>
+                <td>${num(p.planned_quantity)}</td><td>${p.actual_quantity != null ? num(p.actual_quantity) : "—"}</td>
+                <td>${new Date(p.production_date).toLocaleDateString("ar-EG")}</td><td>${esc(p.batch_number || "—")}</td>
+              </tr>
+            `).join("")}</tbody>
+          </table></div>
+        `}
+      </div>
+    `;
+  }
+
+  html += `
+    <div class="dcard">
+      <h3>المخزون</h3>
+      ${stock.length === 0 ? `<div class="statemsg">مفيش رصيد مسجّل في أي فرع</div>` : stock.map((s) => `
+        <div class="stockrow">
+          <span>${esc(s.branch_name)}${s.is_central_kitchen ? " (سنتر كيتشن)" : ""}</span>
+          <span>${num(s.quantity)} ${esc(item.unit)}</span>
+          <span>حد الطلب: ${s.reorder_point != null ? num(s.reorder_point) : "—"}</span>
+          <span class="statuspill ${s.status}">${STOCK_STATUS_LABELS[s.status]}</span>
+        </div>
+      `).join("")}
+    </div>
+    <div class="dcard">
+      <h3>يستخدم في</h3>
+      ${usedInHtml(usedIn)}
+    </div>
+  `;
+
+  document.getElementById("detailBody").innerHTML = html;
+}
+
+function renderMenuItemDetail(data) {
+  const { item, variants } = data;
+  document.getElementById("detailHeader").innerHTML = detailHeaderHtml(item.name, "menu", null);
+  document.getElementById("printItemBtn").onclick = () => printMenuItem(data);
+
+  let html = `
+    <div class="dcard">
+      <h3>المعلومات الأساسية</h3>
+      <div class="dgrid">
+        <div class="dfield"><div class="flabel">القسم</div><div class="fvalue" style="font-family:inherit;font-size:14px">${esc(item.category_name)}</div></div>
+        <div class="dfield"><div class="flabel">حالة الصنف</div><div class="fvalue ${item.is_active ? "green" : "red"}" style="font-family:inherit;font-size:14px">${item.is_active ? "نشط" : "متوقف"}</div></div>
+      </div>
+    </div>
+  `;
+
+  html += variants.map((v) => `
+    <div class="dcard">
+      <h3>${esc(v.label)}</h3>
+      <div class="dgrid" style="margin-bottom:14px">
+        <div class="dfield"><div class="flabel">سعر البيع</div><div class="fvalue gold">${money(v.price)}</div></div>
+        <div class="dfield"><div class="flabel">تكلفة الريسبي</div><div class="fvalue">${v.recipe?.cost ? money(v.recipe.cost.totalCost) : "—"}</div></div>
+        <div class="dfield"><div class="flabel">Food Cost %</div><div class="fvalue">${pct(v.foodCostPercent)}</div></div>
+        <div class="dfield"><div class="flabel">هامش الربح</div><div class="fvalue green">${v.margin != null ? money(v.margin) : "—"}</div></div>
+        <div class="dfield"><div class="flabel">هامش الربح %</div><div class="fvalue green">${pct(v.marginPercent)}</div></div>
+      </div>
+      <h3 style="font-size:12px">الريسبي</h3>
+      ${recipeTableHtml(v.recipe)}
+    </div>
+  `).join("");
+
+  document.getElementById("detailBody").innerHTML = html;
+}
+
+// ---------------- الطباعة ----------------
+function recipePrintRows(recipe) {
+  if (!recipe) return `<div>مفيش وصفة نشطة</div>`;
+  const rows = recipe.ingredients.map((ing) => `
+    <tr><td>${esc(ing.item_name)}</td><td>${num(ing.quantity)}</td><td>${esc(ing.unit || ing.item_unit)}</td><td>${ing.line_cost != null ? money(ing.line_cost) : "—"}</td></tr>
+  `).join("");
+  return `
+    <table style="width:100%;border-collapse:collapse"><thead><tr><th>المكوّن</th><th>الكمية</th><th>الوحدة</th><th>التكلفة</th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="margin-top:8px;font-weight:800">إجمالي تكلفة الريسبي: ${recipe.cost ? money(recipe.cost.totalCost) : "—"}</div>
+  `;
+}
+function printInventoryItem(data) {
+  const { item, stock, lastPurchase, recipe } = data;
+  const body = `
+    <div style="font-size:13px;margin-bottom:10px">النوع: ${CATEGORY_LABELS[item.item_type]} — الوحدة: ${esc(item.unit)}</div>
+    ${item.item_type === "raw" ? `
+      <div style="margin-bottom:10px">سعر الشراء الحالي: ${item.unit_cost != null ? money(item.unit_cost) : "—"} — آخر سعر شراء: ${lastPurchase ? money(lastPurchase.unit_price) : "—"} (${lastPurchase ? esc(lastPurchase.supplier_name) : "—"})</div>
+    ` : `<div style="margin-bottom:10px">تكلفة الصنف: ${item.unit_cost != null ? money(item.unit_cost) : "—"}</div>`}
+    <div style="font-weight:800;margin-bottom:6px">المخزون</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:14px"><thead><tr><th>الفرع</th><th>الرصيد</th><th>حد الطلب</th></tr></thead><tbody>
+      ${stock.map((s) => `<tr><td>${esc(s.branch_name)}</td><td>${num(s.quantity)} ${esc(item.unit)}</td><td>${s.reorder_point != null ? num(s.reorder_point) : "—"}</td></tr>`).join("")}
+    </tbody></table>
+    ${item.item_type === "manufactured" ? `<div style="font-weight:800;margin-bottom:6px">الريسبي</div>${recipePrintRows(recipe)}` : ""}
+  `;
+  window.SatamoniPrint.openCustomPrint(`صنف: ${item.name}`, body);
+}
+function printMenuItem(data) {
+  const { item, variants } = data;
+  const body = `
+    <div style="font-size:13px;margin-bottom:10px">القسم: ${esc(item.category_name)}</div>
+    ${variants.map((v) => `
+      <div style="font-weight:800;margin:14px 0 6px">${esc(v.label)} — سعر ${money(v.price)} — تكلفة ${v.recipe?.cost ? money(v.recipe.cost.totalCost) : "—"} — Food Cost ${pct(v.foodCostPercent)}</div>
+      ${recipePrintRows(v.recipe)}
+    `).join("")}
+  `;
+  window.SatamoniPrint.openCustomPrint(`صنف منيو: ${item.name}`, body);
+}
+
+// ---------------- بدء التشغيل ----------------
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  await loadItemList();
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

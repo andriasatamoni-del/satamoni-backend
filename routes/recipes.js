@@ -4,7 +4,10 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
-const { explodeRecipeConsumption, computeRecipeCost, projectVersionToLegacyTable } = require("../db/recipe-engine");
+const {
+  explodeRecipeConsumption, computeRecipeCost, projectVersionToLegacyTable,
+  getRecipeVersionDetail, getIngredientUsage,
+} = require("../db/recipe-engine");
 
 const EDITABLE_STATUSES = ["DRAFT", "REJECTED"];
 
@@ -345,22 +348,20 @@ router.get("/:id", requireAuth, requirePermission("recipes.view"), async (req, r
 // GET /api/recipes/versions/:versionId - نسخة واحدة بالتفصيل (مكونات + تكلفة نظرية محسوبة)
 router.get("/versions/:versionId", requireAuth, requirePermission("recipes.view"), async (req, res) => {
   try {
-    const version = await pool.query("SELECT * FROM recipe_versions WHERE id = $1", [req.params.versionId]);
-    if (version.rows.length === 0) return res.status(404).json({ error: "نسخة الوصفة مش موجودة" });
-    const ingredients = await pool.query(
-      `SELECT ri.*, ii.name AS item_name, ii.unit AS item_unit, ii.item_type
-       FROM recipe_ingredients ri JOIN inventory_items ii ON ii.id = ri.ingredient_item_id
-       WHERE ri.recipe_version_id = $1`,
-      [req.params.versionId]
-    );
-    let cost = null;
-    try {
-      cost = await computeRecipeCost(pool, req.params.versionId, 1);
-    } catch (e) { /* لو فيه مشكلة تحويل وحدات، رجّع النسخة من غيرها بس */ }
-    res.json({
-      version: version.rows[0], ingredients: ingredients.rows,
-      cost: cost ? { totalCost: cost.totalCost, incomplete: cost.incomplete } : null,
-    });
+    const detail = await getRecipeVersionDetail(pool, req.params.versionId);
+    if (!detail) return res.status(404).json({ error: "نسخة الوصفة مش موجودة" });
+    res.json(detail);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/recipes/usage/:itemId - المرحلة 8.29 (شاشة الأصناف): كل الوصفات النشطة اللي بتستخدم الصنف
+// ده كمكوّن (مادة خام أو صنف مصنّع) - "يستخدم في"
+router.get("/usage/:itemId", requireAuth, requirePermission("recipes.view"), async (req, res) => {
+  try {
+    const usage = await getIngredientUsage(pool, req.params.itemId);
+    res.json(usage);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

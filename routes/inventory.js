@@ -2,22 +2,105 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
+const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { convertQuantity } = require("../db/unit-conversion");
 const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
 const { traceBackward, traceForward } = require("../db/batch-traceability");
+const { getActiveRecipeForConsumer, getRecipeVersionDetail, getIngredientUsage } = require("../db/recipe-engine");
 
 const WASTE_REASONS = ["EXPIRED", "DAMAGED", "BURNED", "PREPARATION_WASTE", "OVERPRODUCTION", "QUALITY_ISSUE", "CUSTOMER_RETURN", "UNKNOWN"];
 
 const staffRoles = requireRole("admin", "branch_manager", "accountant", "cashier");
 const stockManagers = requireRole("admin", "branch_manager");
 
-// GET /api/inventory/items - كتالوج المكونات الخام
+// GET /api/inventory/items?search=&itemType= - كتالوج المكونات الخام/المصنّعة
+// المرحلة 8.29 (شاشة الأصناف): إضافة فلترة بالاسم (بحث جزئي غير حساس لحالة الحروف) ونوع الصنف -
+// إضافية بالكامل، من غير باراميترات بترجع نفس السلوك القديم بالظبط (كل الأصناف بترتيب الاسم)
 router.get("/items", requireAuth, staffRoles, async (req, res) => {
+  const { search, itemType } = req.query;
+  const conditions = [];
+  const values = [];
+  let i = 1;
+  if (search) { conditions.push(`name ILIKE $${i++}`); values.push(`%${search}%`); }
+  if (itemType) {
+    if (!["raw", "manufactured"].includes(itemType)) return res.status(400).json({ error: "نوع الصنف غير معروف" });
+    conditions.push(`item_type = $${i++}`); values.push(itemType);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   try {
-    const result = await pool.query("SELECT * FROM inventory_items ORDER BY name");
+    const result = await pool.query(`SELECT * FROM inventory_items ${where} ORDER BY name`, values);
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/inventory/items/:id/detail - المرحلة 8.29: شاشة "الأصناف" - كل بيانات صنف خام/مصنّع في نداء
+// واحد (بيانات أساسية + رصيد كل فرع + آخر سعر شراء [خام بس] + الوصفة [مصنّع بس] + مكان الاستخدام في
+// وصفات تانية + سجل تصنيع [مصنّع بس]). قراءة بس، بيستخدم recipe-engine الموجود من غير أي حساب تكلفة
+// أو فك وصفة جديد. عزل الفروع: مدير الفرع يشوف رصيد/تصنيع فرعه بس، أدمن ومحاسب يشوفوا كل الفروع
+router.get("/items/:id/detail", requireAuth, requirePermission("inventory.view"), async (req, res) => {
+  const itemId = req.params.id;
+  try {
+    const itemRes = await pool.query("SELECT * FROM inventory_items WHERE id = $1", [itemId]);
+    if (itemRes.rows.length === 0) return res.status(404).json({ error: "الصنف مش موجود" });
+    const item = itemRes.rows[0];
+
+    const branchFilter = req.user.role === "branch_manager" ? "AND bis.branch_id = $2" : "";
+    const stockValues = req.user.role === "branch_manager" ? [itemId, req.user.branchId] : [itemId];
+    const stockRes = await pool.query(
+      `SELECT bis.branch_id, b.name AS branch_name, b.is_central_kitchen,
+              bis.quantity, bis.reorder_point, bis.min_stock, bis.max_stock
+       FROM branch_inventory_stock bis JOIN branches b ON b.id = bis.branch_id
+       WHERE bis.inventory_item_id = $1 ${branchFilter}
+       ORDER BY b.name`,
+      stockValues
+    );
+    const stock = stockRes.rows.map((s) => ({
+      ...s,
+      status: Number(s.quantity) <= 0 ? "OUT" : (s.reorder_point != null && Number(s.quantity) <= Number(s.reorder_point)) ? "NEEDS_REORDER" : "NORMAL",
+    }));
+
+    let lastPurchase = null;
+    if (item.item_type === "raw") {
+      const lp = await pool.query(
+        `SELECT gri.unit_price, gri.unit, gr.received_at, gr.supplier_id, s.name AS supplier_name
+         FROM goods_receipt_items gri
+         JOIN goods_receipts gr ON gr.id = gri.goods_receipt_id
+         JOIN suppliers s ON s.id = gr.supplier_id
+         WHERE gri.inventory_item_id = $1 AND gr.status = 'POSTED'
+         ORDER BY gr.received_at DESC LIMIT 1`,
+        [itemId]
+      );
+      lastPurchase = lp.rows[0] || null;
+    }
+
+    let recipe = null;
+    let production = [];
+    if (item.item_type === "manufactured") {
+      const activeRecipe = await getActiveRecipeForConsumer(pool, { inventoryItemId: itemId });
+      if (activeRecipe) recipe = await getRecipeVersionDetail(pool, activeRecipe.version_id);
+
+      const prodBranchFilter = req.user.role === "branch_manager" ? "AND po.branch_id = $2" : "";
+      const prodValues = req.user.role === "branch_manager" ? [itemId, req.user.branchId] : [itemId];
+      const prodRes = await pool.query(
+        `SELECT po.id, po.status, po.planned_quantity, po.actual_quantity, po.production_date,
+                po.batch_number, po.branch_id, b.name AS branch_name
+         FROM production_orders po
+         JOIN recipes r ON r.id = po.recipe_id
+         JOIN branches b ON b.id = po.branch_id
+         WHERE r.inventory_item_id = $1 ${prodBranchFilter}
+         ORDER BY po.production_date DESC, po.id DESC LIMIT 20`,
+        prodValues
+      );
+      production = prodRes.rows;
+    }
+
+    const usedIn = await getIngredientUsage(pool, itemId);
+
+    res.json({ item, stock, lastPurchase, recipe, production, usedIn });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
