@@ -37,12 +37,16 @@
     --ink: #FFFFFF;
     --faint: rgba(255,255,255,.82);
     --line: rgba(255,255,255,.45);
+    --green: #6FCF7A;
+    --red: #FF6B60;
+    --err: #FF8A80;
   }
   :root:not([data-theme="dark"]) #topbar .brand { color: #FFFFFF; }
   #topbar select {
     background: var(--card); color: var(--ink); border: 1px solid var(--line);
     border-radius: 6px; padding: 6px 10px; font-size: 14px;
   }
+  :root:not([data-theme="dark"]) #topbar select { color: #221E17; }
   #topbar .status { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 6px; }
   #topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
   #topbar .dot.ok { background: var(--green); }
