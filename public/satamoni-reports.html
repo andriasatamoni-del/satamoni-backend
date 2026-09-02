@@ -137,6 +137,7 @@
     <div class="tabbtn" data-tab="peakhours">ساعات الذروة</div>
     <div class="tabbtn" data-tab="customerspend">إنفاق العملاء</div>
     <div class="tabbtn" data-tab="inventoryvaluation">قيمة المخزون</div>
+    <div class="tabbtn" data-tab="extra">تقارير إضافية</div>
   </div>
 
   <!-- المرحلة 7Q: بحث/فلترة داخل نتائج التقرير الحالي - بيفلتر صفوف الجدول(ات) في التبويب المفتوح بس -->
@@ -345,6 +346,21 @@
       <thead><tr><th>الفرع</th><th>المكوّن</th><th>الرصيد</th><th>تكلفة الوحدة</th><th>القيمة</th></tr></thead>
       <tbody id="inventoryValuationBody"></tbody>
     </table></div>
+  </div>
+
+  <!-- المرحلة 8.26: تقارير كانت جاهزة بالكامل في الباك إند من مراحل سابقة (4A/4.1/4B/Procurement v2)
+       بس مفيش أي شاشة تستخدمها - كتالوج عام بيشغّل أي واحد فيها بمدخلاته ويعرض النتيجة في جدول
+       تلقائي (بدل ما نبني 36 تبويب مخصص بشكل منفصل، وده أنسب لتقارير أقل استخدامًا من التقارير
+       الأساسية اللي ليها تبويباتها المخصصة فوق) -->
+  <div class="panel" id="panel-extra">
+    <div class="toolbar" style="flex-wrap:wrap;gap:10px">
+      <select id="erReportSelect" style="min-width:260px"></select>
+      <div id="erParamsRow" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+      <button id="erRunBtn">تشغيل التقرير</button>
+    </div>
+    <div id="erDesc" style="font-size:11px;color:var(--faint);margin:6px 0 12px"></div>
+    <div class="err" id="erErr" style="color:#F08A83;font-size:12px;margin-bottom:8px"></div>
+    <div id="erResults"></div>
   </div>
 </div>
 
@@ -744,6 +760,10 @@ const loaders = {
       </tr>
     `).join("") || `<tr><td colspan="5" class="empty">مفيش مخزون مسجّل</td></tr>`;
   },
+
+  async extra() {
+    await initExtraReportsTab();
+  },
 };
 
 const refreshButtonsByTab = {
@@ -757,6 +777,203 @@ Object.entries(refreshButtonsByTab).forEach(([tab, btnId]) => {
   if (el) el.onclick = () => { dirty[tab] = true; loadTab(tab); };
 });
 document.getElementById("catalogSort").onchange = () => { dirty.catalog = true; loadTab("catalog"); };
+
+// ---------------- المرحلة 8.26: كتالوج التقارير الإضافية ----------------
+// كل التقارير دي كانت جاهزة بالكامل في routes/reports.js من مراحل سابقة (4A/4.1/4B/Procurement v2)
+// بس مفيش أي شاشة كانت بتستخدمها - عارضها هنا بشكل عام (فلتر حسب احتياج كل تقرير + جدول تلقائي)
+// بدل ما نبني 36 تبويب مخصص منفصل زي التبويبات الأساسية فوق
+const EXTRA_REPORTS = [
+  { key: "branch-debt", label: "مديونية الفروع للمطبخ المركزي", group: "المخزون وتكلفة الطعام" },
+  { key: "stock-card", label: "كارت صنف (كل حركاته)", group: "المخزون وتكلفة الطعام", useRange: true, useBranch: true, extra: [{ name: "itemId", type: "item", required: true, label: "الصنف" }] },
+  { key: "transfers", label: "تقرير تحويلات المخزون", group: "المخزون وتكلفة الطعام", useRange: true, useBranch: true },
+  { key: "expiring-batches", label: "دفعات قربت تنتهي صلاحيتها", group: "المخزون وتكلفة الطعام", useBranch: true, extra: [{ name: "days", type: "number", default: 7, label: "خلال كام يوم" }] },
+  { key: "negative-stock", label: "أرصدة مخزون سالبة", group: "المخزون وتكلفة الطعام", useBranch: true },
+  { key: "inventory-comparison", label: "مقارنة رصيد صنف بين الفروع", group: "المخزون وتكلفة الطعام", extra: [{ name: "itemId", type: "item", label: "الصنف" }] },
+  { key: "theoretical-vs-actual-consumption", label: "الاستهلاك النظري مقابل الفعلي", group: "المخزون وتكلفة الطعام", useRange: true, useBranch: true },
+  { key: "food-cost-variance", label: "انحراف تكلفة الطعام", group: "المخزون وتكلفة الطعام", useRange: true, useBranch: true },
+  { key: "branch-food-cost", label: "تكلفة الطعام حسب الفرع", group: "المخزون وتكلفة الطعام", useRange: true, useBranch: true },
+  { key: "cost-traceability", label: "تتبع تكلفة طلب معيّن", group: "المخزون وتكلفة الطعام", pathParam: "orderId", extra: [{ name: "orderId", type: "number", required: true, label: "رقم الطلب" }] },
+
+  { key: "purchase-orders", label: "تقرير أوامر الشراء", group: "المشتريات", useRange: true, useBranch: true, extra: [{ name: "supplierId", type: "supplier", label: "المورد" }, { name: "status", type: "text", label: "الحالة (اختياري)" }] },
+  { key: "purchase-receipts", label: "سندات الاستلام المرحّلة", group: "المشتريات", useRange: true, useBranch: true, extra: [{ name: "supplierId", type: "supplier", label: "المورد" }] },
+  { key: "supplier-purchase-history", label: "سجل الشراء لمورد معيّن", group: "المشتريات", useRange: true, extra: [{ name: "supplierId", type: "supplier", required: true, label: "المورد" }] },
+  { key: "purchase-price-history", label: "تاريخ أسعار صنف عند مورد", group: "المشتريات", extra: [{ name: "itemId", type: "item", required: true, label: "الصنف" }, { name: "supplierId", type: "supplier", label: "المورد" }] },
+  { key: "purchase-price-variance", label: "انحراف أسعار الشراء", group: "المشتريات", useRange: true, useBranch: true },
+  { key: "supplier-performance", label: "تقييم أداء مورد", group: "المشتريات", useRange: true, extra: [{ name: "supplierId", type: "supplier", required: true, label: "المورد" }] },
+  { key: "rejected-goods", label: "أصناف مرفوضة عند الاستلام", group: "المشتريات", useRange: true, useBranch: true },
+  { key: "purchases-by-branch", label: "المشتريات حسب الفرع", group: "المشتريات", useRange: true },
+  { key: "purchases-by-item", label: "المشتريات حسب الصنف", group: "المشتريات", useRange: true, useBranch: true },
+  { key: "supplier-comparison", label: "مقارنة موردين لصنف معيّن", group: "المشتريات", extra: [{ name: "itemId", type: "item", required: true, label: "الصنف" }] },
+  { key: "purchasing-recommendations", label: "توصيات إعادة الطلب", group: "المشتريات", useBranch: true },
+
+  { key: "revenue-by-branch", label: "الإيراد حسب الفرع", group: "المحاسبة", useRange: true },
+  { key: "cogs-by-branch", label: "تكلفة البضاعة المباعة حسب الفرع", group: "المحاسبة", useRange: true },
+  { key: "opex-by-branch", label: "المصروفات التشغيلية حسب الفرع", group: "المحاسبة", useRange: true },
+  { key: "cash-report", label: "أرصدة حسابات الكاش", group: "المحاسبة", useBranch: true, extra: [{ name: "asOf", type: "date", label: "حتى تاريخ" }] },
+  { key: "accounting-expense-report", label: "تقرير المصروفات المحاسبي", group: "المحاسبة", useRange: true, useBranch: true },
+  { key: "sales-by-payment-method", label: "المبيعات حسب طريقة الدفع (محاسبي)", group: "المحاسبة", useRange: true, useBranch: true },
+  { key: "delivery-app-settlement", label: "تسوية تطبيقات التوصيل", group: "المحاسبة", useRange: true, useBranch: true },
+  { key: "gross-profit", label: "مجمل الربح", group: "المحاسبة", useRange: true, useBranch: true },
+  { key: "net-operating-profit", label: "صافي الربح التشغيلي", group: "المحاسبة", useRange: true, useBranch: true },
+
+  { key: "requisition-fulfillment", label: "تنفيذ طلبيات الفروع من السنتر كيتشن", group: "التصنيع والتوريد", useRange: true, useBranch: true },
+  { key: "transfer-discrepancies", label: "فروقات تحويلات المخزون", group: "التصنيع والتوريد", useRange: true, useBranch: true },
+  { key: "manufacturing-variance", label: "انحراف أوامر التصنيع", group: "التصنيع والتوريد", useRange: true, useBranch: true },
+  { key: "supplier-invoice-variance", label: "انحراف فواتير الموردين", group: "التصنيع والتوريد", useRange: true, extra: [{ name: "supplierId", type: "supplier", required: true, label: "المورد" }] },
+  { key: "production-requirement", label: "احتياج الإنتاج (السنتر كيتشن)", group: "التصنيع والتوريد", useBranch: true, branchQueryName: "ckBranchId", useRange: true, rangeQueryNames: ["fromDate", "toDate"] },
+  { key: "raw-material-requirement", label: "احتياج المواد الخام (السنتر كيتشن)", group: "التصنيع والتوريد", useBranch: true, branchQueryName: "ckBranchId", useRange: true, rangeQueryNames: ["fromDate", "toDate"] },
+];
+
+let extraBranchesAllCache = null;
+let extraSuppliersCache = null;
+let extraItemsCache = null;
+async function ensureSuppliersCache() { if (!extraSuppliersCache) extraSuppliersCache = await api("/api/suppliers"); return extraSuppliersCache; }
+async function ensureItemsCache() { if (!extraItemsCache) extraItemsCache = await api("/api/inventory/items"); return extraItemsCache; }
+async function ensureBranchesAllCache() { if (!extraBranchesAllCache) extraBranchesAllCache = await api("/api/branches/all"); return extraBranchesAllCache; }
+
+async function initExtraReportsTab() {
+  const sel = document.getElementById("erReportSelect");
+  const groups = {};
+  EXTRA_REPORTS.forEach(r => { (groups[r.group] = groups[r.group] || []).push(r); });
+  sel.innerHTML = Object.entries(groups).map(([g, list]) => `
+    <optgroup label="${SatamoniPrint.esc(g)}">${list.map(r => `<option value="${r.key}">${SatamoniPrint.esc(r.label)}</option>`).join("")}</optgroup>
+  `).join("");
+  sel.onchange = () => renderExtraParams();
+  document.getElementById("erRunBtn").onclick = () => runExtraReport();
+  await renderExtraParams();
+}
+
+function currentExtraReport() {
+  return EXTRA_REPORTS.find(r => r.key === document.getElementById("erReportSelect").value);
+}
+
+async function renderExtraParams() {
+  const report = currentExtraReport();
+  const row = document.getElementById("erParamsRow");
+  document.getElementById("erResults").innerHTML = "";
+  document.getElementById("erErr").textContent = "";
+  if (!report) { row.innerHTML = ""; return; }
+  row.innerHTML = `<span style="font-size:11px;color:var(--faint)">بيحمّل...</span>`;
+  const parts = [];
+  if (report.branchQueryName === "ckBranchId") {
+    const branches = await ensureBranchesAllCache();
+    const ck = branches.filter(b => b.is_central_kitchen);
+    parts.push(`<select id="erp_ckBranchId"><option value="">اختار السنتر كيتشن *</option>${ck.map(b => `<option value="${b.id}">${SatamoniPrint.esc(b.name)}</option>`).join("")}</select>`);
+  }
+  if (report.rangeQueryNames && report.rangeQueryNames[0] === "fromDate") {
+    parts.push(`<input id="erp_fromDate" type="date" title="من" />`);
+    parts.push(`<input id="erp_toDate" type="date" title="إلى" />`);
+  }
+  for (const p of (report.extra || [])) {
+    if (p.type === "item") {
+      const items = await ensureItemsCache();
+      parts.push(`<select id="erp_${p.name}"><option value="">${p.required ? SatamoniPrint.esc(p.label) + " *" : "كل الأصناف"}</option>${items.map(i => `<option value="${i.id}">${SatamoniPrint.esc(i.name)}</option>`).join("")}</select>`);
+    } else if (p.type === "supplier") {
+      const suppliers = await ensureSuppliersCache();
+      parts.push(`<select id="erp_${p.name}"><option value="">${p.required ? SatamoniPrint.esc(p.label) + " *" : "كل الموردين"}</option>${suppliers.map(s => `<option value="${s.id}">${SatamoniPrint.esc(s.name)}</option>`).join("")}</select>`);
+    } else if (p.type === "number") {
+      parts.push(`<input id="erp_${p.name}" type="number" placeholder="${SatamoniPrint.esc(p.label || p.name)}" value="${p.default ?? ""}" style="width:110px" />`);
+    } else if (p.type === "date") {
+      parts.push(`<input id="erp_${p.name}" type="date" title="${SatamoniPrint.esc(p.label || p.name)}" />`);
+    } else {
+      parts.push(`<input id="erp_${p.name}" type="text" placeholder="${SatamoniPrint.esc(p.label || p.name)}" style="width:130px" />`);
+    }
+  }
+  row.innerHTML = parts.join("") || `<span style="font-size:11px;color:var(--faint)">من غير مدخلات إضافية</span>`;
+}
+
+async function runExtraReport() {
+  const report = currentExtraReport();
+  const errBox = document.getElementById("erErr");
+  const results = document.getElementById("erResults");
+  errBox.textContent = "";
+  if (!report) return;
+
+  if (report.pathParam) {
+    const val = document.getElementById(`erp_${report.pathParam}`)?.value;
+    if (!val) { errBox.textContent = "لازم تدخل رقم الطلب"; return; }
+    try {
+      const data = await api(`/api/reports/${report.key}/${encodeURIComponent(val)}`);
+      genericReportRender(results, data);
+    } catch (e) { errBox.textContent = e.message; results.innerHTML = ""; }
+    return;
+  }
+
+  const qs = new URLSearchParams();
+  if (report.useRange) {
+    const [fromName, toName] = report.rangeQueryNames || ["from", "to"];
+    if (fromName === "fromDate") {
+      const f = document.getElementById("erp_fromDate")?.value;
+      const t = document.getElementById("erp_toDate")?.value;
+      if (f) qs.set(fromName, f);
+      if (t) qs.set(toName, t);
+    } else {
+      const f = document.getElementById("fromDate").value;
+      const t = document.getElementById("toDate").value;
+      if (f) qs.set(fromName, f);
+      if (t) qs.set(toName, t);
+    }
+  }
+  if (report.useBranch) {
+    const branchQueryName = report.branchQueryName || "branchId";
+    const v = branchQueryName === "ckBranchId"
+      ? document.getElementById("erp_ckBranchId")?.value
+      : document.getElementById("branchSelect").value;
+    if (v) qs.set(branchQueryName, v);
+    else if (branchQueryName === "ckBranchId") { errBox.textContent = "لازم تختار السنتر كيتشن"; return; }
+  }
+  for (const p of (report.extra || [])) {
+    const el = document.getElementById(`erp_${p.name}`);
+    if (el && el.value) qs.set(p.name, el.value);
+    else if (p.required) { errBox.textContent = `لازم تحدد ${p.label || p.name}`; return; }
+  }
+
+  try {
+    const data = await api(`/api/reports/${report.key}?${qs.toString()}`);
+    genericReportRender(results, data);
+  } catch (e) { errBox.textContent = e.message; results.innerHTML = ""; }
+}
+
+function erHumanizeKey(k) {
+  return k.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+function erFormatCell(v) {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "object") return SatamoniPrint.esc(JSON.stringify(v));
+  if (typeof v === "number") return num(v);
+  return SatamoniPrint.esc(String(v));
+}
+function erTableHtml(rows) {
+  if (!rows || rows.length === 0) return `<div class="empty">مفيش بيانات لعرضها</div>`;
+  const cols = [...new Set(rows.flatMap(r => Object.keys(r)))];
+  return `<div class="tablewrap"><table>
+    <thead><tr>${cols.map(c => `<th>${SatamoniPrint.esc(erHumanizeKey(c))}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${erFormatCell(r[c])}</td>`).join("")}</tr>`).join("")}</tbody>
+  </table></div>`;
+}
+function genericReportRender(container, data) {
+  if (data == null) { container.innerHTML = `<div class="empty">مفيش بيانات</div>`; return; }
+  if (Array.isArray(data)) { container.innerHTML = erTableHtml(data); return; }
+  if (typeof data === "object") {
+    const scalarParts = [];
+    const arrayEntries = [];
+    const objectEntries = [];
+    for (const [k, v] of Object.entries(data)) {
+      if (Array.isArray(v)) arrayEntries.push([k, v]);
+      else if (v !== null && typeof v === "object") objectEntries.push([k, v]);
+      else scalarParts.push(`${erHumanizeKey(k)}: ${v ?? "—"}`);
+    }
+    let html = "";
+    if (scalarParts.length) html += `<div class="toolbar" style="font-size:12px;color:var(--faint);background:none;border:none;padding:0 0 10px">${scalarParts.map(SatamoniPrint.esc).join(" · ")}</div>`;
+    arrayEntries.forEach(([k, v]) => { html += `<h3 style="margin:14px 0 6px">${SatamoniPrint.esc(erHumanizeKey(k))}</h3>` + erTableHtml(v); });
+    objectEntries.forEach(([k, v]) => { html += `<h3 style="margin:14px 0 6px">${SatamoniPrint.esc(erHumanizeKey(k))}</h3>` + genericReportRender.toTable(v); });
+    container.innerHTML = html || `<div class="empty">مفيش بيانات</div>`;
+    return;
+  }
+  container.innerHTML = `<div class="empty">${SatamoniPrint.esc(String(data))}</div>`;
+}
+// كائن متداخل (زي suppliers جوه supplier-comparison) - بنعرضه كجدول صف واحد بدل تكرار الدالة الأساسية
+genericReportRender.toTable = (obj) => erTableHtml([obj]);
 
 async function boot() {
   document.getElementById("main").style.display = "block";
