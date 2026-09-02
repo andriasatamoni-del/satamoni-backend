@@ -2635,6 +2635,260 @@ router.get("/delivery-app-settlement", requireAuth, canSeeAccounting, async (req
   }
 });
 
+// ============================================================
+// كشوف حسابات إضافية (طلب المستخدم) - كل واحدة بتقرأ من orders/payment_methods/delivery_areas/drivers
+// مباشرة (نفس مصدر sales-detail/areas-performance/supplier-statement فوق) - مفيش حساب GL جديد ولا
+// جدول جديد: فيزا/انستاباي/محفظة كلهم من قبل ليهم صف مستقل في payment_methods (بس بنفس kind
+// 'card_or_wallet' - الحساب المحاسبي 1200 واحد للتلاتة، التمييز بينهم بالاسم بس) فمفيش داعي لأي تعديل
+// في accounts/journal_entries عشان نميّزهم في التقرير - الاستعلام بيفلتر بـpayment_method_id مباشرة
+// ============================================================
+
+// GET /api/reports/takeaway-statement?from=&to=&year=&month=&branchId= - كشف حساب تيك أواي
+router.get("/takeaway-statement", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const [ordersRes, byPaymentMethod] = await Promise.all([
+      pool.query(
+        `SELECT o.id, o.branch_id, b.name AS branch_name, o.created_at, o.customer_name, o.customer_phone,
+                COALESCE(pm.name, 'بدون طريقة دفع') AS payment_method_name, pm.kind AS payment_method_kind,
+                o.subtotal, o.discount, o.total, o.status
+         FROM orders o LEFT JOIN branches b ON b.id = o.branch_id
+         LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+         WHERE o.order_type = 'takeaway' AND o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         ORDER BY o.created_at`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT COALESCE(pm.name, 'بدون طريقة دفع') AS name, pm.kind, SUM(o.total) AS amount, COUNT(*) AS count
+         FROM orders o LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+         WHERE o.order_type = 'takeaway' AND o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY pm.name, pm.kind ORDER BY amount DESC`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+    const orders = ordersRes.rows.map((r) => ({
+      id: r.id, branchId: r.branch_id, branchName: r.branch_name, createdAt: r.created_at,
+      customerName: r.customer_name, customerPhone: r.customer_phone,
+      paymentMethodName: r.payment_method_name, paymentMethodKind: r.payment_method_kind,
+      subtotal: Number(r.subtotal), discount: Number(r.discount), total: Number(r.total), status: r.status,
+    }));
+    const ordersCount = orders.length;
+    const grossSubtotal = orders.reduce((s, o) => s + o.subtotal, 0);
+    const totalDiscount = orders.reduce((s, o) => s + o.discount, 0);
+    const netTotal = orders.reduce((s, o) => s + o.total, 0);
+    res.json({
+      from: range.from, to: range.to, branchId,
+      summary: { ordersCount, grossSubtotal, totalDiscount, netTotal, avgOrderValue: ordersCount > 0 ? netTotal / ordersCount : 0 },
+      byPaymentMethod: byPaymentMethod.rows.map((r) => ({ name: r.name, kind: r.kind, amount: Number(r.amount), count: Number(r.count) })),
+      orders,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/delivery-statement?from=&to=&year=&month=&branchId= - كشف حساب أوردرات الدليفري
+router.get("/delivery-statement", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const [ordersRes, byPaymentMethod] = await Promise.all([
+      pool.query(
+        `SELECT o.id, o.branch_id, b.name AS branch_name, o.created_at, o.customer_name, o.customer_phone,
+                da.name AS area_name, o.driver_name,
+                COALESCE(pm.name, 'بدون طريقة دفع') AS payment_method_name, pm.kind AS payment_method_kind,
+                o.subtotal, o.delivery_fee, o.discount, o.total, o.status
+         FROM orders o LEFT JOIN branches b ON b.id = o.branch_id
+         LEFT JOIN delivery_areas da ON da.id = o.delivery_area_id
+         LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+         WHERE o.order_type = 'delivery' AND o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         ORDER BY o.created_at`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT COALESCE(pm.name, 'بدون طريقة دفع') AS name, pm.kind, SUM(o.total) AS amount, COUNT(*) AS count
+         FROM orders o LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+         WHERE o.order_type = 'delivery' AND o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY pm.name, pm.kind ORDER BY amount DESC`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+    const orders = ordersRes.rows.map((r) => ({
+      id: r.id, branchId: r.branch_id, branchName: r.branch_name, createdAt: r.created_at,
+      customerName: r.customer_name, customerPhone: r.customer_phone,
+      areaName: r.area_name, driverName: r.driver_name,
+      paymentMethodName: r.payment_method_name, paymentMethodKind: r.payment_method_kind,
+      subtotal: Number(r.subtotal), deliveryFee: Number(r.delivery_fee), discount: Number(r.discount),
+      total: Number(r.total), status: r.status,
+    }));
+    const ordersCount = orders.length;
+    const grossSubtotal = orders.reduce((s, o) => s + o.subtotal, 0);
+    const totalDeliveryFees = orders.reduce((s, o) => s + o.deliveryFee, 0);
+    const totalDiscount = orders.reduce((s, o) => s + o.discount, 0);
+    const netTotal = orders.reduce((s, o) => s + o.total, 0);
+    res.json({
+      from: range.from, to: range.to, branchId,
+      summary: { ordersCount, grossSubtotal, totalDeliveryFees, totalDiscount, netTotal, avgOrderValue: ordersCount > 0 ? netTotal / ordersCount : 0 },
+      byPaymentMethod: byPaymentMethod.rows.map((r) => ({ name: r.name, kind: r.kind, amount: Number(r.amount), count: Number(r.count) })),
+      orders,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/delivery-service-statement?from=&to=&year=&month=&branchId= - كشف حساب خدمة التوصيل
+// حسب المناطق (كل حركة الأوردرات في كل منطقة) وأداء كل طيار (من نظام التوزيع الحديث drivers/dispatch_status
+// - المرحلة 7F - مش عمود driver_name القديم اللي بيستخدمه تقرير /drivers فوق، عشان يبقى مربوط فعليًا
+// بجدول السائقين وتسويات الكاش بتاعتهم driver_settlements)
+router.get("/delivery-service-statement", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const [byArea, byDriver] = await Promise.all([
+      pool.query(
+        `SELECT da.id AS area_id, da.name AS area_name,
+                COUNT(*) AS orders_count, COALESCE(SUM(o.total), 0) AS revenue,
+                COALESCE(SUM(o.delivery_fee), 0) AS delivery_fees
+         FROM orders o JOIN delivery_areas da ON da.id = o.delivery_area_id
+         WHERE o.order_type = 'delivery' AND o.status <> 'cancelled'
+           AND o.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY da.id, da.name ORDER BY revenue DESC`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT d.id AS driver_id, d.driver_code, d.name AS driver_name,
+                COUNT(*) FILTER (WHERE o.dispatch_status = 'DELIVERED') AS delivered_count,
+                COUNT(*) FILTER (WHERE o.dispatch_status = 'FAILED') AS failed_count,
+                COALESCE(SUM(o.total) FILTER (WHERE o.dispatch_status = 'DELIVERED'), 0) AS revenue,
+                COALESCE(SUM(o.delivery_fee) FILTER (WHERE o.dispatch_status = 'DELIVERED'), 0) AS delivery_fees,
+                AVG(EXTRACT(EPOCH FROM (o.delivered_at - o.assigned_at)) / 60)
+                  FILTER (WHERE o.dispatch_status = 'DELIVERED') AS avg_delivery_minutes
+         FROM orders o JOIN drivers d ON d.id = o.driver_id
+         WHERE o.order_type = 'delivery' AND o.assigned_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY d.id, d.driver_code, d.name ORDER BY delivered_count DESC`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+    res.json({
+      from: range.from, to: range.to, branchId,
+      byArea: byArea.rows.map((r) => ({
+        areaId: r.area_id, areaName: r.area_name, ordersCount: Number(r.orders_count),
+        revenue: Number(r.revenue), deliveryFees: Number(r.delivery_fees),
+      })),
+      byDriver: byDriver.rows.map((r) => ({
+        driverId: r.driver_id, driverCode: r.driver_code, driverName: r.driver_name,
+        deliveredCount: Number(r.delivered_count), failedCount: Number(r.failed_count),
+        revenue: Number(r.revenue), deliveryFees: Number(r.delivery_fees),
+        avgDeliveryMinutes: r.avg_delivery_minutes != null ? Number(r.avg_delivery_minutes) : null,
+      })),
+      note: "أداء السائقين هنا من نظام التوزيع الحديث (drivers/dispatch_status) - بيشمل بس الطلبات اللي اتوزّعت فعليًا لسائق مسجّل",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/payment-method-statement?paymentMethodId=&from=&to=&year=&month=&branchId= - كشف
+// حساب طريقة دفع معيّنة (فيزا/انستاباي/محفظة/أي طريقة تانية مسجّلة في payment_methods) - قائمة الأوردرات
+// اللي اتحصّلت بيها + إجمالي، مباشرة من orders.payment_method_id (زي ما هو مفلتَر أصلًا في POS/كول سنتر)
+router.get("/payment-method-statement", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const paymentMethodId = Number(req.query.paymentMethodId);
+  if (!paymentMethodId) return res.status(400).json({ error: "لازم تحدد paymentMethodId", code: "INVALID_PARAMETER" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const pmRes = await pool.query("SELECT id, name, kind FROM payment_methods WHERE id = $1", [paymentMethodId]);
+    if (pmRes.rows.length === 0) return res.status(404).json({ error: "طريقة الدفع مش موجودة" });
+
+    const ordersRes = await pool.query(
+      `SELECT o.id, o.branch_id, b.name AS branch_name, o.order_type, o.created_at,
+              o.customer_name, o.customer_phone, o.subtotal, o.delivery_fee, o.discount, o.total, o.status
+       FROM orders o LEFT JOIN branches b ON b.id = o.branch_id
+       WHERE o.payment_method_id = $1 AND o.status <> 'cancelled' AND o.created_at::date BETWEEN $2 AND $3
+         AND ($4::int IS NULL OR o.branch_id = $4)
+       ORDER BY o.created_at`,
+      [paymentMethodId, range.from, range.to, branchId]
+    );
+    const orders = ordersRes.rows.map((r) => ({
+      id: r.id, branchId: r.branch_id, branchName: r.branch_name, orderType: r.order_type, createdAt: r.created_at,
+      customerName: r.customer_name, customerPhone: r.customer_phone,
+      subtotal: Number(r.subtotal), deliveryFee: Number(r.delivery_fee), discount: Number(r.discount),
+      total: Number(r.total), status: r.status,
+    }));
+    const ordersCount = orders.length;
+    const netTotal = orders.reduce((s, o) => s + o.total, 0);
+    res.json({
+      from: range.from, to: range.to, branchId,
+      paymentMethod: { id: pmRes.rows[0].id, name: pmRes.rows[0].name, kind: pmRes.rows[0].kind },
+      summary: { ordersCount, netTotal, avgOrderValue: ordersCount > 0 ? netTotal / ordersCount : 0 },
+      orders,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/orders-payment-split-statement?from=&to=&year=&month=&branchId= - كشف حساب الطلبات
+// مقسّم حسب نوع التحصيل (كاش/فيزا-محفظة-انستاباي/آجل - من payment_methods.kind) + قسم مستقل للخصومات
+router.get("/orders-payment-split-statement", requireAuth, canSeeAccounting, async (req, res) => {
+  const range = resolveDateRange(req.query);
+  if (!range) return res.status(400).json({ error: "لازم تحدد from/to أو year/month" });
+  const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
+  try {
+    const [byKindRes, discountedRes] = await Promise.all([
+      pool.query(
+        `SELECT COALESCE(pm.kind, 'unknown') AS kind, COUNT(*) AS orders_count, COALESCE(SUM(o.total), 0) AS total
+         FROM orders o LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+         WHERE o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         GROUP BY pm.kind`,
+        [range.from, range.to, branchId]
+      ),
+      pool.query(
+        `SELECT o.id, o.branch_id, b.name AS branch_name, o.order_type, o.created_at,
+                o.customer_name, o.subtotal, o.discount, o.total, u.name AS approved_by_name
+         FROM orders o LEFT JOIN branches b ON b.id = o.branch_id
+         LEFT JOIN users u ON u.id = o.discount_approved_by
+         WHERE o.discount > 0 AND o.status <> 'cancelled' AND o.created_at::date BETWEEN $1 AND $2
+           AND ($3::int IS NULL OR o.branch_id = $3)
+         ORDER BY o.discount DESC`,
+        [range.from, range.to, branchId]
+      ),
+    ]);
+    const kindLabels = { cash: "كاش", card_or_wallet: "فيزا / محفظة / انستاباي", credit: "آجل", unknown: "بدون طريقة دفع" };
+    const byKind = byKindRes.rows.map((r) => ({
+      kind: r.kind, label: kindLabels[r.kind] || r.kind, ordersCount: Number(r.orders_count), total: Number(r.total),
+    }));
+    const discountedOrders = discountedRes.rows.map((r) => ({
+      id: r.id, branchId: r.branch_id, branchName: r.branch_name, orderType: r.order_type, createdAt: r.created_at,
+      customerName: r.customer_name, subtotal: Number(r.subtotal), discount: Number(r.discount), total: Number(r.total),
+      approvedByName: r.approved_by_name,
+    }));
+    res.json({
+      from: range.from, to: range.to, branchId,
+      byKind,
+      discountsSummary: {
+        ordersCount: discountedOrders.length,
+        totalDiscount: discountedOrders.reduce((s, o) => s + o.discount, 0),
+      },
+      discountedOrders,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/reports/gross-profit?from=&to=&year=&month=&branchId=
 router.get("/gross-profit", requireAuth, canSeeAccounting, async (req, res) => {
   const range = resolveDateRange(req.query);

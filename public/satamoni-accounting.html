@@ -107,6 +107,7 @@
     <div class="tabbtn" data-tab="journal">القيود</div>
     <div class="tabbtn" data-tab="ledgerpl">قائمة الدخل (الدفتر)</div>
     <div class="tabbtn" data-tab="ap">الموردون والمدفوعات</div>
+    <div class="tabbtn" data-tab="statements">كشوف الحسابات</div>
     <div class="tabbtn" data-tab="recon">المطابقة والفترات</div>
     <div class="tabbtn" data-tab="balance">الميزانية العمومية</div>
   </div>
@@ -535,6 +536,24 @@
     </div>
   </div>
 
+  <!-- كشوف الحسابات: تيك أواي/دليفري/خدمة توصيل (مناطق+سائقين)/طريقة دفع/تقسيم الطلبات (كاش-آجل-خصومات) -->
+  <div class="panel" id="panel-statements">
+    <h1>كشوف الحسابات</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="stReportSelect"></select>
+      </div>
+      <div class="row">
+        <input id="stFrom" type="date" title="من" />
+        <input id="stTo" type="date" title="إلى" />
+      </div>
+      <div class="row" id="stParamsRow"></div>
+      <button id="stRunBtn">عرض</button>
+      <div class="err" id="stErr"></div>
+    </div>
+    <div id="stResults"></div>
+  </div>
+
   <!-- المطابقة والفترات -->
   <div class="panel" id="panel-recon">
     <div id="reconReportWrap">
@@ -713,8 +732,9 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 
 // المرحلة 4B: التبويبات الجديدة بتتحمّل أول مرة تتفتح بس (مش وقت boot() زي التبويبات القديمة) - عشان
 // نتجنب نداءات مش لازمة لمدير فرع/محاسب لسه مفتحش التبويب ده أصلًا
-const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false, balance: false, shifts: false, dayclose: false, vat: false };
+const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false, balance: false, shifts: false, dayclose: false, vat: false, statements: false };
 function onTabOpen(tab) {
+  if (tab === "statements" && !accountingTabLoaded.statements) { accountingTabLoaded.statements = true; initStatementsTab(); }
   if (tab === "coa" && !accountingTabLoaded.coa) { accountingTabLoaded.coa = true; loadAccountsForForms().then(loadTrialBalance); }
   if (tab === "journal" && !accountingTabLoaded.journal) { accountingTabLoaded.journal = true; loadAccountsForForms().then(loadJournalEntries); }
   if (tab === "ledgerpl" && !accountingTabLoaded.ledgerpl) { accountingTabLoaded.ledgerpl = true; loadLedgerPL(); }
@@ -1673,6 +1693,119 @@ document.getElementById("paySubmit").onclick = guardedClick(document.getElementB
     loadApAging();
   } catch (e) { errBox.textContent = e.message; }
 });
+
+// ---------------- كشوف الحسابات (تيك أواي/دليفري/خدمة توصيل/طريقة دفع/تقسيم الطلبات) ----------------
+// كل التقارير دي بتقرأ من orders/payment_methods/delivery_areas/drivers مباشرة (routes/reports.js) -
+// مفيش حساب GL جديد ولا منطق محاسبي موازي، عرض جدولي عام زي كتالوج "تقارير إضافية" في satamoni-reports.html
+const STATEMENT_REPORTS = [
+  { key: "takeaway-statement", label: "كشف حساب تيك أواي" },
+  { key: "delivery-statement", label: "كشف حساب أوردرات الدليفري" },
+  { key: "delivery-service-statement", label: "كشف حساب خدمة التوصيل (المناطق + أداء السائقين)" },
+  { key: "payment-method-statement", label: "كشف حساب طريقة دفع (فيزا / انستاباي / محفظة ...)", extra: [{ name: "paymentMethodId", type: "paymentMethod", required: true, label: "طريقة الدفع" }] },
+  { key: "orders-payment-split-statement", label: "كشف حساب الطلبات (كاش / آجل / خصومات)" },
+];
+let stPaymentMethodsCache = null;
+async function ensurePaymentMethodsCache() {
+  if (!stPaymentMethodsCache) stPaymentMethodsCache = (await api("/api/config")).paymentMethods;
+  return stPaymentMethodsCache;
+}
+function initStatementsTab() {
+  document.getElementById("stFrom").value = todayStr();
+  document.getElementById("stTo").value = todayStr();
+  const sel = document.getElementById("stReportSelect");
+  sel.innerHTML = STATEMENT_REPORTS.map(r => `<option value="${r.key}">${r.label}</option>`).join("");
+  sel.onchange = () => renderStatementParams();
+  document.getElementById("stRunBtn").onclick = () => runStatementReport();
+  renderStatementParams();
+}
+function currentStatementReport() {
+  return STATEMENT_REPORTS.find(r => r.key === document.getElementById("stReportSelect").value);
+}
+async function renderStatementParams() {
+  const report = currentStatementReport();
+  const row = document.getElementById("stParamsRow");
+  document.getElementById("stResults").innerHTML = "";
+  document.getElementById("stErr").textContent = "";
+  if (!report) { row.innerHTML = ""; return; }
+  const parts = [];
+  for (const p of (report.extra || [])) {
+    if (p.type === "paymentMethod") {
+      const methods = await ensurePaymentMethodsCache();
+      parts.push(`<select id="stp_${p.name}"><option value="">${p.label}${p.required ? " *" : ""}</option>${methods.map(m => `<option value="${m.id}">${m.name}</option>`).join("")}</select>`);
+    }
+  }
+  row.innerHTML = parts.join("");
+}
+function stHumanizeKey(k) {
+  return k.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+// مش كل رقم في الجداول العامة دي فلوس (فيه IDs وعدّادات زي orderId/ordersCount) - بنقسّم اسم العمود
+// لكلمات (camelCase) ونقارن كلمة-كلمة، عشان مثلاً "totalDiscount" (فلوس) ميتلخبطش مع "ordersCount"
+// (عدّاد) رغم إن "Discount" فيها substring "count" حرفيًا (dis-count) لو استخدمنا مطابقة نصية بسيطة
+function stKeyWords(key) {
+  return key.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[\s_]+/);
+}
+const ST_MONEY_WORDS = new Set(["total", "amount", "revenue", "subtotal", "discount", "fee", "fees", "price", "value", "balance"]);
+const ST_PLAIN_WORDS = new Set(["count", "id", "percent", "minutes"]);
+function stFormatNumber(v, key) {
+  const words = key ? stKeyWords(key) : [];
+  const isPlain = words.some((w) => ST_PLAIN_WORDS.has(w));
+  const isMoney = words.some((w) => ST_MONEY_WORDS.has(w));
+  if (isMoney && !isPlain) return money(v);
+  return Number(v).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
+}
+function stFormatCell(v, key) {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number") return stFormatNumber(v, key);
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)) return new Date(v).toLocaleString("ar-EG");
+  return String(v);
+}
+function stTableHtml(rows) {
+  if (!rows || rows.length === 0) return `<div style="padding:12px;color:var(--faint);font-size:12px">مفيش بيانات لعرضها</div>`;
+  const cols = [...new Set(rows.flatMap(r => Object.keys(r)))];
+  return `<table><thead><tr>${cols.map(c => `<th>${stHumanizeKey(c)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${stFormatCell(r[c], c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+function stRenderResult(data) {
+  const container = document.getElementById("stResults");
+  if (data == null) { container.innerHTML = ""; return; }
+  const scalarParts = [];
+  const objectEntries = [];
+  const arrayEntries = [];
+  for (const [k, v] of Object.entries(data)) {
+    if (k === "note") continue;
+    if (Array.isArray(v)) arrayEntries.push([k, v]);
+    else if (v !== null && typeof v === "object") objectEntries.push([k, v]);
+    else scalarParts.push(`${stHumanizeKey(k)}: ${typeof v === "number" ? stFormatNumber(v, k) : (v ?? "—")}`);
+  }
+  let html = "";
+  if (data.note) html += `<div style="font-size:11px;color:var(--faint);margin-bottom:8px">${data.note}</div>`;
+  if (scalarParts.length) html += `<div style="font-size:12px;color:var(--faint);margin-bottom:12px">${scalarParts.join(" · ")}</div>`;
+  objectEntries.forEach(([k, v]) => { html += `<h1 style="font-size:14px">${stHumanizeKey(k)}</h1>` + stTableHtml([v]); });
+  arrayEntries.forEach(([k, v]) => { html += `<h1 style="font-size:14px">${stHumanizeKey(k)}</h1>` + stTableHtml(v); });
+  container.innerHTML = html || `<div style="padding:12px;color:var(--faint);font-size:12px">مفيش بيانات</div>`;
+}
+async function runStatementReport() {
+  const report = currentStatementReport();
+  const errBox = document.getElementById("stErr");
+  errBox.textContent = "";
+  if (!report) return;
+  const from = document.getElementById("stFrom").value;
+  const to = document.getElementById("stTo").value;
+  if (!from || !to) { errBox.textContent = "لازم تحدد من/إلى"; return; }
+  const qs = new URLSearchParams({ from, to });
+  const branchId = currentBranchId();
+  if (branchId) qs.set("branchId", branchId);
+  for (const p of (report.extra || [])) {
+    const el = document.getElementById(`stp_${p.name}`);
+    if (el && el.value) qs.set(p.name, el.value);
+    else if (p.required) { errBox.textContent = `لازم تحدد ${p.label || p.name}`; return; }
+  }
+  try {
+    const data = await api(`/api/reports/${report.key}?${qs.toString()}`);
+    stRenderResult(data);
+  } catch (e) { errBox.textContent = e.message; document.getElementById("stResults").innerHTML = ""; }
+}
 
 // ---------------- المطابقة والفترات ----------------
 function populateReconSelectors() {
