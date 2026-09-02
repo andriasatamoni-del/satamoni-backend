@@ -235,4 +235,35 @@ describe("استيراد ملف الرواتب الشهري (Excel)", () => {
     const branches = await pool.query("SELECT COUNT(*) FROM branches WHERE name = 'العصافرة'");
     expect(Number(branches.rows[0].count)).toBe(0); // مفيش فرع اتعمل تلقائي بالغلط بمجرد ظهور اسمه في الشيت
   });
+
+  // بالظبط الحالة اللي حصلت فعليًا على staging: اسم فرع في الشيت مكتوب بشكل إملائي (همزة/تاء مربوطة)
+  // مختلف شوية عن الاسم المسجّل فعلاً في السيستم - نفس الاسم بصريًا لأغلب الناس، لكن بايتات مختلفة
+  // تمامًا. المطابقة لازم تتجاوز الفرق ده تلقائيًا من غير ما حد يحتاج يظبط اسم الفرع يدويًا. بنستخدم
+  // عمود "احسب الراتب من فرع واحد فقط" (نص حر، مش مقفول على أسماء الفروع التلاتة التلقائية) عشان
+  // نختبر المطابقة المرنة من غير ما نتعارض مع الفروع الأساسية المزروعة في beforeAll
+  test("اسم فرع بشكل إملائي مختلف شويًا (همزة/تاء مربوطة) - المطابقة بتتجاوزه", async () => {
+    await pool.query("INSERT INTO branches (name) VALUES ('فرع تجربه-مطابقه-جست') ON CONFLICT DO NOTHING");
+
+    const wb = new ExcelJS.Workbook();
+    const emp = wb.addWorksheet("قاعدة بيانات الموظفين");
+    emp.addRow(["قاعدة بيانات الموظفين"]);
+    emp.addRow(["كود الموظف الداخلي", "الاسم بالكامل", "القسم", "الوظيفة", "نظام الحضور", "تاريخ التعيين",
+      "الراتب الأساسي الشهري", "أيام العمل بالشهر", "الشيفت", "وقت الدخول الافتراضي", "الهاتف", "ملاحظات",
+      "نوع الأجر", "أجر الساعة (جنيه)", "كود بصمة الإبراهيمية", "كود بصمة العصافرة", "كود بصمة محرم بك",
+      "تحقق من تكرار الكود", "احسب الراتب من فرع واحد فقط (اختياري)", "احتساب يوم 31 في الشهر؟"]);
+    emp.addRow(["E9030", "منى فازلينك-جست", "بيتزا", "شيف بيتزا", "بصمة تلقائي", null, 9000, 26,
+      "صباحي", null, null, null, "شهري ثابت", 0, null, null, null, null, "فرع تجربة-مطابقة-جست", "لا"]);
+    const buffer = await wb.xlsx.writeBuffer();
+
+    const res = await request(app)
+      .post("/api/payroll/import-excel").set(authed(adminToken))
+      .field("year", "2026").field("month", "7")
+      .attach("file", buffer, "payroll.xlsx");
+    expect(res.status).toBe(201);
+    expect(res.body.warnings.length).toBe(0);
+
+    const branch = await pool.query("SELECT id FROM branches WHERE name = 'فرع تجربه-مطابقه-جست'");
+    const emp2 = await pool.query("SELECT restricted_branch_id FROM employees WHERE employee_code = 'E9030'");
+    expect(emp2.rows[0].restricted_branch_id).toBe(branch.rows[0].id); // اتربط بالـid الصح رغم اختلاف الهمزة/التاء المربوطة
+  });
 });

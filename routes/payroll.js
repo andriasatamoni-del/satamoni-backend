@@ -7,7 +7,7 @@ const { logAudit } = require("../db/audit");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
 const { computePayrollSummary, toCents } = require("../services/payroll-engine");
 const { recordEmployeeHistoryChanges } = require("../db/employee-history");
-const { parsePayrollWorkbook } = require("../db/payroll-excel-import");
+const { parsePayrollWorkbook, normalizeArabicName } = require("../db/payroll-excel-import");
 
 // ملف الرواتب الشهري نفسه محدود الحجم جدًا (ملف Excel واحد لكل شهر) - 20MB سقف سخي كفاية ومانع لأي حمل زيادة
 const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -247,9 +247,16 @@ router.post("/import-excel", (req, res, next) => {
   try {
     await client.query("BEGIN");
 
+    // مطابقة اسم الفرع من الشيت بمرونة - بالحرف الأول، وبعد تطبيع بسيط للهمزات/التاء المربوطة تاني لو
+    // مفيش تطابق حرفي (انظر تعليق normalizeArabicName في db/payroll-excel-import.js)
     const branchRows = await client.query("SELECT id, name FROM branches");
     const branchIdByName = {};
-    branchRows.rows.forEach((b) => { branchIdByName[b.name] = b.id; });
+    const branchIdByNormalizedName = {};
+    branchRows.rows.forEach((b) => {
+      branchIdByName[b.name] = b.id;
+      branchIdByNormalizedName[normalizeArabicName(b.name)] = b.id;
+    });
+    const resolveBranchId = (name) => branchIdByName[name] ?? branchIdByNormalizedName[normalizeArabicName(name)] ?? null;
     const branchWarnings = [];
 
     let employeesCreated = 0;
@@ -288,7 +295,7 @@ router.post("/import-excel", (req, res, next) => {
       employeeIdByCode[emp.employeeCode] = employeeId;
 
       for (const [branchName, deviceCode] of Object.entries(emp.fingerprintCodes)) {
-        const branchId = branchIdByName[branchName];
+        const branchId = resolveBranchId(branchName);
         if (!branchId) {
           fingerprintWarnings.push(`${emp.name}: الفرع "${branchName}" مش موجود في السيستم - كود البصمة ده اتجاهل`);
           continue;
@@ -301,7 +308,7 @@ router.post("/import-excel", (req, res, next) => {
       }
 
       if (emp.restrictedBranchName) {
-        const branchId = branchIdByName[emp.restrictedBranchName];
+        const branchId = resolveBranchId(emp.restrictedBranchName);
         if (branchId) {
           await client.query("UPDATE employees SET restricted_branch_id = $1 WHERE id = $2", [branchId, employeeId]);
         } else {
@@ -312,7 +319,7 @@ router.post("/import-excel", (req, res, next) => {
 
     const punchesImported = {};
     for (const [branchName, rows] of Object.entries(parsed.punchesByBranch)) {
-      const branchId = branchIdByName[branchName];
+      const branchId = resolveBranchId(branchName);
       if (!branchId) {
         branchWarnings.push(`الفرع "${branchName}" مش موجود في السيستم - بصماته (${rows.length} سطر) اتجاهلت بالكامل`);
         continue;

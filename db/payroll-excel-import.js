@@ -8,6 +8,22 @@
 // بيتستبعد زي ما شيت البصمة نفسه بيعمل بالظبط).
 const ExcelJS = require("exceljs");
 
+// مطابقة اسم الفرع بالحرف بالظبط بتفشل بسهولة مع الأسماء العربية - نفس الاسم اللي شكله متطابق بصريًا
+// ممكن يتكتب بأكتر من شكل يونيكود مختلف فعليًا (زي "الإبراهيمية" بهمزة تحت الألف مقابل "الابراهيمية"
+// بألف عادية، أو "ة" مقابل "ه" في الآخر) حسب طريقة كتابة الشخص اللي سجّل اسم الفرع أول مرة في السيستم.
+// عشان استيراد شهري متكرر (يوليو، أغسطس...) يفضل شغال من غير ما نضطر نلاحق كل اختلاف إملائي بالعين،
+// بنطابق أسماء الفروع بعد تطبيع بسيط (شيل الهمزات/التشكيل، توحيد الألف والياء والتاء المربوطة) بدل
+// المطابقة الحرفية - بس التخزين والعرض في الداتابيز بيفضلوا زي ما هم بالظبط (التطبيع للمطابقة بس)
+function normalizeArabicName(s) {
+  return String(s || "")
+    .trim()
+    .replace(/[ً-ْٰـ]/g, "") // تشكيل + تطويل
+    .replace(/[أإآا]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/\s+/g, " ");
+}
+
 const ATTENDANCE_SYSTEM_MAP = {
   "بصمة تلقائي": "fingerprint_auto",
   "يدوي (بدون بصمة)": "manual",
@@ -265,4 +281,4 @@ async function parsePayrollWorkbook(buffer, { targetYear, targetMonth }) {
   return { employees, excluded, needsReview, punchesByBranch, manualAttendance, adjustments, warnings };
 }
 
-module.exports = { parsePayrollWorkbook };
+module.exports = { parsePayrollWorkbook, normalizeArabicName };
