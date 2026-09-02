@@ -1,14 +1,17 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ستاموني — نظام إدارة المطعم</title>
 <style>
   :root {
-    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
-    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
-    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --err: #F08A83;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; min-height: 100vh; }
@@ -29,6 +32,7 @@
 <body>
 <div id="wrap">
   <h1>🍕 ستاموني</h1>
+  <div style="text-align:center;margin-bottom:10px"><button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button></div>
   <div class="sub">نظام إدارة المطعم — اختار الشاشة اللي هتجربها</div>
 
   <div id="tilesWrap"></div>
@@ -66,5 +70,6 @@
       document.getElementById("tilesWrap").innerHTML = `<div style="text-align:center;color:var(--faint);font-size:13px">تعذر تحميل قايمة الشاشات - تأكد من الاتصال بالسيرفر</div>`;
     });
 </script>
+<script src="/js/theme.js"></script>
 </body>
 </html>

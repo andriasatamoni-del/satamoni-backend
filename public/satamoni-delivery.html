@@ -1,14 +1,17 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ستاموني — دورة حياة الدليفري</title>
 <style>
   :root {
-    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
-    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
-    --gold-bright: #E8C468; --green: #3FA34D; --orange: #D98E2E; --line: #2A2A2E;
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --orange: #A8600F; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --orange: #D98E2E; --line: #2A2A2E; --err: #F08A83;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
@@ -43,13 +46,13 @@
   .badge.preparing { background: rgba(217,142,46,.15); color: var(--orange); }
   .badge.out_for_delivery { background: rgba(203,161,53,.15); color: var(--gold-bright); }
   .badge.completed { background: rgba(63,163,77,.15); color: var(--green); }
-  .badge.cancelled { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.cancelled { background: rgba(194,42,36,.15); color: var(--err); }
   .badge.collected { background: rgba(63,163,77,.15); color: var(--green); }
-  .badge.pending_collection { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.pending_collection { background: rgba(194,42,36,.15); color: var(--err); }
   .order-card .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .order-card button { border: 1px solid var(--line); background: var(--bg-alt); color: var(--ink); border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 12px; font-weight: 700; }
   .order-card button.primary { border-color: var(--gold); color: var(--gold-bright); }
-  .order-card button.danger { border-color: var(--red); color: #F08A83; }
+  .order-card button.danger { border-color: var(--red); color: var(--err); }
   .order-card .items { font-size: 12px; color: var(--faint); margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
   .order-card .log { font-size: 11px; color: var(--faint); margin-top: 6px; }
   #emptyState { text-align: center; color: var(--faint); padding: 60px 20px; }
@@ -60,7 +63,7 @@
   #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
-  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
 
   #pinModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 65; }
   #pinModalOverlay.show { display: flex; }
@@ -88,9 +91,9 @@
   .edit-item-row .qty-ctrl { display: flex; align-items: center; gap: 6px; }
   .edit-item-row .qty-ctrl button { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg-alt); color: var(--ink); cursor: pointer; font-size: 14px; }
   .edit-item-row .lt { font-family: 'Courier New', monospace; color: var(--gold-bright); font-size: 12px; min-width: 55px; text-align: left; }
-  .edit-item-row .rm { border: none; background: transparent; color: #F08A83; cursor: pointer; font-size: 14px; }
+  .edit-item-row .rm { border: none; background: transparent; color: var(--err); cursor: pointer; font-size: 14px; }
   #editTotalsRow { text-align: left; font-weight: 800; color: var(--gold-bright); margin-bottom: 10px; }
-  #editErr { color: #F08A83; font-size: 12px; margin-bottom: 8px; min-height: 16px; }
+  #editErr { color: var(--err); font-size: 12px; margin-bottom: 8px; min-height: 16px; }
   #editSaveBtn { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; }
   #editSaveBtn:disabled { background: #3A3630; cursor: not-allowed; }
   #editCancelBtn { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 13px; margin-top: 6px; }
@@ -102,6 +105,7 @@
   <div class="brand">🛵 ستاموني — دورة حياة الدليفري</div>
   <div id="userInfo">
     <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
 </div>
@@ -150,7 +154,7 @@
     <h3>موافقة مدير الفرع/الأدمن</h3>
     <div id="pinModalMsg" style="font-size:12px;color:var(--faint);margin-bottom:10px"></div>
     <input id="pinInput" type="password" inputmode="numeric" maxlength="6" placeholder="PIN" />
-    <div id="pinModalErr" style="color:#F08A83;font-size:12px;margin-bottom:8px;min-height:16px"></div>
+    <div id="pinModalErr" style="color:var(--err);font-size:12px;margin-bottom:8px;min-height:16px"></div>
     <button id="pinModalSubmit">تأكيد</button>
     <button id="pinModalCancel">إلغاء</button>
   </div>
@@ -335,7 +339,7 @@ function renderOrders(orders) {
       </div>
       <div class="meta">${o.customer_name || "بدون اسم"} — ${o.customer_phone || "—"}${o.address_details ? " — " + o.address_details : ""}</div>
       ${o.driver_name ? `<div class="meta">🛵 الطيار: ${o.driver_name}</div>` : ""}
-      ${o.voided ? `<div class="meta" style="color:#F08A83">🗑️ استرجاع: ${o.void_reason || "—"}</div>` : ""}
+      ${o.voided ? `<div class="meta" style="color:var(--err)">🗑️ استرجاع: ${o.void_reason || "—"}</div>` : ""}
       <div class="meta">الإجمالي: ${money(o.total)} — ${new Date(o.created_at).toLocaleString("ar-EG")}</div>
       <div class="actions" data-actions></div>
       <div class="items" data-detail style="display:none"></div>
@@ -654,5 +658,6 @@ if (auth.token && auth.user) {
   showLogin();
 }
 </script>
+<script src="/js/theme.js"></script>
 </body>
 </html>

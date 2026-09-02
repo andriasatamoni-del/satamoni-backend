@@ -1,14 +1,17 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ستاموني — شاشة المطبخ</title>
 <style>
   :root {
-    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
-    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
-    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --orange: #D98A2B;
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --orange: #A8600F; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --orange: #D98A2B; --err: #F08A83;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
@@ -24,7 +27,7 @@
   .col .colhead { padding: 10px 12px; border-bottom: 1px solid var(--line); font-weight: 800; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--bg-alt); border-radius: 10px 10px 0 0; }
   .col .colcount { background: var(--card); border-radius: 10px; padding: 1px 8px; font-size: 12px; color: var(--faint); }
   .col .colbody { padding: 8px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 130px); overflow-y: auto; }
-  .col.NEW .colhead { color: #F08A83; }
+  .col.NEW .colhead { color: var(--err); }
   .col.ACCEPTED .colhead { color: var(--orange); }
   .col.PREPARING .colhead { color: var(--gold-bright); }
   .col.READY .colhead { color: var(--green); }
@@ -35,7 +38,7 @@
   .card .wait { font-size: 11px; padding: 1px 7px; border-radius: 8px; font-weight: 700; }
   .wait.ok { background: rgba(63,163,77,.15); color: var(--green); }
   .wait.warn { background: rgba(217,138,43,.15); color: var(--orange); }
-  .wait.late { background: rgba(194,42,36,.15); color: #F08A83; }
+  .wait.late { background: rgba(194,42,36,.15); color: var(--err); }
   .card .meta { font-size: 11px; color: var(--faint); margin-bottom: 6px; }
   .card .items { font-size: 13px; margin-bottom: 8px; }
   .card .items .line { padding: 3px 0; border-bottom: 1px dashed var(--line); }
@@ -53,7 +56,7 @@
   #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
-  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
   #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
 </style>
 </head>
@@ -65,6 +68,7 @@
   <span id="refreshInfo"></span>
   <div id="userInfo">
     <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
 </div>
@@ -294,5 +298,6 @@ if (auth.token && auth.user) {
   showLogin();
 }
 </script>
+<script src="/js/theme.js"></script>
 </body>
 </html>

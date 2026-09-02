@@ -1,14 +1,17 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ستاموني — الحسابات</title>
 <style>
   :root {
-    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
-    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
-    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --err: #F08A83;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
@@ -35,19 +38,19 @@
   .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
   .formbox input, .formbox select { flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
   .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
-  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .err { color: var(--err); font-size: 12px; margin-top: 6px; }
   .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
 
   table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
   th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
   th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
   tr:last-child td { border-bottom: none; }
-  .diffneg { color: #F08A83; font-weight: 700; }
+  .diffneg { color: var(--err); font-weight: 700; }
   .diffpos { color: var(--green); font-weight: 700; }
   .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
   .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
   .badge.active { background: rgba(63,163,77,.15); color: var(--green); }
-  .badge.inactive { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.inactive { background: rgba(194,42,36,.15); color: var(--err); }
 
   #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
   #loginOverlay.hidden { display: none; }
@@ -55,7 +58,7 @@
   #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
-  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
   #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
 
   /* المرحلة 6 (6D): حالة تحميل/خطأ صريحة لـboot() - نفس نمط satamoni-kitchen.html بالظبط */
@@ -73,6 +76,7 @@
     <button id="printReportBtn" title="طباعة التبويب الحالي">🖨️ طباعة</button>
     <button id="exportCsvBtn" title="تحميل التبويب الحالي كملف Excel (CSV)">📊 تصدير Excel</button>
     <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
 </div>
@@ -1149,7 +1153,7 @@ async function reviewShift(shiftId) {
 
 // ---------------- المرحلة 7E: تقفيل يوم الفرع ----------------
 function renderDayCloseStatus(status) {
-  const colorMap = { RED: "#F08A83", YELLOW: "#E8C468", GREEN: "#3FA34D" };
+  const colorMap = { RED: "var(--err)", YELLOW: "#E8C468", GREEN: "#3FA34D" };
   const colorLabel = { RED: "🔴 أحمر — فيه بنود حرجة لازم تتحل الأول", YELLOW: "🟡 أصفر — للعلم بس، مش قيد للقفل", GREEN: "🟢 أخضر — جاهز للقفل" };
   let html = `<div class="formbox" style="border-color:${colorMap[status.color]}">
     <div style="font-weight:800;color:${colorMap[status.color]};margin-bottom:8px">${colorLabel[status.color]}</div>`;
@@ -1157,7 +1161,7 @@ function renderDayCloseStatus(status) {
     html += `<div style="color:var(--faint)">اليوم ده مقفول بالفعل${status.dayRecord?.closed_at ? " — " + new Date(status.dayRecord.closed_at).toLocaleString("ar-EG") : ""}</div>`;
   }
   if (status.redItems.length) {
-    html += `<div style="color:#F08A83;font-weight:700;margin-top:6px">بنود لازم تتحل الأول:</div><ul style="margin:4px 0;padding-inline-start:20px;font-size:13px">${status.redItems.map(i => `<li>${i.message}</li>`).join("")}</ul>`;
+    html += `<div style="color:var(--err);font-weight:700;margin-top:6px">بنود لازم تتحل الأول:</div><ul style="margin:4px 0;padding-inline-start:20px;font-size:13px">${status.redItems.map(i => `<li>${i.message}</li>`).join("")}</ul>`;
   }
   if (status.yellowItems.length) {
     html += `<div style="color:#E8C468;font-weight:700;margin-top:6px">للعلم:</div><ul style="margin:4px 0;padding-inline-start:20px;font-size:13px">${status.yellowItems.map(i => `<li>${i.message}</li>`).join("")}</ul>`;
@@ -1917,5 +1921,6 @@ if (auth.token && auth.user) {
   showLogin();
 }
 </script>
+<script src="/js/theme.js"></script>
 </body>
 </html>

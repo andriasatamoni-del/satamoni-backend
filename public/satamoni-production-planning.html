@@ -1,14 +1,17 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ستاموني — تخطيط التصنيع</title>
 <style>
   :root {
-    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
-    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
-    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --err: #F08A83;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
@@ -39,7 +42,7 @@
   button.presetbtn { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); font-weight: 700; padding: 7px 12px; font-size: 12px; }
   button.presetbtn.active { background: var(--gold); border-color: var(--gold); color: #1a1a1a; }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .err { color: var(--err); font-size: 12px; margin-top: 6px; }
   .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
   .hint { color: var(--faint); font-size: 12px; margin-bottom: 8px; }
 
@@ -54,13 +57,13 @@
   .badge.AVAILABLE { background: rgba(63,163,77,.12); color: var(--green); }
   .badge.IN_PROGRESS { background: rgba(203,161,53,.25); color: var(--gold-bright); }
   .badge.PARTIAL { background: rgba(203,161,53,.25); color: var(--gold-bright); }
-  .badge.SHORTAGE { background: rgba(194,42,36,.18); color: #F08A83; }
+  .badge.SHORTAGE { background: rgba(194,42,36,.18); color: var(--err); }
 
   .cardrow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
   .statcard { flex: 1; min-width: 170px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
   .statcard .num { font-size: 26px; font-weight: 800; color: var(--gold-bright); }
   .statcard .lbl { font-size: 12px; color: var(--faint); margin-top: 4px; }
-  .statcard.alert .num { color: #F08A83; }
+  .statcard.alert .num { color: var(--err); }
 
   .expandbox { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-top: 8px; }
 
@@ -75,7 +78,7 @@
   #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   #loginBox button { width: 100%; padding: 12px; font-size: 15px; margin-top: 6px; }
-  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
 
   @media (max-width: 720px) {
     table, thead, tbody, th, td, tr { display: block; }
@@ -93,6 +96,7 @@
   <div class="brand">📋 ستاموني — تخطيط التصنيع</div>
   <div id="userInfo">
     <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
 </div>
@@ -502,7 +506,7 @@ function renderRawDetails(row, raw) {
       <td data-label="الخامة">${esc(r.itemName)}</td>
       <td data-label="مطلوب">${fmtQty(r.required)} ${esc(r.unit)}</td>
       <td data-label="متاح">${fmtQty(r.available)}</td>
-      <td data-label="نقص">${r.shortage > 0 ? `<span style="color:#F08A83">${fmtQty(r.shortage)}</span>` : "-"}</td>
+      <td data-label="نقص">${r.shortage > 0 ? `<span style="color:var(--err)">${fmtQty(r.shortage)}</span>` : "-"}</td>
     </tr>`).join("")}
   </tbody></table>${raw.incomplete ? '<div class="hint">⚠ بيانات تكلفة/وصفة جزئية لبعض المكونات.</div>' : ""}`;
 }
@@ -620,5 +624,6 @@ if (auth.token && auth.user) {
   showLogin();
 }
 </script>
+<script src="/js/theme.js"></script>
 </body>
 </html>

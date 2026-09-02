@@ -1,15 +1,17 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ستاموني — داش بورد المالك</title>
 <style>
   :root {
-    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
-    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
-    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
-    --c1: #CBA135; --c2: #3FA34D; --c3: #4A90D9; --c4: #C22A24; --c5: #9C6ADE; --c6: #D98E2E;
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --c1: #A87C1F; --c2: #2F7A3D; --c3: #2F6FB0; --c4: #C22A24; --c5: #7C56B8; --c6: #A8600F; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --c1: #CBA135; --c2: #3FA34D; --c3: #4A90D9; --c4: #C22A24; --c5: #9C6ADE; --c6: #D98E2E; --err: #F08A83;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
@@ -30,7 +32,7 @@
   .kpi .value { font-size: 20px; font-weight: 800; font-family: 'Courier New', monospace; color: var(--ink); }
   .kpi .value.gold { color: var(--gold-bright); }
   .kpi .value.green { color: var(--green); }
-  .kpi .value.red { color: #F08A83; }
+  .kpi .value.red { color: var(--err); }
   .kpi .sub { font-size: 11px; color: var(--faint); margin-top: 4px; }
 
   #grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -70,7 +72,7 @@
   #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
-  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
   #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
 </style>
 </head>
@@ -82,6 +84,7 @@
     <button id="printReportBtn" title="طباعة الداش بورد">🖨️ طباعة</button>
     <button id="exportCsvBtn" title="تحميل الداش بورد كملف Excel (CSV)">📊 تصدير Excel</button>
     <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
 </div>
@@ -345,7 +348,7 @@ async function loadLiveOps() {
         </tbody>
       </table>`;
   } catch (e) {
-    wrap.innerHTML = `<div class="empty" style="color:#F08A83">${e.message}</div>`;
+    wrap.innerHTML = `<div class="empty" style="color:var(--err)">${e.message}</div>`;
   }
 }
 document.getElementById("refreshBtn").onclick = () => { loadDashboard(); loadLiveOps(); };
@@ -381,7 +384,7 @@ async function loadDashboard() {
       label: statusLabels[r.status] || r.status, value: r.count, sub: `${r.count} طلب`,
     })));
   } catch (e) {
-    document.getElementById("kpiRow").innerHTML = `<div class="panel wide" style="color:#F08A83">${e.message}</div>`;
+    document.getElementById("kpiRow").innerHTML = `<div class="panel wide" style="color:var(--err)">${e.message}</div>`;
   } finally {
     document.getElementById("loadingState").style.display = "none";
   }
@@ -473,5 +476,6 @@ if (auth.token && auth.user) {
   showLogin();
 }
 </script>
+<script src="/js/theme.js"></script>
 </body>
 </html>

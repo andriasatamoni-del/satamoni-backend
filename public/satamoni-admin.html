@@ -1,14 +1,17 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ستاموني — إدارة المستخدمين</title>
 <style>
   :root {
-    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
-    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
-    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --err: #F08A83;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
@@ -33,7 +36,7 @@
     padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff;
     font-weight: 800; cursor: pointer; font-size: 13px;
   }
-  #formErr { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  #formErr { color: var(--err); font-size: 12px; margin-top: 6px; }
 
   table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
   th, td { padding: 10px 12px; text-align: right; font-size: 13px; border-bottom: 1px solid var(--line); }
@@ -41,7 +44,7 @@
   tr:last-child td { border-bottom: none; }
   .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
   .badge.active { background: rgba(63,163,77,.15); color: var(--green); }
-  .badge.inactive { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.inactive { background: rgba(194,42,36,.15); color: var(--err); }
   .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
 
   #homeTilesBody input { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
@@ -55,7 +58,7 @@
   #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
-  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
   #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
   label.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); flex: 0; white-space: nowrap; }
   label.chk input { flex: 0; width: auto; }
@@ -67,6 +70,7 @@
   <div class="brand">🍕 ستاموني — إدارة المستخدمين</div>
   <div id="userInfo">
     <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
 </div>
@@ -340,7 +344,7 @@ document.getElementById("posSettingsSubmit").onclick = async () => {
     await api("/api/pos-settings", { method: "PATCH", body: JSON.stringify({ maxUnapprovedDiscountPercent: percent }) });
     errBox.style.color = "var(--green)";
     errBox.textContent = "اتحفظ ✓";
-  } catch (e) { errBox.style.color = "#F08A83"; errBox.textContent = e.message; }
+  } catch (e) { errBox.style.color = "var(--err)"; errBox.textContent = e.message; }
 };
 document.getElementById("vatRateSubmit").onclick = async () => {
   const errBox = document.getElementById("vatRateErr");
@@ -350,7 +354,7 @@ document.getElementById("vatRateSubmit").onclick = async () => {
     await api("/api/pos-settings", { method: "PATCH", body: JSON.stringify({ vatRate: rate }) });
     errBox.style.color = "var(--green)";
     errBox.textContent = "اتحفظ ✓";
-  } catch (e) { errBox.style.color = "#F08A83"; errBox.textContent = e.message; }
+  } catch (e) { errBox.style.color = "var(--err)"; errBox.textContent = e.message; }
 };
 document.getElementById("smsConfirmationsSubmit").onclick = async () => {
   const errBox = document.getElementById("smsConfirmationsErr");
@@ -360,7 +364,7 @@ document.getElementById("smsConfirmationsSubmit").onclick = async () => {
     await api("/api/pos-settings", { method: "PATCH", body: JSON.stringify({ smsConfirmationsEnabled: enabled }) });
     errBox.style.color = "var(--green)";
     errBox.textContent = "اتحفظ ✓";
-  } catch (e) { errBox.style.color = "#F08A83"; errBox.textContent = e.message; }
+  } catch (e) { errBox.style.color = "var(--err)"; errBox.textContent = e.message; }
 };
 
 // ---------------- بطاقات الصفحة الرئيسية ----------------
@@ -425,5 +429,6 @@ if (auth.token && auth.user) {
   showLogin();
 }
 </script>
+<script src="/js/theme.js"></script>
 </body>
 </html>

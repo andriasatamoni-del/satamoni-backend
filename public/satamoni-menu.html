@@ -1,14 +1,17 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ستاموني — المنيو والإعدادات</title>
 <style>
   :root {
-    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27;
-    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135;
-    --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E;
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --err: #F08A83;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 15px; }
@@ -35,7 +38,7 @@
   .formbox label.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); flex: 0; white-space: nowrap; }
   .formbox label.chk input { flex: 0; width: auto; }
   .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
-  .err { color: #F08A83; font-size: 12px; margin-top: 6px; }
+  .err { color: var(--err); font-size: 12px; margin-top: 6px; }
 
   .item-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 10px; }
   .item-card .head { display: flex; justify-content: space-between; align-items: center; }
@@ -45,7 +48,7 @@
   .variant-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
   .variant-row .lbl { flex: 1; }
   .linkbtn { background: none; border: none; color: var(--gold-bright); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
-  .linkbtn.danger { color: #F08A83; }
+  .linkbtn.danger { color: var(--err); }
   .addvariant { display: flex; gap: 6px; margin-top: 8px; }
   .addvariant input { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
   .addvariant input.lbl { width: 90px; }
@@ -55,7 +58,7 @@
   .pickrow { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
   .pickrow select { flex: 2; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px; font-size: 12px; }
   .pickrow input { flex: 1; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px; font-size: 12px; }
-  .pickrow button { flex: 0; padding: 8px 10px; border: 1px solid var(--line); background: transparent; color: #F08A83; border-radius: 6px; cursor: pointer; }
+  .pickrow button { flex: 0; padding: 8px 10px; border: 1px solid var(--line); background: transparent; color: var(--err); border-radius: 6px; cursor: pointer; }
   .addrow-link { background: none; border: 1px dashed var(--line); color: var(--gold-bright); cursor: pointer; font-size: 12px; padding: 8px; border-radius: 6px; width: 100%; margin-bottom: 8px; }
 
   table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -64,7 +67,7 @@
   tr:last-child td { border-bottom: none; }
   .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
   .badge.active { background: rgba(63,163,77,.15); color: var(--green); }
-  .badge.inactive { background: rgba(194,42,36,.15); color: #F08A83; }
+  .badge.inactive { background: rgba(194,42,36,.15); color: var(--err); }
 
   #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
   #loginOverlay.hidden { display: none; }
@@ -80,7 +83,7 @@
   #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
-  #loginErr { color: #F08A83; font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
   #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
 </style>
 </head>
@@ -90,6 +93,7 @@
   <div class="brand">📋 ستاموني — المنيو والإعدادات</div>
   <div id="userInfo">
     <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
 </div>
@@ -643,8 +647,8 @@ document.getElementById("talabatImportSubmit").onclick = async () => {
     resultBox.innerHTML = `
       <div style="color:var(--green)">✅ اتحدّث سعر طلبات لـ ${data.updatedCount} صنف</div>
       ${data.notFound.length ? `
-        <div style="color:#F08A83;margin-top:6px">⚠️ ${data.notFound.length} سطر مش اتحدّث - راجعهم:</div>
-        <ul style="margin:4px 0;padding-inline-start:18px;color:#F08A83">
+        <div style="color:var(--err);margin-top:6px">⚠️ ${data.notFound.length} سطر مش اتحدّث - راجعهم:</div>
+        <ul style="margin:4px 0;padding-inline-start:18px;color:var(--err)">
           ${data.notFound.map((n) => `<li>${n}</li>`).join("")}
         </ul>
       ` : ""}
@@ -818,7 +822,7 @@ async function toggleRecipe(variantId, label) {
         await api(`/api/inventory/recipe/${variantId}`, { method: "PUT", body: JSON.stringify({ ingredients }) });
         errBox.style.color = "var(--green)";
         errBox.textContent = "اتحفظ ✓";
-      } catch (e) { errBox.style.color = "#F08A83"; errBox.textContent = e.message; }
+      } catch (e) { errBox.style.color = "var(--err)"; errBox.textContent = e.message; }
     };
   } catch (e) { box.innerHTML = `<div class="err">${e.message}</div>`; }
 }
@@ -1031,5 +1035,6 @@ if (auth.token && auth.user) {
   showLogin();
 }
 </script>
+<script src="/js/theme.js"></script>
 </body>
 </html>
