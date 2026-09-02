@@ -764,9 +764,28 @@ async function showRecipeVersionDetails(versionId, recipeId) {
     if (version.status === "ACTIVE" && canApprove()) {
       actions += `<button class="secondary" onclick="recipeVersionAction(${versionId}, 'archive', ${recipeId})">أرشفة</button>`;
     }
+    // المرحلة 8.27: قبل تفعيل نسخة جديدة، نقارن تكلفتها بتكلفة النسخة النشطة الحالية - كان الـ
+    // endpoint جاهز من غير أي شاشة تستخدمه
+    let impactHtml = "";
+    if (version.status === "APPROVED") {
+      try {
+        const impact = await api(`/api/recipes/versions/${versionId}/impact`);
+        if (impact.oldVersionId) {
+          const upDown = impact.difference > 0 ? "زيادة" : impact.difference < 0 ? "نقص" : "بدون تغيير";
+          impactHtml = `<div class="hint" style="margin-top:6px">
+            تأثير التفعيل على التكلفة: ${impact.incomplete ? "بيانات ناقصة - " : ""}
+            من ${fmtMoney(impact.oldCost)} إلى ${fmtMoney(impact.newCost)}
+            (${upDown}${impact.differencePercent != null ? ` ${Math.abs(impact.differencePercent).toFixed(1)}%` : ""})
+          </div>`;
+        } else {
+          impactHtml = `<div class="hint" style="margin-top:6px">مفيش نسخة نشطة حاليًا لنفس الوصفة للمقارنة - النسخة دي هتبقى أول نسخة نشطة</div>`;
+        }
+      } catch (e) { /* التأثير مش أساسي - تجاهل الخطأ بهدوء */ }
+    }
     box.innerHTML = `<div class="expandbox">
       <h3>نسخة ${version.version_number} <span class="badge ${version.status}">${RECIPE_STATUS_LABELS[version.status] || version.status}</span></h3>
       ${version.rejection_reason ? `<div class="err">سبب الرفض: ${esc(version.rejection_reason)}</div>` : ""}
+      ${impactHtml}
       <table><thead><tr><th>المكوّن</th><th>الكمية</th><th>فقد %</th><th>نسبة الاستفادة %</th><th>اختياري؟</th></tr></thead><tbody>
         ${ingredients.map(i => `<tr>
           <td data-label="المكوّن">${esc(i.item_name)}${i.item_type === "manufactured" ? " (نصف مصنّع)" : ""}</td>

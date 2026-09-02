@@ -295,6 +295,7 @@
   <select id="branchSelect"></select>
   <div class="status"><span class="dot" id="connDot"></span><span id="connText">جاري الاتصال بالسيرفر...</span></div>
   <button id="shiftStatusBtn" class="no-shift">🔓 افتح شيفت</button>
+  <button id="myShiftsBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">📋 شيفتاتي</button>
   <button id="cashEntryBtn">🧾 مصروف/مشترى</button>
   <button id="ordersOpenBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🛵 الطلبات الجارية</button>
   <div id="userInfo">
@@ -1111,6 +1112,40 @@ document.getElementById("shiftModalCancel").onclick = closeShiftModal;
 document.getElementById("shiftStatusBtn").onclick = () => {
   if (state.shift) openCloseShiftModal(); else openOpenShiftModal();
 };
+
+// المرحلة 8.27: GET /api/shifts/mine كان جاهز بالكامل (سجل شيفتات الكاشير نفسه) بس مفيش زرار في
+// الواجهة كله يستخدمه - سجل بسيط للـ100 شيفت الأخيرة بتاعة الكاشير الحالي
+const SHIFT_STATUS_LABELS_MINE = { ACTIVE: "شغالة", PENDING_REVIEW: "محتاجة مراجعة", CLOSED: "مقفولة", FORCE_CLOSED: "قفل قسري" };
+document.getElementById("myShiftsBtn").onclick = async () => {
+  document.getElementById("shiftModalTitle").textContent = "شيفتاتي (آخر 100)";
+  document.getElementById("shiftModalErr").textContent = "";
+  document.getElementById("shiftModalBody").innerHTML = `<div style="max-height:60vh;overflow:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">
+    <thead><tr><th>الفتح</th><th>القفل</th><th>افتتاحي</th><th>فعلي</th><th>الفرق</th><th>الحالة</th></tr></thead>
+    <tbody id="myShiftsBody"><tr><td colspan="6">جاري التحميل...</td></tr></tbody>
+  </table></div>`;
+  document.getElementById("shiftModalSubmit").style.display = "none";
+  document.getElementById("shiftModalOverlay").classList.add("show");
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/shifts/mine`, { headers: { Authorization: `Bearer ${auth.token}` } });
+    const shifts = await res.json();
+    if (!res.ok) throw new Error(shifts.error || "حصل خطأ");
+    document.getElementById("myShiftsBody").innerHTML = shifts.map(s => `
+      <tr>
+        <td>${new Date(s.opened_at).toLocaleString("ar-EG")}</td>
+        <td>${s.closed_at ? new Date(s.closed_at).toLocaleString("ar-EG") : "—"}</td>
+        <td>${money(s.opening_cash)}</td>
+        <td>${s.actual_cash != null ? money(s.actual_cash) : "—"}</td>
+        <td>${s.cash_variance != null ? money(s.cash_variance) : "—"}</td>
+        <td>${SHIFT_STATUS_LABELS_MINE[s.status] || s.status}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--faint)">مفيش شيفتات مسجّلة لسه</td></tr>`;
+  } catch (e) {
+    document.getElementById("myShiftsBody").innerHTML = `<tr><td colspan="6" style="color:var(--red)">${e.message}</td></tr>`;
+  }
+};
+document.getElementById("shiftModalCancel").addEventListener("click", () => {
+  document.getElementById("shiftModalSubmit").style.display = "";
+});
 
 function openOpenShiftModal() {
   document.getElementById("shiftModalTitle").textContent = "فتح شيفت جديد";

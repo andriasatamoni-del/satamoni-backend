@@ -399,6 +399,17 @@
       </div>
     </div>
 
+    <div id="coaEditBox">
+      <h1>تعديل الحسابات</h1>
+      <div style="font-size:11px;color:var(--faint);margin-bottom:8px">الكود ونوع الحساب محميين من التغيير - الحسابات النظامية الأساسية (زي المخزون/المبيعات) مينفعش تتعطّل.</div>
+      <table>
+        <thead><tr><th>الكود</th><th>النوع</th><th>الاسم</th><th>نشط</th><th></th></tr></thead>
+        <tbody id="coaEditBody"></tbody>
+      </table>
+      <div class="err" id="coaEditErr"></div>
+      <div class="ok" id="coaEditOk"></div>
+    </div>
+
     <div id="glWrap" style="display:none">
       <h1>كشف حساب: <span id="glAccountName"></span></h1>
       <div class="formbox">
@@ -1048,16 +1059,44 @@ async function loadShifts() {
         <td>${s.reviewer_name || "—"}</td>
         <td>${s.debt_id ? `<span class="diffneg">سلفة ${money(s.debt_amount)}</span>` : (s.cash_variance != null && Number(s.cash_variance) > 0 && s.variance_status === "APPROVED" ? `<span class="diffpos">زيادة ${money(s.cash_variance)}</span>` : "—")}</td>
         <td>${s.variance_review_notes || s.closing_notes || "—"}</td>
-        <td>${s.status === "PENDING_REVIEW" ? `<button class="linkbtn" data-review="${s.id}">مراجعة</button>` : ""}</td>
+        <td>
+          ${s.status === "PENDING_REVIEW" ? `<button class="linkbtn" data-review="${s.id}">مراجعة</button>` : ""}
+          ${["ACTIVE", "PENDING_REVIEW"].includes(s.status) && auth.user.role === "admin" ? `<button class="linkbtn" data-forceclose="${s.id}">قفل قسري</button>` : ""}
+        </td>
       </tr>
     `).join("") || `<tr><td colspan="13" style="text-align:center;color:var(--faint)">مفيش شيفتات مطابقة</td></tr>`;
 
     document.querySelectorAll("[data-review]").forEach(btn => {
       btn.onclick = guardedClick(btn, () => reviewShift(btn.dataset.review));
     });
+    document.querySelectorAll("[data-forceclose]").forEach(btn => {
+      btn.onclick = guardedClick(btn, () => forceCloseShiftUI(btn.dataset.forceclose));
+    });
   } catch (e) {
     errBox.textContent = e.message;
   }
+}
+
+// المرحلة 8.27: POST /api/shifts/:id/force-close كان جاهز بالكامل (لقفل شيفت عالق - الكاشير قافل
+// التطبيق بدري أو نسي يقفل الشيفت) بس مفيش زرار في الواجهة كله يستخدمه - أدمن بس
+async function forceCloseShiftUI(shiftId) {
+  if (!confirm("تأكيد القفل القسري للشيفت ده؟ الكاشير مش هيقدر يقفله بنفسه بعد كده.")) return;
+  const reason = prompt("سبب القفل القسري (إجباري):");
+  if (!reason || !reason.trim()) { alert("لازم تكتب السبب"); return; }
+  const actualCashStr = prompt("الكاش الفعلي المحسوب (اختياري - سيبه فاضي لو مش معروف):");
+  const closingNotes = prompt("ملاحظات إضافية (اختياري):") || undefined;
+  try {
+    const result = await api(`/api/shifts/${shiftId}/force-close`, {
+      method: "POST",
+      body: JSON.stringify({
+        reason: reason.trim(),
+        actualCash: actualCashStr && actualCashStr.trim() !== "" ? Number(actualCashStr) : undefined,
+        closingNotes,
+      }),
+    });
+    alert(`اتقفل الشيفت #${result.id} قسريًا`);
+    loadShifts();
+  } catch (e) { document.getElementById("shiftsErr").textContent = e.message; }
 }
 document.getElementById("shiftsBranchSelect").onchange = loadShifts;
 document.getElementById("shiftsStatusFilter").onchange = loadShifts;
@@ -1336,6 +1375,43 @@ async function loadAccountsForForms() {
   coaAccounts = await api("/api/accounting/accounts");
   const options = coaAccounts.map(a => `<option value="${a.id}">${a.code} - ${a.name}</option>`).join("");
   document.querySelectorAll(".je-account-select").forEach(sel => { sel.innerHTML = options; });
+  renderCoaEditTable();
+}
+
+// المرحلة 8.27: PATCH /api/accounting/accounts/:id كان جاهز بالكامل (تعديل اسم/حالة نشاط) بس مفيش
+// أي شاشة كانت بتستخدمه - جدول تعديل بسيط جوه نفس تاب "شجرة الحسابات"
+const canEditAccounts = () => auth.user.role === "admin" || auth.user.role === "accountant";
+function renderCoaEditTable() {
+  const canEdit = canEditAccounts();
+  document.getElementById("coaEditBody").innerHTML = coaAccounts.map(a => `
+    <tr data-accid="${a.id}">
+      <td>${a.code}</td><td>${accountTypeLabel(a.account_type)}</td>
+      <td>${canEdit ? `<input class="smallinput coa-edit-name" value="${a.name.replace(/"/g, "&quot;")}" style="width:200px" />` : a.name}</td>
+      <td>${canEdit
+        ? `<input type="checkbox" class="coa-edit-active" ${a.is_active ? "checked" : ""} ${a.is_system_account && a.is_active ? "disabled title=\"حساب نظامي - مينفعش يتعطّل\"" : ""} />`
+        : (a.is_active ? "نشط" : "معطّل")}</td>
+      <td>${canEdit ? `<button class="linkbtn" data-coasave="${a.id}">حفظ</button>` : ""}</td>
+    </tr>
+  `).join("");
+  document.querySelectorAll("[data-coasave]").forEach(btn => {
+    btn.onclick = guardedClick(btn, async () => {
+      const errBox = document.getElementById("coaEditErr");
+      const okBox = document.getElementById("coaEditOk");
+      errBox.textContent = ""; okBox.textContent = "";
+      const row = btn.closest("tr");
+      try {
+        await api(`/api/accounting/accounts/${btn.dataset.coasave}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: row.querySelector(".coa-edit-name").value.trim(),
+            isActive: row.querySelector(".coa-edit-active").checked,
+          }),
+        });
+        okBox.textContent = "اتحفظ التعديل";
+        await loadAccountsForForms();
+      } catch (e) { errBox.textContent = e.message; }
+    });
+  });
 }
 
 async function loadTrialBalance() {
