@@ -119,6 +119,7 @@
     <div class="tabbtn" data-tab="payments">طرق الدفع</div>
     <div class="tabbtn" data-tab="combos">العروض</div>
     <div class="tabbtn" data-tab="printing">إعدادات الطباعة</div>
+    <div class="tabbtn" data-tab="ingredients">مكونات المخزون</div>
   </div>
 
   <!-- المنيو -->
@@ -246,6 +247,32 @@
       <div style="color:var(--faint);font-size:13px">جاري التحميل...</div>
     </div>
   </div>
+
+  <!-- المرحلة 8.28: إدارة كتالوج مكونات المخزون (الأصناف الخام/نصف المصنّعة) - كانت POST/PATCH
+       /api/inventory/items جاهزين بالكامل بس مفيش أي شاشة تستخدمهم من غير satamoni-kitchen.html
+       اللي اتمسحت (كانت مستخدمة بس لعرض القايمة، مش لإضافة/تعديل) -->
+  <div class="panel" id="panel-ingredients">
+    <h1>إضافة مكوّن جديد</h1>
+    <div class="formbox">
+      <div class="row">
+        <input id="ingName" placeholder="اسم المكوّن" />
+        <input id="ingUnit" placeholder="الوحدة (كجم، لتر، قطعة...)" style="max-width:160px" />
+        <select id="ingType">
+          <option value="raw">خام</option>
+          <option value="manufactured">نصف مصنّع</option>
+        </select>
+        <button id="ingCreateBtn">إضافة</button>
+      </div>
+      <div class="err" id="ingCreateErr"></div>
+    </div>
+
+    <h1>كتالوج المكونات</h1>
+    <table>
+      <thead><tr><th>الاسم</th><th>الوحدة</th><th>النوع</th><th>سياسة الرصيد السالب</th><th></th></tr></thead>
+      <tbody id="ingBody"></tbody>
+    </table>
+    <div class="err" id="ingEditErr"></div>
+  </div>
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية أدمن على الحساب ده.</div>
@@ -311,8 +338,73 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
     document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
     if (btn.dataset.tab === "printing") loadPrintingTab();
+    if (btn.dataset.tab === "ingredients" && !ingredientsLoaded) { ingredientsLoaded = true; loadIngredientsTab(); }
   };
 });
+
+// المرحلة 8.28: تاب "مكونات المخزون" - إضافة/تعديل كتالوج الأصناف الخام
+let ingredientsLoaded = false;
+const NEGATIVE_STOCK_POLICY_LABELS = { STRICT: "صارم (منع تام)", ALLOW_WITH_APPROVAL: "مسموح بموافقة" };
+async function loadIngredientsTab() {
+  const errBox = document.getElementById("ingEditErr");
+  errBox.textContent = "";
+  try {
+    const items = await api("/api/inventory/items");
+    document.getElementById("ingBody").innerHTML = items.map(it => `
+      <tr data-ingid="${it.id}">
+        <td><input class="ing-edit-name" value="${it.name.replace(/"/g, "&quot;")}" style="width:180px" /></td>
+        <td><input class="ing-edit-unit" value="${(it.unit || "").replace(/"/g, "&quot;")}" style="width:90px" /></td>
+        <td>
+          <select class="ing-edit-type">
+            <option value="raw" ${it.item_type === "raw" ? "selected" : ""}>خام</option>
+            <option value="manufactured" ${it.item_type === "manufactured" ? "selected" : ""}>نصف مصنّع</option>
+          </select>
+        </td>
+        <td>
+          <select class="ing-edit-negpolicy">
+            <option value="STRICT" ${it.negative_stock_policy === "STRICT" ? "selected" : ""}>${NEGATIVE_STOCK_POLICY_LABELS.STRICT}</option>
+            <option value="ALLOW_WITH_APPROVAL" ${it.negative_stock_policy === "ALLOW_WITH_APPROVAL" ? "selected" : ""}>${NEGATIVE_STOCK_POLICY_LABELS.ALLOW_WITH_APPROVAL}</option>
+          </select>
+        </td>
+        <td><button class="linkbtn" data-ingsave="${it.id}">حفظ</button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--faint)">مفيش مكونات مسجّلة</td></tr>`;
+    document.querySelectorAll("[data-ingsave]").forEach(btn => {
+      btn.onclick = async () => {
+        errBox.textContent = "";
+        const row = btn.closest("tr");
+        try {
+          await api(`/api/inventory/items/${btn.dataset.ingsave}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              name: row.querySelector(".ing-edit-name").value.trim(),
+              unit: row.querySelector(".ing-edit-unit").value.trim(),
+              itemType: row.querySelector(".ing-edit-type").value,
+              negativeStockPolicy: row.querySelector(".ing-edit-negpolicy").value,
+            }),
+          });
+        } catch (e) { errBox.textContent = e.message; }
+      };
+    });
+  } catch (e) { errBox.textContent = e.message; }
+}
+
+document.getElementById("ingCreateBtn").onclick = async () => {
+  const errBox = document.getElementById("ingCreateErr");
+  errBox.textContent = "";
+  const name = document.getElementById("ingName").value.trim();
+  const unit = document.getElementById("ingUnit").value.trim();
+  if (!name || !unit) { errBox.textContent = "لازم اسم ووحدة"; return; }
+  try {
+    await api("/api/inventory/items", {
+      method: "POST",
+      body: JSON.stringify({ name, unit, itemType: document.getElementById("ingType").value }),
+    });
+    document.getElementById("ingName").value = "";
+    document.getElementById("ingUnit").value = "";
+    await loadIngredientsTab();
+  } catch (e) { errBox.textContent = e.message; }
+};
 
 // المرحلة 8.20: satamoni-printing.html بتتحمّل جوة iframe أول مرة تاب "إعدادات الطباعة" يتفتح بس
 function loadPrintingTab() {
