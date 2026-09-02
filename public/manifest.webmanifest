@@ -1,0 +1,19 @@
+{
+  "name": "ستاموني — اطلب أونلاين",
+  "short_name": "ستاموني",
+  "description": "بيتزا، فطير، برجر، مكرونة وكريب — اطلب أونلاين من ستاموني",
+  "start_url": "/order.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0E0E10",
+  "theme_color": "#0E0E10",
+  "dir": "rtl",
+  "lang": "ar",
+  "icons": [
+    { "src": "/images/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/images/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/images/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/images/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

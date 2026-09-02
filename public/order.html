@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>ستاموني — اطلب أونلاين</title>
+<meta name="description" content="بيتزا، فطير، برجر، مكرونة وكريب — اطلب أونلاين من ستاموني، استلام أو توصيل أو في المطعم" />
+<meta name="theme-color" content="#0E0E10" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/images/satamoni-logo.jpeg" />
+<link rel="icon" href="/images/satamoni-logo.jpeg" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lalezar&family=Cairo:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" />
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --line: #2A2A2E; --card-border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --red-deep: #8F1E19;
+    --gold: #CBA135; --gold-bright: #E8C468; --neon: #F5D400; --err: #F08A83;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Cairo', sans-serif; }
+  body { padding-bottom: env(safe-area-inset-bottom); }
+  h1, h2, h3 { font-family: 'Lalezar', sans-serif; font-weight: 400; margin: 0; }
+  button { font-family: 'Cairo', sans-serif; }
+  .mono { font-family: 'Space Mono', monospace; }
+  .muted { color: var(--faint); }
+  a { color: inherit; }
+  ::selection { background: var(--gold); color: #1A1508; }
+
+  #hero { position: relative; height: 200px; overflow: hidden; }
+  #hero img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(14,14,16,.15) 0%, rgba(14,14,16,.92) 100%); }
+  #cartFab {
+    position: fixed; top: max(16px, env(safe-area-inset-top)); left: 16px; z-index: 50;
+    background: var(--red); color: #fff; border: 1px solid var(--gold-bright); border-radius: 999px;
+    padding: 10px 16px; display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 700; box-shadow: 0 6px 18px rgba(0,0,0,.4);
+  }
+  #cartFabCount { background: var(--gold); color: #1A1508; border-radius: 50%; min-width: 18px; height: 18px;
+    display: none; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; padding: 0 4px; }
+
+  #infoCard { max-width: 640px; margin: -64px auto 0; position: relative; z-index: 10; padding: 0 16px; }
+  #infoCardTop { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.4); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #infoCardTop img { width: 58px; height: 58px; border-radius: 50%; object-fit: cover; border: 2px solid var(--gold); flex-shrink: 0; }
+  #infoCardBottom { background: var(--bg-alt); border: 1px solid var(--line); border-top: none; border-radius: 0 0 16px 16px;
+    padding: 18px 18px 12px; display: flex; justify-content: space-around; text-align: center; margin-top: -10px; }
+  .stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .stat .row { display: flex; align-items: center; gap: 5px; color: var(--gold); }
+  .stat .label { font-size: 11px; color: var(--faint); }
+
+  #catNav { position: sticky; top: 0; z-index: 20; background: var(--bg); display: flex; gap: 8px;
+    overflow-x: auto; padding: 18px 16px 10px; scrollbar-width: none; }
+  #catNav::-webkit-scrollbar { display: none; }
+  .cat-pill { flex: none; padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+  .cat-pill.active { background: var(--gold); border-color: var(--gold); color: #1A1508; }
+
+  main { max-width: 640px; margin: 0 auto; padding: 0 16px 100px; }
+  .cat-section h2 { font-size: 22px; color: var(--gold-bright); margin: 20px 0 10px; }
+  .menu-item { display: flex; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .menu-item .thumb { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; flex-shrink: 0; background: var(--card); }
+  .menu-item .info { flex: 1; min-width: 0; }
+  .menu-item .name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .menu-item .name { font-weight: 700; font-size: 15px; }
+  .best-badge { font-size: 10px; font-weight: 800; color: var(--gold-bright); border: 1px solid var(--gold); border-radius: 999px; padding: 1px 8px; }
+  .menu-item .desc { font-size: 12px; color: var(--faint); margin-top: 2px; }
+  .menu-item .price { font-family: 'Space Mono', monospace; font-size: 13px; color: var(--gold-bright); margin-top: 4px; }
+  .add-btn { width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--red); color: #fff;
+    display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; position: relative; font-size: 18px; }
+  .add-btn .qty-badge { position: absolute; top: -6px; right: -6px; background: var(--gold); color: #1A1508;
+    font-size: 10px; font-weight: 800; border-radius: 50%; width: 17px; height: 17px; display: none;
+    align-items: center; justify-content: center; }
+
+  .sheet-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.65); display: none; }
+  .sheet-overlay.open { display: flex; }
+  .sheet { position: relative; width: min(440px, 100%); background: var(--bg-alt); border: 1px solid var(--line);
+    max-height: 88vh; overflow-y: auto; padding: 22px; margin: auto; border-radius: 16px 16px 0 0; }
+  #sizeSheet.sheet-overlay { align-items: flex-end; }
+  #cartSheet.sheet-overlay { align-items: stretch; justify-content: flex-start; }
+  #cartSheet .sheet { width: min(380px, 100%); height: 100%; border-radius: 0; margin: 0; border-inline-end: 1px solid var(--line); }
+  #checkoutSheet.sheet-overlay { align-items: center; justify-content: center; padding: 16px; }
+  #checkoutSheet .sheet { border-radius: 16px; margin: 0; }
+
+  .sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .sheet-close { background: none; border: none; color: var(--ink); font-size: 20px; cursor: pointer; line-height: 1; }
+
+  .size-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
+  .stepper { display: flex; align-items: center; gap: 10px; }
+  .step-btn { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--ink); background: transparent;
+    color: var(--ink); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  .step-btn.solid { border: none; background: var(--red); color: #fff; }
+
+  .btn { width: 100%; padding: 13px; border: none; border-radius: 8px; font-weight: 700; font-size: 14px; cursor: pointer; }
+  .btn-primary { background: var(--red); color: #fff; }
+  .btn-primary:disabled { background: #3A3630; cursor: not-allowed; color: var(--faint); }
+  .btn-gold { background: var(--gold); color: #1A1508; }
+  .btn-outline { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+
+  .cart-line { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  .cart-line .qty-ctrl { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+
+  .type-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .type-tab { flex: 1; padding: 10px 6px; border-radius: 8px; border: 1px solid var(--line); background: transparent;
+    display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; font-size: 12px; font-weight: 700; color: var(--ink); }
+  .type-tab.active { border-color: var(--gold); background: #2A2308; color: var(--gold-bright); }
+
+  .field { display: block; margin-bottom: 12px; }
+  .field span { font-size: 12px; color: var(--faint); font-weight: 700; display: block; margin-bottom: 4px; }
+  .field input, .field select, .field textarea { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: #111113; color: var(--ink); font-size: 14px; font-family: 'Cairo', sans-serif; }
+  .field textarea { resize: vertical; min-height: 60px; }
+  .link-btn { display: flex; align-items: center; gap: 6px; background: none; border: none; color: var(--gold-bright);
+    font-size: 12px; font-weight: 700; cursor: pointer; padding: 0; margin-bottom: 12px; }
+  .pay-opt { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+  .pay-opt.active { border-color: var(--gold); background: #2A2308; }
+  .err-msg { color: var(--err); font-size: 12px; margin-top: 8px; min-height: 14px; }
+  .totals-row { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; }
+  .totals-row.grand { font-size: 17px; font-weight: 800; font-family: 'Lalezar', sans-serif; padding-top: 8px; border-top: 1px dashed var(--faint); margin-top: 6px; }
+
+  #confirmScreen { text-align: center; padding: 20px 4px; }
+  #confirmScreen .check { width: 64px; height: 64px; border-radius: 50%; background: var(--gold); color: #1A1508;
+    display: flex; align-items: center; justify-content: center; font-size: 32px; margin: 0 auto 16px; }
+  #confirmScreen h2 { font-size: 26px; margin-bottom: 6px; }
+
+  #loadingState { min-height: 100vh; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--faint); }
+  #emptyMenuNote { text-align: center; padding: 40px 0; color: var(--faint); font-size: 13px; }
+  .spin { animation: sp 1s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="loadingState"><span class="spin">◌</span><span>جاري تحميل المنيو...</span></div>
+
+<div id="app" style="display:none">
+  <div id="hero"><img src="/images/satamoni-hero.jpeg" alt="ستاموني" /></div>
+  <button id="cartFab"><span>🛍️</span><span id="cartFabCount"></span></button>
+
+  <div id="infoCard">
+    <div id="infoCardTop">
+      <div>
+        <h1 style="font-size:26px">ستاموني</h1>
+        <div class="mono" style="color:var(--gold);font-size:10px;letter-spacing:2px;margin-top:4px">SATAMONI</div>
+      </div>
+      <img src="/images/satamoni-logo.jpeg" alt="" />
+    </div>
+    <div id="infoCardBottom">
+      <div class="stat"><div class="row">⏱️ <span class="mono" id="etaStat">—</span></div><div class="label">وقت التوصيل</div></div>
+      <div style="width:1px;background:var(--line)"></div>
+      <div class="stat"><div class="row">📍 <span class="mono" id="branchesStat">—</span></div><div class="label">فروعنا</div></div>
+    </div>
+  </div>
+
+  <div id="catNav"></div>
+  <main id="menuMain"></main>
+</div>
+
+<!-- Size / add-to-cart sheet -->
+<div class="sheet-overlay" id="sizeSheet">
+  <div class="sheet">
+    <div class="sheet-head"><h3 id="sizeSheetTitle" style="font-size:20px"></h3><button class="sheet-close" data-close="sizeSheet">✕</button></div>
+    <div id="sizeSheetBody"></div>
+    <button class="btn btn-gold" style="margin-top:16px" data-close="sizeSheet">تم</button>
+  </div>
+</div>
+
+<!-- Cart drawer -->
+<div class="sheet-overlay" id="cartSheet">
+  <div class="sheet">
+    <div class="sheet-head"><h2 style="font-size:24px">طلبك</h2><button class="sheet-close" data-close="cartSheet">✕</button></div>
+    <div id="cartBody"></div>
+    <button class="btn btn-primary" id="goCheckoutBtn" style="margin-top:16px">المتابعة للدفع</button>
+  </div>
+</div>
+
+<!-- Checkout sheet -->
+<div class="sheet-overlay" id="checkoutSheet">
+  <div class="sheet" id="checkoutBody"></div>
+</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+function money(n) { return Number(n).toLocaleString("en-US") + " ج.م"; }
+function uid() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2)); }
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371, dLat = (lat2 - lat1) * Math.PI / 180, dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const state = {
+  config: null, cart: {}, activeCat: null,
+  orderType: "delivery", tableNumber: "", branchId: "", areaId: "",
+  addressDetails: "", distinguishingMark: "", name: "", phone: "", phone2: "",
+  paymentMethodId: "", locating: false, submitting: false, confirmResult: null,
+  idempotencyKey: uid(),
+};
+
+async function boot() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/config/full`);
+    if (!res.ok) throw new Error("تعذّر تحميل المنيو");
+    state.config = await res.json();
+  } catch (e) {
+    document.getElementById("loadingState").innerHTML = `<span style="color:var(--err)">تعذّر تحميل المنيو - تأكد من الاتصال بالإنترنت وحاول تاني</span>`;
+    return;
+  }
+  const cats = Array.from(new Set(state.config.menu.map(m => m.category)));
+  state.activeCat = cats[0] || null;
+  const branches = (state.config.branches || []).filter(b => !b.isCentralKitchen);
+  state.branchId = branches[0]?.id || "";
+  const enabledPayments = (state.config.paymentMethods || []).filter(p => p.enabled);
+  state.paymentMethodId = enabledPayments[0]?.id || "";
+
+  const avgEta = Math.round((state.config.deliveryAreas || []).reduce((s, a) => s + (a.etaMinutes || 0), 0) / ((state.config.deliveryAreas || []).length || 1)) || 25;
+  document.getElementById("etaStat").textContent = avgEta + " د";
+  document.getElementById("branchesStat").textContent = branches.length;
+
+  document.getElementById("loadingState").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  renderCatNav();
+  renderMenu();
+  wireStatic();
+}
+
+function categories() { return Array.from(new Set(state.config.menu.map(m => m.category))); }
+
+function renderCatNav() {
+  document.getElementById("catNav").innerHTML = categories().map(cat => `
+    <div class="cat-pill ${cat === state.activeCat ? "active" : ""}" data-cat="${escapeAttr(cat)}">${cat}</div>
+  `).join("");
+  document.querySelectorAll(".cat-pill").forEach(el => {
+    el.onclick = () => {
+      state.activeCat = el.dataset.cat;
+      document.getElementById(`sec-${cssId(el.dataset.cat)}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      renderCatNav();
+    };
+  });
+}
+
+function cssId(s) { return s.split("").map(c => c.charCodeAt(0)).join("-"); }
+function escapeHtml(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function escapeAttr(s) { return escapeHtml(s); }
+
+function priceLabel(item) {
+  const vs = item.variants;
+  if (!vs || vs.length === 0) return "";
+  if (vs.length === 1) return money(vs[0].price);
+  const prices = vs.map(v => Number(v.price));
+  return `${money(Math.min(...prices))} – ${money(Math.max(...prices))}`;
+}
+
+function qtyOfItem(item) {
+  return Object.entries(state.cart).filter(([k]) => k.startsWith(item.id + "__")).reduce((s, [, v]) => s + v.qty, 0);
+}
+
+function renderMenu() {
+  const cats = categories();
+  document.getElementById("menuMain").innerHTML = cats.map(cat => {
+    const items = state.config.menu.filter(m => m.category === cat);
+    return `
+      <section class="cat-section" id="sec-${cssId(cat)}">
+        <h2>${cat}</h2>
+        ${items.map(item => `
+          <div class="menu-item">
+            ${item.image ? `<img class="thumb" src="${escapeAttr(item.image)}" alt="" />` : ""}
+            <div class="info" data-open="${item.id}" style="cursor:pointer">
+              <div class="name-row">
+                <span class="name">${escapeHtml(item.name)}</span>
+                ${item.best ? `<span class="best-badge">الأكثر طلبًا</span>` : ""}
+              </div>
+              ${item.description ? `<div class="desc">${escapeHtml(item.description)}</div>` : ""}
+              <div class="price">${priceLabel(item)}</div>
+            </div>
+            <button class="add-btn" data-add="${item.id}">+<span class="qty-badge">${qtyOfItem(item) || ""}</span></button>
+          </div>
+        `).join("")}
+      </section>
+    `;
+  }).join("") || `<div id="emptyMenuNote">المنيو مش متاح دلوقتي، حاول تاني بعدين</div>`;
+
+  document.querySelectorAll(".add-btn").forEach(btn => {
+    btn.onclick = () => handleAddClick(btn.dataset.add);
+    const badge = btn.querySelector(".qty-badge");
+    if (badge && badge.textContent) badge.style.display = "flex"; else if (badge) badge.style.display = "none";
+  });
+  document.querySelectorAll("[data-open]").forEach(el => {
+    el.onclick = () => openSizeSheet(el.dataset.open, false);
+  });
+}
+
+function findItem(id) { return state.config.menu.find(m => String(m.id) === String(id)); }
+
+function handleAddClick(itemId) {
+  const item = findItem(itemId);
+  if (!item) return;
+  if (item.variants.length > 1) { openSizeSheet(itemId, true); return; }
+  addToCart(item, item.variants[0]);
+  renderMenu();
+  flashCartFab();
+}
+
+function openSizeSheet(itemId, autoAdd) {
+  const item = findItem(itemId);
+  if (!item) return;
+  document.getElementById("sizeSheetTitle").textContent = item.name;
+  document.getElementById("sizeSheetBody").innerHTML = item.variants.map(v => {
+    const key = item.id + "__" + v.label;
+    const q = state.cart[key]?.qty || 0;
+    return `
+      <div class="size-row">
+        <div>
+          <div style="font-size:14px;font-weight:700">${escapeHtml(v.label)}</div>
+          <div class="mono" style="font-size:13px;color:var(--gold-bright)">${money(v.price)}</div>
+        </div>
+        <div class="stepper">
+          ${q > 0 ? `<button class="step-btn" data-dec="${key}">−</button><span class="mono" style="min-width:14px;text-align:center">${q}</span>` : ""}
+          <button class="step-btn solid" data-inc="${item.id}|${v.label}">+</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+  document.querySelectorAll("[data-inc]").forEach(b => {
+    b.onclick = () => {
+      const [iid, label] = b.dataset.inc.split("|");
+      const it = findItem(iid);
+      const variant = it.variants.find(v => v.label === label);
+      addToCart(it, variant);
+      openSizeSheet(itemId, false);
+      renderMenu();
+      flashCartFab();
+    };
+  });
+  document.querySelectorAll("[data-dec]").forEach(b => {
+    b.onclick = () => { decFromCart(b.dataset.dec); openSizeSheet(itemId, false); renderMenu(); flashCartFab(); };
+  });
+  openSheet("sizeSheet");
+}
+
+function addToCart(item, variant) {
+  const key = item.id + "__" + variant.label;
+  const cur = state.cart[key];
+  state.cart[key] = { itemId: item.id, variantId: variant.id, name: item.name, label: variant.label, price: Number(variant.price), qty: (cur?.qty || 0) + 1 };
+}
+function decFromCart(key) {
+  const cur = state.cart[key];
+  if (!cur) return;
+  if (cur.qty <= 1) delete state.cart[key];
+  else state.cart[key] = { ...cur, qty: cur.qty - 1 };
+}
+function cartList() { return Object.entries(state.cart).map(([key, v]) => ({ key, ...v })); }
+function cartSubtotal() { return cartList().reduce((s, l) => s + l.price * l.qty, 0); }
+function cartCount() { return cartList().reduce((s, l) => s + l.qty, 0); }
+
+function flashCartFab() {
+  const n = cartCount();
+  const badge = document.getElementById("cartFabCount");
+  badge.textContent = n;
+  badge.style.display = n > 0 ? "flex" : "none";
+}
+
+function openSheet(id) { document.getElementById(id).classList.add("open"); }
+function closeSheet(id) { document.getElementById(id).classList.remove("open"); }
+
+function renderCart() {
+  const list = cartList();
+  if (list.length === 0) {
+    document.getElementById("cartBody").innerHTML = `<p class="muted" style="font-size:14px">لسه مفيش أصناف. اختار من المنيو.</p>`;
+    document.getElementById("goCheckoutBtn").disabled = true;
+    return;
+  }
+  document.getElementById("goCheckoutBtn").disabled = false;
+  document.getElementById("cartBody").innerHTML = `
+    <div style="background:var(--card);border:1px dashed var(--faint);border-radius:6px;padding:16px">
+      ${list.map(l => `
+        <div class="cart-line">
+          <div style="flex:1">
+            <div>${escapeHtml(l.name)} ${l.label !== "عادي" ? `(${escapeHtml(l.label)})` : ""}</div>
+            <div class="qty-ctrl">
+              <button class="step-btn" data-cartdec="${l.key}">−</button>
+              <span class="mono">${l.qty}</span>
+              <button class="step-btn" data-cartinc="${l.key}">+</button>
+            </div>
+          </div>
+          <div class="mono" style="color:var(--gold-bright)">${money(l.price * l.qty)}</div>
+        </div>
+      `).join("")}
+      <div class="totals-row" style="border-top:1px dashed var(--faint);margin-top:8px;padding-top:8px">
+        <span>الإجمالي الفرعي</span><span class="mono" style="color:var(--gold-bright)">${money(cartSubtotal())}</span>
+      </div>
+    </div>
+  `;
+  document.querySelectorAll("[data-cartinc]").forEach(b => b.onclick = () => {
+    const cur = state.cart[b.dataset.cartinc]; state.cart[b.dataset.cartinc] = { ...cur, qty: cur.qty + 1 };
+    renderCart(); renderMenu(); flashCartFab();
+  });
+  document.querySelectorAll("[data-cartdec]").forEach(b => b.onclick = () => {
+    decFromCart(b.dataset.cartdec); renderCart(); renderMenu(); flashCartFab();
+  });
+}
+
+function areasForBranch(branchId) {
+  return (state.config.deliveryAreas || []).filter(a => String(a.branchId) === String(branchId));
+}
+function selectedArea() { return (state.config.deliveryAreas || []).find(a => String(a.id) === String(state.areaId)); }
+function deliveryFee() { return state.orderType === "delivery" && selectedArea() ? Number(selectedArea().fee) : 0; }
+function grandTotal() { return cartSubtotal() + deliveryFee(); }
+function belowMinOrder() {
+  const a = selectedArea();
+  return state.orderType === "delivery" && a && Number(a.minOrder) > 0 && cartSubtotal() < Number(a.minOrder);
+}
+
+function canCheckout() {
+  if (cartList().length === 0 || !state.name.trim() || !state.phone.trim() || !state.paymentMethodId || belowMinOrder()) return false;
+  if (state.orderType === "dinein") return !!(state.tableNumber.trim() && state.branchId);
+  if (state.orderType === "pickup") return !!state.branchId;
+  if (state.orderType === "delivery") return !!(state.areaId && state.addressDetails.trim());
+  return false;
+}
+
+function findNearestBranch() {
+  const branches = (state.config.branches || []).filter(b => b.lat && b.lng);
+  if (branches.length === 0) { alert("لسه مفيش مواقع مضافة للفروع، اختار الفرع يدويًا."); return; }
+  state.locating = true; renderCheckout();
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      let best = branches[0], bestDist = Infinity;
+      branches.forEach(b => { const d = haversine(pos.coords.latitude, pos.coords.longitude, Number(b.lat), Number(b.lng)); if (d < bestDist) { bestDist = d; best = b; } });
+      state.branchId = best.id; state.locating = false; renderCheckout();
+    },
+    () => { state.locating = false; alert("مقدرناش نوصل لموقعك، اختار الفرع يدويًا."); renderCheckout(); }
+  );
+}
+
+function renderCheckout() {
+  if (state.confirmResult) { renderConfirm(); return; }
+  const branches = (state.config.branches || []).filter(b => !b.isCentralKitchen);
+  const dineinBranches = branches.filter(b => b.supportsDineIn);
+  const errBox = state.checkoutErr || "";
+
+  document.getElementById("checkoutBody").innerHTML = `
+    <div class="sheet-head"><h2 style="font-size:22px">إتمام الطلب</h2><button class="sheet-close" data-close="checkoutSheet">✕</button></div>
+    <div class="type-tabs">
+      <button class="type-tab ${state.orderType === "dinein" ? "active" : ""}" data-type="dinein">🍽️<br/>في المطعم</button>
+      <button class="type-tab ${state.orderType === "pickup" ? "active" : ""}" data-type="pickup">🛍️<br/>استلام</button>
+      <button class="type-tab ${state.orderType === "delivery" ? "active" : ""}" data-type="delivery">🛵<br/>توصيل</button>
+    </div>
+
+    ${state.orderType === "dinein" ? `
+      <label class="field"><span>الفرع</span>
+        <select id="fBranch">${dineinBranches.map(b => `<option value="${b.id}" ${String(b.id) === String(state.branchId) ? "selected" : ""}>${escapeHtml(b.name)} — ${escapeHtml(b.address || "")}</option>`).join("") || `<option value="">مفيش فروع بتقبل صالة حاليًا</option>`}</select>
+      </label>
+      <label class="field"><span>رقم الترابيزة</span><input id="fTable" value="${escapeAttr(state.tableNumber)}" placeholder="مثال: 12" /></label>
+    ` : ""}
+
+    ${state.orderType === "pickup" ? `
+      <label class="field"><span>الفرع</span>
+        <select id="fBranch">${branches.map(b => `<option value="${b.id}" ${String(b.id) === String(state.branchId) ? "selected" : ""}>${escapeHtml(b.name)} — ${escapeHtml(b.address || "")}</option>`).join("")}</select>
+      </label>
+      <button type="button" class="link-btn" id="nearestBtn" ${state.locating ? "disabled" : ""}>${state.locating ? "⏳ بيحدد موقعك..." : "📍 استخدام موقعي لأقرب فرع"}</button>
+    ` : ""}
+
+    ${state.orderType === "delivery" ? `
+      <label class="field"><span>منطقة التوصيل</span>
+        <select id="fArea">
+          <option value="">اختار المنطقة</option>
+          ${(state.config.deliveryAreas || []).map(a => `<option value="${a.id}" ${String(a.id) === String(state.areaId) ? "selected" : ""}>${escapeHtml(a.name)} — ${money(a.fee)}${a.minOrder ? ` (حد أدنى ${money(a.minOrder)})` : ""}</option>`).join("")}
+        </select>
+      </label>
+      <label class="field"><span>العنوان بالتفصيل</span><textarea id="fAddress" placeholder="اسم الشارع، رقم العمارة، الدور، الشقة...">${escapeHtml(state.addressDetails)}</textarea></label>
+      <label class="field"><span>علامة مميزة (اختياري)</span><input id="fMark" value="${escapeAttr(state.distinguishingMark)}" placeholder="بجوار إيه، لون العمارة..." /></label>
+      ${belowMinOrder() ? `<div class="err-msg">أقل قيمة طلب للمنطقة دي ${money(selectedArea().minOrder)} - أضف أصناف أكتر</div>` : ""}
+    ` : ""}
+
+    <label class="field"><span>الاسم</span><input id="fName" value="${escapeAttr(state.name)}" placeholder="اسمك" /></label>
+    <label class="field"><span>رقم الموبايل</span><input id="fPhone" value="${escapeAttr(state.phone)}" placeholder="01xxxxxxxxx" type="tel" /></label>
+    ${state.orderType === "delivery" ? `<label class="field"><span>رقم موبايل تاني (اختياري)</span><input id="fPhone2" value="${escapeAttr(state.phone2)}" type="tel" /></label>` : ""}
+
+    <div class="field"><span>الدفع</span>
+      ${(state.config.paymentMethods || []).filter(p => p.enabled).map(p => `
+        <label class="pay-opt ${String(p.id) === String(state.paymentMethodId) ? "active" : ""}">
+          <input type="radio" name="pay" value="${p.id}" ${String(p.id) === String(state.paymentMethodId) ? "checked" : ""} style="accent-color:var(--gold)" />
+          <span>${escapeHtml(p.name)}${p.note ? ` — ${escapeHtml(p.note)}` : ""}</span>
+        </label>
+      `).join("") || `<div class="muted" style="font-size:13px">مفيش طريقة دفع متاحة حاليًا</div>`}
+      ${(state.config.paymentMethods || []).every(p => p.kind !== "card_or_wallet") ? `<div class="muted" style="font-size:11px;margin-top:4px">الدفع الإلكتروني (فيزا/إنستاباي) هيتاح قريبًا</div>` : ""}
+    </div>
+
+    <div class="totals-row"><span>الإجمالي الفرعي</span><span class="mono">${money(cartSubtotal())}</span></div>
+    ${state.orderType === "delivery" ? `<div class="totals-row"><span>التوصيل</span><span class="mono">${money(deliveryFee())}</span></div>` : ""}
+    <div class="totals-row grand"><span>الإجمالي</span><span class="mono">${money(grandTotal())}</span></div>
+
+    <div class="err-msg">${escapeHtml(errBox)}</div>
+    <button class="btn btn-primary" id="submitOrderBtn" style="margin-top:6px" ${!canCheckout() || state.submitting ? "disabled" : ""}>
+      ${state.submitting ? "جاري الإرسال..." : `تأكيد الطلب — ${money(grandTotal())}`}
+    </button>
+  `;
+
+  document.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { state.orderType = b.dataset.type; state.checkoutErr = ""; renderCheckout(); });
+  const fBranch = document.getElementById("fBranch"); if (fBranch) fBranch.onchange = (e) => { state.branchId = e.target.value; };
+  const fTable = document.getElementById("fTable"); if (fTable) fTable.oninput = (e) => { state.tableNumber = e.target.value; renderCheckoutSubmitState(); };
+  const fArea = document.getElementById("fArea"); if (fArea) fArea.onchange = (e) => { state.areaId = e.target.value; renderCheckout(); };
+  const fAddress = document.getElementById("fAddress"); if (fAddress) fAddress.oninput = (e) => { state.addressDetails = e.target.value; renderCheckoutSubmitState(); };
+  const fMark = document.getElementById("fMark"); if (fMark) fMark.oninput = (e) => { state.distinguishingMark = e.target.value; };
+  const fName = document.getElementById("fName"); if (fName) fName.oninput = (e) => { state.name = e.target.value; renderCheckoutSubmitState(); };
+  const fPhone = document.getElementById("fPhone"); if (fPhone) fPhone.oninput = (e) => { state.phone = e.target.value; renderCheckoutSubmitState(); };
+  const fPhone2 = document.getElementById("fPhone2"); if (fPhone2) fPhone2.oninput = (e) => { state.phone2 = e.target.value; };
+  document.querySelectorAll('input[name="pay"]').forEach(r => r.onchange = (e) => { state.paymentMethodId = e.target.value; renderCheckout(); });
+  const nearestBtn = document.getElementById("nearestBtn"); if (nearestBtn) nearestBtn.onclick = findNearestBranch;
+  const submitBtn = document.getElementById("submitOrderBtn"); if (submitBtn) submitBtn.onclick = submitOrder;
+}
+
+function renderCheckoutSubmitState() {
+  const btn = document.getElementById("submitOrderBtn");
+  if (btn) btn.disabled = !canCheckout() || state.submitting;
+}
+
+async function submitOrder() {
+  state.submitting = true; state.checkoutErr = ""; renderCheckout();
+  try {
+    const payload = {
+      source: "website",
+      branchId: state.orderType === "delivery" ? selectedArea()?.branchId : state.branchId,
+      orderType: state.orderType,
+      tableNumber: state.orderType === "dinein" ? state.tableNumber.trim() : null,
+      deliveryAreaId: state.orderType === "delivery" ? state.areaId : null,
+      addressDetails: state.orderType === "delivery" ? state.addressDetails.trim() : null,
+      distinguishingMark: state.orderType === "delivery" ? (state.distinguishingMark.trim() || null) : null,
+      customerName: state.name.trim(),
+      customerPhone: state.phone.trim(),
+      customerPhone2: state.phone2.trim() || null,
+      paymentMethodId: state.paymentMethodId,
+      deliveryFee: deliveryFee(),
+      idempotencyKey: state.idempotencyKey,
+      items: cartList().map(l => ({ itemId: l.itemId, variantId: l.variantId, quantity: l.qty })),
+    };
+    const res = await fetch(`${API_BASE_URL}/api/orders`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "تعذّر إرسال الطلب");
+    state.confirmResult = { orderId: data.orderId, total: data.total };
+    state.cart = {};
+    renderCheckout();
+    renderMenu();
+    flashCartFab();
+  } catch (e) {
+    state.checkoutErr = e.message;
+  } finally {
+    state.submitting = false;
+    renderCheckout();
+  }
+}
+
+function renderConfirm() {
+  document.getElementById("checkoutBody").innerHTML = `
+    <div id="confirmScreen">
+      <div class="check">✓</div>
+      <h2>تم استلام طلبك!</h2>
+      <p class="muted" style="font-size:14px">رقم الطلب <span class="mono" style="color:var(--gold-bright)">#${state.confirmResult.orderId}</span></p>
+      <p class="mono" style="font-size:18px;color:var(--gold-bright);margin-top:8px">${money(state.confirmResult.total)}</p>
+      <p class="muted" style="font-size:13px;margin-top:10px">هيتصل بيك الفرع لو محتاجين أي تأكيد. متابعة التحضير في المطبخ بدأت بالفعل.</p>
+      <button class="btn btn-primary" style="margin-top:20px" id="newOrderBtn">اطلب مرة تانية</button>
+    </div>
+  `;
+  document.getElementById("newOrderBtn").onclick = () => {
+    state.confirmResult = null; state.idempotencyKey = uid();
+    state.tableNumber = ""; state.addressDetails = ""; state.distinguishingMark = "";
+    closeSheet("checkoutSheet");
+  };
+}
+
+function wireStatic() {
+  document.getElementById("cartFab").onclick = () => { renderCart(); openSheet("cartSheet"); };
+  document.getElementById("goCheckoutBtn").onclick = () => { closeSheet("cartSheet"); state.checkoutErr = ""; renderCheckout(); openSheet("checkoutSheet"); };
+  document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => closeSheet(b.dataset.close));
+  document.querySelectorAll(".sheet-overlay").forEach(ov => ov.addEventListener("click", (e) => { if (e.target === ov) closeSheet(ov.id); }));
+  flashCartFab();
+}
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+
+boot();
+</script>
+</body>
+</html>
