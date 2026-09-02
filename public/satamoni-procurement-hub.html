@@ -18,6 +18,15 @@
   body { display: flex; flex-direction: column; }
   #topbar { height: 56px; flex: 0 0 auto; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
   #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  /* المرحلة 8.33: شريط علوي أزرق (على غرار السيستم القديم) - في الوضع النهاري بس؛ الوضع الليلي زي ما كان بالظبط */
+  :root:not([data-theme="dark"]) #topbar {
+    background: #1B5FA8;
+    border-bottom: 1px solid #164E8A;
+    --ink: #FFFFFF;
+    --faint: rgba(255,255,255,.82);
+    --line: rgba(255,255,255,.45);
+  }
+  :root:not([data-theme="dark"]) #topbar .brand { color: #FFFFFF; }
   #tabs { flex: 0 0 auto; display: flex; gap: 6px; padding: 10px 16px; flex-wrap: wrap; background: var(--bg-alt); border-bottom: 1px solid var(--line); }
   .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
   .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }

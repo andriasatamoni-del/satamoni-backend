@@ -15,25 +15,46 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; min-height: 100vh; }
-  #wrap { max-width: 640px; margin: 0 auto; padding: 40px 20px; }
-  h1 { color: var(--gold-bright); font-size: 24px; text-align: center; margin-bottom: 4px; }
-  .sub { text-align: center; color: var(--faint); font-size: 13px; margin-bottom: 32px; }
-  .card {
-    display: flex; align-items: center; gap: 14px; background: var(--card); border: 1px solid var(--line);
-    border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; text-decoration: none; color: var(--ink);
+
+  /* المرحلة 8.33: شريط علوي أزرق (على غرار السيستم القديم) - في الوضع النهاري بس؛ الوضع الليلي زي ما كان */
+  #topbar {
+    height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center; padding: 0 16px;
   }
-  .card:hover { border-color: var(--gold); }
-  .card .icon { font-size: 26px; }
-  .card .title { font-weight: 800; font-size: 15px; }
-  .card .desc { font-size: 12px; color: var(--faint); margin-top: 2px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 18px; }
+  :root:not([data-theme="dark"]) #topbar {
+    background: #1B5FA8;
+    border-bottom: 1px solid #164E8A;
+    --ink: #FFFFFF;
+    --faint: rgba(255,255,255,.82);
+    --line: rgba(255,255,255,.45);
+  }
+  :root:not([data-theme="dark"]) #topbar .brand { color: #FFFFFF; }
+  #themeToggleWrap { position: absolute; left: 16px; }
+
+  #wrap { max-width: 760px; margin: 0 auto; padding: 28px 20px 40px; position: relative; }
+  .sub { text-align: center; color: var(--faint); font-size: 13px; margin-bottom: 24px; }
+
+  #tilesWrap { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+  .card {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    color: #fff; border-radius: 14px; padding: 22px 12px; text-decoration: none; text-align: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,.15); transition: transform .1s ease;
+  }
+  .card:hover { transform: translateY(-2px); }
+  .card .icon { font-size: 32px; }
+  .card .title { font-weight: 800; font-size: 14px; }
+  .card .desc { font-size: 11px; opacity: .88; }
   footer { text-align: center; color: var(--faint); font-size: 11px; margin-top: 30px; }
 </style>
 </head>
 <body>
+<div id="topbar">
+  <div class="brand">🍕 ستاموني — نظام إدارة المطعم</div>
+  <div id="themeToggleWrap"><button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button></div>
+</div>
 <div id="wrap">
-  <h1>🍕 ستاموني</h1>
-  <div style="text-align:center;margin-bottom:10px"><button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button></div>
-  <div class="sub">نظام إدارة المطعم — اختار الشاشة اللي هتجربها</div>
+  <div class="sub">اختار الشاشة اللي هتجربها</div>
 
   <div id="tilesWrap"></div>
 
@@ -56,13 +77,17 @@
   // المرحلة 8.17: البطاقات بقت مخزّنة في الداتابيز (home_tiles) بدل ما تكون ثابتة هنا - المالك يقدر
   // يغيّر اسم/ترتيب أي بطاقة من لوحة الأدمن (satamoni-admin.html) من غير ما يحتاج تعديل كود
   const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+  // المرحلة 8.33: كل بطاقة بتاخد لون مميز بالتدوير على باليت ثابتة (زي شكل تايلز السيستم القديم
+  // الملوّنة) - بدل ما تكون كل البطاقات بلون واحد؛ الألوان مش مخزّنة في الداتابيز، بس متسلسلة حسب ترتيب العرض
+  const TILE_PALETTE = ["#178A7A", "#D97B1F", "#6A3FA0", "#1B5FA8", "#C22A24", "#2F7A3D", "#A87C1F", "#B0479A"];
   if (!redirectTarget) fetch(`${API_BASE_URL}/api/home-tiles`)
     .then((r) => r.json())
     .then((tiles) => {
-      document.getElementById("tilesWrap").innerHTML = tiles.map((t) => `
-        <a class="card" href="${t.href}">
+      document.getElementById("tilesWrap").innerHTML = tiles.map((t, i) => `
+        <a class="card" href="${t.href}" style="background:${TILE_PALETTE[i % TILE_PALETTE.length]}">
           <span class="icon">${t.icon}</span>
-          <div><div class="title">${t.title}</div><div class="desc">${t.description}</div></div>
+          <div class="title">${t.title}</div>
+          ${t.description ? `<div class="desc">${t.description}</div>` : ""}
         </a>
       `).join("");
     })

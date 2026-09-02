@@ -30,6 +30,15 @@
     display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
   }
   #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; letter-spacing: 0.5px; }
+  /* المرحلة 8.33: شريط علوي أزرق (على غرار السيستم القديم) - في الوضع النهاري بس؛ الوضع الليلي زي ما كان بالظبط */
+  :root:not([data-theme="dark"]) #topbar {
+    background: #1B5FA8;
+    border-bottom: 1px solid #164E8A;
+    --ink: #FFFFFF;
+    --faint: rgba(255,255,255,.82);
+    --line: rgba(255,255,255,.45);
+  }
+  :root:not([data-theme="dark"]) #topbar .brand { color: #FFFFFF; }
   #topbar select {
     background: var(--card); color: var(--ink); border: 1px solid var(--line);
     border-radius: 6px; padding: 6px 10px; font-size: 14px;
