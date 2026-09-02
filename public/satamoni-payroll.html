@@ -91,6 +91,7 @@
     <div class="tabbtn" data-tab="adjustments">السلف والجزاءات والمكافآت</div>
     <div class="tabbtn" data-tab="runs">تشغيلات الرواتب</div>
     <div class="tabbtn" data-tab="hrreports">تقارير HR</div>
+    <div class="tabbtn" data-tab="settings">الإعدادات ومبيعات الأقسام</div>
   </div>
 
   <!-- ملخص الرواتب -->
@@ -455,6 +456,74 @@
       </div>
     </div>
   </div>
+
+  <!-- الإعدادات ومبيعات الأقسام (المرحلة 8.25) -->
+  <div class="panel" id="panel-settings">
+    <h1>إعدادات الرواتب العامة</h1>
+    <div class="formbox">
+      <div class="row">
+        <label>أيام الشغل الافتراضية بالشهر <input id="stDefaultWorkingDays" type="number" /></label>
+        <label>أيام الإجازة المدفوعة بالشهر <input id="stPaidLeaveDays" type="number" /></label>
+        <label>نسبة تحذير (الرواتب/المبيعات) <input id="stWarnRatio" type="number" step="0.01" /></label>
+      </div>
+      <div class="row">
+        <label>ساعات الشيفت القياسية <input id="stShiftHours" type="number" step="0.5" /></label>
+        <label>معامل الأوفر تايم <input id="stOvertimeMultiplier" type="number" step="0.1" /></label>
+        <label>أقل عدد ساعات أوفر تايم تتحسب <input id="stMinOvertimeHours" type="number" step="0.5" /></label>
+      </div>
+      <div class="row">
+        <label>عدد مرات التأخير المسموحة بدون خصم <input id="stAllowedLateExemptions" type="number" /></label>
+        <label>نسبة خصم البصمة الناقصة <input id="stMissedPunchFraction" type="number" step="0.01" /></label>
+      </div>
+      <div class="row">
+        <label>بداية الشيفت الصباحي <input id="stMorningShiftStart" type="time" /></label>
+        <label>بداية الشيفت المسائي <input id="stEveningShiftStart" type="time" /></label>
+      </div>
+      <div class="row"><button id="stSaveBtn">حفظ الإعدادات</button></div>
+      <div class="err" id="stErr"></div>
+      <div class="ok" id="stOk"></div>
+    </div>
+
+    <h1>سلم خصم التأخير</h1>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">كل صف بيحدد نسبة خصم على المرتب لو التأخير وقع في المدى ده (بالدقايق). لآخر صف (بلا حد أعلى) استخدم رقم كبير زي 999999. الحفظ بيستبدل السلم بالكامل.</div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>من (دقيقة)</th><th>إلى (دقيقة)</th><th>نسبة الخصم</th><th></th></tr></thead>
+        <tbody id="tiersBody"></tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="tierAddBtn">+ إضافة صف</button>
+      <button id="tierSaveBtn">حفظ سلم التأخير</button>
+    </div>
+    <div class="err" id="tierErr"></div>
+    <div class="ok" id="tierOk"></div>
+
+    <h1>مبيعات الأقسام الشهرية (لمقارنة تكلفة الرواتب بالمبيعات)</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="dsBranchSelect"></select>
+        <select id="dsDepartment"></select>
+        <select id="dsYear"></select>
+        <select id="dsMonth"></select>
+        <input id="dsAmount" type="number" placeholder="قيمة المبيعات" />
+        <button id="dsSaveBtn">حفظ</button>
+      </div>
+      <div class="err" id="dsErr"></div>
+      <div class="ok" id="dsOk"></div>
+    </div>
+    <div class="row">
+      <select id="dsFilterYear"></select>
+      <select id="dsFilterMonth"></select>
+      <button id="dsLoadBtn">عرض</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>الفرع</th><th>القسم</th><th>الشهر</th><th>المبيعات</th></tr></thead>
+        <tbody id="dsBody"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <div id="accessDenied" style="display:none">مفيش صلاحية أدمن/محاسب على الحساب ده.</div>
@@ -550,11 +619,13 @@ document.getElementById("exportCsvBtn").onclick = () => SatamoniPrint.exportCurr
 
 // المرحلة 4D: تبويب "تقارير HR" بيتحمّل أول مرة يتفتح بس (lazy) - نفس نمط satamoni-accounting.html
 let hrReportsLoaded = false;
+let settingsTabLoaded = false;
 document.querySelectorAll(".tabbtn").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
     if (btn.dataset.tab === "hrreports" && !hrReportsLoaded) { hrReportsLoaded = true; loadAllHrReports(); }
+    if (btn.dataset.tab === "settings" && !settingsTabLoaded) { settingsTabLoaded = true; initSettingsTab(); }
   };
 });
 
@@ -1347,6 +1418,152 @@ async function openRunDetail(runId) {
       } catch (e) { errBox.textContent = e.message; }
     });
   });
+}
+
+// ---------------- الإعدادات ومبيعات الأقسام (المرحلة 8.25) ----------------
+// PATCH /settings و PUT /late-tiers أدمن بس في الباك إند - المحاسب يقدر يشوف بس، فبنخفي زراير الحفظ
+// دي عليه. مبيعات الأقسام (POST /department-sales) متاحة لأدمن ومحاسب زي باقي شاشة الرواتب
+const canEditPayrollSettings = () => auth.user.role === "admin";
+
+async function initSettingsTab() {
+  document.getElementById("stSaveBtn").style.display = canEditPayrollSettings() ? "" : "none";
+  document.getElementById("tierAddBtn").style.display = canEditPayrollSettings() ? "" : "none";
+  document.getElementById("tierSaveBtn").style.display = canEditPayrollSettings() ? "" : "none";
+
+  populatePeriodSelectors("dsYear", "dsMonth");
+  populatePeriodSelectors("dsFilterYear", "dsFilterMonth");
+  document.getElementById("dsBranchSelect").innerHTML = branchesCache.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
+  document.getElementById("dsDepartment").innerHTML = DEPARTMENTS.map(d => `<option value="${d}">${d}</option>`).join("");
+
+  await loadPayrollSettingsAndTiers();
+  await loadDepartmentSales();
+}
+
+async function loadPayrollSettingsAndTiers() {
+  const errBox = document.getElementById("stErr");
+  errBox.textContent = "";
+  try {
+    const { settings, tiers } = await api("/api/payroll/settings");
+    document.getElementById("stDefaultWorkingDays").value = settings.default_working_days;
+    document.getElementById("stPaidLeaveDays").value = settings.paid_leave_days_per_month;
+    document.getElementById("stWarnRatio").value = settings.payroll_to_sales_warn_ratio;
+    document.getElementById("stShiftHours").value = settings.standard_shift_hours;
+    document.getElementById("stOvertimeMultiplier").value = settings.overtime_multiplier;
+    document.getElementById("stMinOvertimeHours").value = settings.min_overtime_hours;
+    document.getElementById("stAllowedLateExemptions").value = settings.allowed_late_exemptions;
+    document.getElementById("stMissedPunchFraction").value = settings.missed_punch_deduction_fraction;
+    document.getElementById("stMorningShiftStart").value = (settings.morning_shift_start || "").slice(0, 5);
+    document.getElementById("stEveningShiftStart").value = (settings.evening_shift_start || "").slice(0, 5);
+    renderTiers(tiers);
+  } catch (e) { errBox.textContent = e.message; }
+}
+
+function renderTiers(tiers) {
+  const editable = canEditPayrollSettings();
+  document.getElementById("tiersBody").innerHTML = tiers.map((t, i) => `
+    <tr data-tierrow="${i}">
+      <td>${editable ? `<input class="smallinput tier-from" type="number" value="${t.from_minute}" style="width:70px" />` : t.from_minute}</td>
+      <td>${editable ? `<input class="smallinput tier-to" type="number" value="${t.to_minute}" style="width:70px" />` : t.to_minute}</td>
+      <td>${editable ? `<input class="smallinput tier-fraction" type="number" step="0.01" value="${t.deduction_fraction}" style="width:70px" />` : t.deduction_fraction}</td>
+      <td>${editable ? `<button class="linkbtn" data-tierremove="${i}">حذف</button>` : ""}</td>
+    </tr>
+  `).join("");
+  document.querySelectorAll("[data-tierremove]").forEach(btn => {
+    btn.onclick = () => { btn.closest("tr").remove(); };
+  });
+}
+
+document.getElementById("tierAddBtn").onclick = () => {
+  const tbody = document.getElementById("tiersBody");
+  const row = document.createElement("tr");
+  row.innerHTML = `
+    <td><input class="smallinput tier-from" type="number" value="0" style="width:70px" /></td>
+    <td><input class="smallinput tier-to" type="number" value="999999" style="width:70px" /></td>
+    <td><input class="smallinput tier-fraction" type="number" step="0.01" value="0" style="width:70px" /></td>
+    <td><button class="linkbtn" data-tierremove="new">حذف</button></td>
+  `;
+  tbody.appendChild(row);
+  row.querySelector("[data-tierremove]").onclick = () => row.remove();
+};
+
+document.getElementById("stSaveBtn").onclick = guardedClick(document.getElementById("stSaveBtn"), async () => {
+  const errBox = document.getElementById("stErr");
+  const okBox = document.getElementById("stOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    await api("/api/payroll/settings", {
+      method: "PATCH",
+      body: JSON.stringify({
+        defaultWorkingDays: Number(document.getElementById("stDefaultWorkingDays").value),
+        paidLeaveDaysPerMonth: Number(document.getElementById("stPaidLeaveDays").value),
+        payrollToSalesWarnRatio: Number(document.getElementById("stWarnRatio").value),
+        standardShiftHours: Number(document.getElementById("stShiftHours").value),
+        overtimeMultiplier: Number(document.getElementById("stOvertimeMultiplier").value),
+        minOvertimeHours: Number(document.getElementById("stMinOvertimeHours").value),
+        allowedLateExemptions: Number(document.getElementById("stAllowedLateExemptions").value),
+        missedPunchDeductionFraction: Number(document.getElementById("stMissedPunchFraction").value),
+        morningShiftStart: document.getElementById("stMorningShiftStart").value,
+        eveningShiftStart: document.getElementById("stEveningShiftStart").value,
+      }),
+    });
+    okBox.textContent = "اتحفظت الإعدادات";
+  } catch (e) { errBox.textContent = e.message; }
+});
+
+document.getElementById("tierSaveBtn").onclick = guardedClick(document.getElementById("tierSaveBtn"), async () => {
+  const errBox = document.getElementById("tierErr");
+  const okBox = document.getElementById("tierOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const rows = [...document.querySelectorAll("#tiersBody tr")];
+  const tiers = rows.map(row => ({
+    fromMinute: Number(row.querySelector(".tier-from").value),
+    toMinute: Number(row.querySelector(".tier-to").value),
+    deductionFraction: Number(row.querySelector(".tier-fraction").value),
+  }));
+  if (tiers.length === 0) { errBox.textContent = "لازم سلم تأخير فيه صف واحد على الأقل"; return; }
+  if (tiers.some(t => !Number.isFinite(t.fromMinute) || !Number.isFinite(t.toMinute) || !Number.isFinite(t.deductionFraction))) {
+    errBox.textContent = "لازم كل الحقول تكون أرقام صحيحة"; return;
+  }
+  try {
+    await api("/api/payroll/late-tiers", { method: "PUT", body: JSON.stringify({ tiers }) });
+    okBox.textContent = "اتحفظ سلم التأخير";
+    await loadPayrollSettingsAndTiers();
+  } catch (e) { errBox.textContent = e.message; }
+});
+
+document.getElementById("dsSaveBtn").onclick = guardedClick(document.getElementById("dsSaveBtn"), async () => {
+  const errBox = document.getElementById("dsErr");
+  const okBox = document.getElementById("dsOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    await api("/api/payroll/department-sales", {
+      method: "POST",
+      body: JSON.stringify({
+        branchId: document.getElementById("dsBranchSelect").value,
+        department: document.getElementById("dsDepartment").value,
+        year: Number(document.getElementById("dsYear").value),
+        month: Number(document.getElementById("dsMonth").value),
+        salesAmount: Number(document.getElementById("dsAmount").value || 0),
+      }),
+    });
+    okBox.textContent = "اتحفظت مبيعات القسم";
+    document.getElementById("dsFilterYear").value = document.getElementById("dsYear").value;
+    document.getElementById("dsFilterMonth").value = document.getElementById("dsMonth").value;
+    await loadDepartmentSales();
+  } catch (e) { errBox.textContent = e.message; }
+});
+
+document.getElementById("dsLoadBtn").onclick = () => loadDepartmentSales();
+
+async function loadDepartmentSales() {
+  const year = document.getElementById("dsFilterYear").value;
+  const month = document.getElementById("dsFilterMonth").value;
+  try {
+    const rows = await api(`/api/payroll/department-sales?year=${year}&month=${month}`);
+    document.getElementById("dsBody").innerHTML = rows.map(r => `
+      <tr><td>${r.branch_name}</td><td>${r.department}</td><td>${r.year}/${r.month}</td><td>${money(r.sales_amount)}</td></tr>
+    `).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--faint)">مفيش بيانات مسجلة للشهر ده</td></tr>`;
+  } catch (e) { document.getElementById("dsBody").innerHTML = `<tr><td colspan="4" style="color:var(--red)">${e.message}</td></tr>`; }
 }
 
 if (auth.token && auth.user) {
