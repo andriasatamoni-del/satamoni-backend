@@ -1,11 +1,16 @@
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
 const { computePayrollSummary, toCents } = require("../services/payroll-engine");
 const { recordEmployeeHistoryChanges } = require("../db/employee-history");
+const { parsePayrollWorkbook } = require("../db/payroll-excel-import");
+
+// ملف الرواتب الشهري نفسه محدود الحجم جدًا (ملف Excel واحد لكل شهر) - 20MB سقف سخي كفاية ومانع لأي حمل زيادة
+const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // نظام الرواتب حساس ماليًا وشامل كل الفروع - أدمن ومحاسب بس (مش مقفول على فرع زي المصروفات العادية)
 const payrollAccess = requireRole("admin", "accountant");
@@ -204,6 +209,185 @@ router.put("/employees/:id/fingerprint-codes", async (req, res) => {
     }
     await client.query("COMMIT");
     res.status(201).json({ ok: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ---------------- المرحلة 8.35: استيراد شهري كامل من ملف "ستاموني - نظام حساب المرتبات الشهري" ----------------
+// POST /api/payroll/import-excel (multipart: file + year + month) - نفس ملف الإكسل اللي بيتبعت شهريًا
+// (موظفين + بصمة 3 فروع + حضور المطبخ المركزي اليدوي + سلف/جزاءات/مكافآت) بشيتاته وأعمدته بالظبط زي ما
+// موصوف في شيت "التعليمات" جوه الملف نفسه. آمن تكراره لنفس الشهر (upsert بالكامل عدا السلف/الجزاءات/
+// المكافآت اللي بتتجنب تكرار نفس القيد بالظبط). قواعد الاستبعاد التفصيلية في db/payroll-excel-import.js.
+router.post("/import-excel", (req, res, next) => {
+  excelUpload.single("file")(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "الملف كبير جدًا (الحد الأقصى 20 ميجا)" });
+    res.status(400).json({ error: err.message });
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "لازم ترفع ملف Excel" });
+  const targetYear = Number(req.body.year);
+  const targetMonth = Number(req.body.month);
+  if (!targetYear || !targetMonth || targetMonth < 1 || targetMonth > 12) {
+    return res.status(400).json({ error: "لازم تحدد سنة وشهر صحيحين للاستيراد" });
+  }
+
+  let parsed;
+  try {
+    parsed = await parsePayrollWorkbook(req.file.buffer, { targetYear, targetMonth });
+  } catch (err) {
+    return res.status(400).json({ error: `تعذّرت قراءة الملف: ${err.message}` });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const branchRows = await client.query("SELECT id, name FROM branches");
+    const branchIdByName = {};
+    branchRows.rows.forEach((b) => { branchIdByName[b.name] = b.id; });
+    const branchWarnings = [];
+
+    let employeesCreated = 0;
+    let employeesUpdated = 0;
+    const employeeIdByCode = {};
+    const fingerprintWarnings = [];
+
+    for (const emp of parsed.employees) {
+      const existing = await client.query("SELECT id FROM employees WHERE employee_code = $1", [emp.employeeCode]);
+      let employeeId;
+      if (existing.rows.length > 0) {
+        employeeId = existing.rows[0].id;
+        await client.query(
+          `UPDATE employees SET name=$1, department=$2, job_title=$3, attendance_system=$4, hire_date=$5,
+             base_salary=$6, working_days_per_month=$7, shift=$8, wage_type=$9, hourly_rate=$10,
+             phone=$11, notes=$12, count_day_31=$13
+           WHERE id = $14`,
+          [emp.name, emp.department, emp.jobTitle, emp.attendanceSystem, emp.hireDate, emp.baseSalary,
+           emp.workingDaysPerMonth, emp.shift, emp.wageType, emp.hourlyRate, emp.phone, emp.notes,
+           emp.countDay31, employeeId]
+        );
+        employeesUpdated++;
+      } else {
+        const inserted = await client.query(
+          `INSERT INTO employees
+            (name, department, job_title, attendance_system, hire_date, base_salary, working_days_per_month,
+             shift, wage_type, hourly_rate, phone, notes, count_day_31, employee_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+          [emp.name, emp.department, emp.jobTitle, emp.attendanceSystem, emp.hireDate, emp.baseSalary,
+           emp.workingDaysPerMonth, emp.shift, emp.wageType, emp.hourlyRate, emp.phone, emp.notes,
+           emp.countDay31, emp.employeeCode]
+        );
+        employeeId = inserted.rows[0].id;
+        employeesCreated++;
+      }
+      employeeIdByCode[emp.employeeCode] = employeeId;
+
+      for (const [branchName, deviceCode] of Object.entries(emp.fingerprintCodes)) {
+        const branchId = branchIdByName[branchName];
+        if (!branchId) {
+          fingerprintWarnings.push(`${emp.name}: الفرع "${branchName}" مش موجود في السيستم - كود البصمة ده اتجاهل`);
+          continue;
+        }
+        await client.query(
+          `INSERT INTO employee_fingerprint_codes (employee_id, branch_id, device_code) VALUES ($1,$2,$3)
+           ON CONFLICT (branch_id, device_code) DO UPDATE SET employee_id = EXCLUDED.employee_id`,
+          [employeeId, branchId, deviceCode]
+        );
+      }
+
+      if (emp.restrictedBranchName) {
+        const branchId = branchIdByName[emp.restrictedBranchName];
+        if (branchId) {
+          await client.query("UPDATE employees SET restricted_branch_id = $1 WHERE id = $2", [branchId, employeeId]);
+        } else {
+          fingerprintWarnings.push(`${emp.name}: فرع "${emp.restrictedBranchName}" (احسب الراتب من فرع واحد) مش موجود في السيستم`);
+        }
+      }
+    }
+
+    const punchesImported = {};
+    for (const [branchName, rows] of Object.entries(parsed.punchesByBranch)) {
+      const branchId = branchIdByName[branchName];
+      if (!branchId) {
+        branchWarnings.push(`الفرع "${branchName}" مش موجود في السيستم - بصماته (${rows.length} سطر) اتجاهلت بالكامل`);
+        continue;
+      }
+      let count = 0;
+      for (const p of rows) {
+        await client.query(
+          `INSERT INTO attendance_punches (branch_id, device_code, punch_date, clock_in, clock_out)
+           VALUES ($1,$2,$3,$4,$5)
+           ON CONFLICT (branch_id, device_code, punch_date)
+           DO UPDATE SET clock_in = EXCLUDED.clock_in, clock_out = EXCLUDED.clock_out`,
+          [branchId, p.deviceCode, p.date, p.clockIn, p.clockOut]
+        );
+        count++;
+      }
+      punchesImported[branchName] = count;
+    }
+
+    let manualAttendanceImported = 0;
+    for (const m of parsed.manualAttendance) {
+      const employeeId = employeeIdByCode[m.employeeCode];
+      if (!employeeId) continue;
+      await client.query(
+        `INSERT INTO central_kitchen_manual_attendance
+          (employee_id, year, month, present_days, absent_days, total_late_minutes, manual_deduction, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (employee_id, year, month) DO UPDATE SET
+           present_days = EXCLUDED.present_days, absent_days = EXCLUDED.absent_days,
+           total_late_minutes = EXCLUDED.total_late_minutes, manual_deduction = EXCLUDED.manual_deduction,
+           notes = EXCLUDED.notes`,
+        [employeeId, targetYear, targetMonth, m.presentDays, m.absentDays, m.totalLateMinutes, m.manualDeduction, m.notes]
+      );
+      manualAttendanceImported++;
+    }
+
+    let adjustmentsImported = 0;
+    let adjustmentsSkippedDuplicate = 0;
+    for (const a of parsed.adjustments) {
+      const employeeId = employeeIdByCode[a.employeeCode];
+      if (!employeeId) continue;
+      const dup = await client.query(
+        `SELECT id FROM payroll_adjustments
+         WHERE employee_id = $1 AND entry_date = $2 AND adjustment_type = $3 AND amount = $4 LIMIT 1`,
+        [employeeId, a.entryDate, a.adjustmentType, a.amount]
+      );
+      if (dup.rows.length > 0) { adjustmentsSkippedDuplicate++; continue; }
+      await client.query(
+        `INSERT INTO payroll_adjustments (employee_id, entry_date, adjustment_type, amount, notes, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [employeeId, a.entryDate, a.adjustmentType, a.amount, a.notes, req.user.id]
+      );
+      adjustmentsImported++;
+    }
+
+    await logAudit(client, {
+      userId: req.user.id, action: "PAYROLL_EXCEL_IMPORTED", entityType: "payroll_import", entityId: null,
+      newValues: {
+        year: targetYear, month: targetMonth, employeesCreated, employeesUpdated,
+        excludedCount: parsed.excluded.length, needsReviewCount: parsed.needsReview.length,
+        punchesImported, manualAttendanceImported, adjustmentsImported,
+      },
+      req,
+    });
+
+    await client.query("COMMIT");
+    res.status(201).json({
+      year: targetYear, month: targetMonth,
+      employeesCreated, employeesUpdated,
+      excluded: parsed.excluded,
+      needsReview: parsed.needsReview,
+      punchesImported,
+      manualAttendanceImported,
+      adjustmentsImported, adjustmentsSkippedDuplicate,
+      warnings: [...branchWarnings, ...fingerprintWarnings],
+    });
   } catch (err) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });

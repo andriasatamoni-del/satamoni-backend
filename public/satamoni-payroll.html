@@ -360,6 +360,27 @@
 
   <!-- البصمة -->
   <div class="panel" id="panel-attendance">
+    <!-- المرحلة 8.35: استيراد شهري كامل من نفس ملف "ستاموني - نظام حساب المرتبات الشهري" اللي بيتبعت
+         شهريًا (موظفين + بصمة 3 الفروع + حضور المطبخ المركزي + سلف/جزاءات/مكافآت) بدل ما نضيف كل حاجة
+         يدوي واحدة واحدة - آمن تكراره لنفس الشهر */ -->
+    <h1>استيراد شامل من ملف Excel (شهري)</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="xlsxYear"></select>
+        <select id="xlsxMonth"></select>
+        <input id="xlsxFile" type="file" accept=".xlsx" />
+        <button id="xlsxImportBtn">استيراد الملف</button>
+      </div>
+      <div style="font-size:12px;color:var(--faint);margin-top:4px">
+        نفس ملف "ستاموني - نظام حساب المرتبات الشهري" بشيتاته الأصلية زي ما هو (موظفين/بصمة 3 فروع/حضور
+        المطبخ المركزي/سلف وجزاءات ومكافآت). أي صف موظف من غير اسم حقيقي أو راتب فعلي بيتستبعد تلقائيًا،
+        وبصمات الفروع بتتفلتر على السنة والشهر المحددين فوق بس. تقدر ترفع نفس الملف تاني بأمان (تحديث
+        مش تكرار).
+      </div>
+      <div class="err" id="xlsxErr"></div>
+      <div id="xlsxReport" style="display:none;margin-top:14px"></div>
+    </div>
+
     <h1>استيراد بصمة فرع</h1>
     <div class="formbox">
       <div class="row">
@@ -591,6 +612,19 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// المرحلة 8.35: زي api() بالظبط بس من غير Content-Type يدوي - لازم يفضل المتصفح هو اللي يحدد
+// multipart/form-data وboundary بتاعه لوحده لما الجسم FormData (رفع ملف)
+async function apiUpload(path, formData) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST", body: formData,
+    headers: { ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
 // المرحلة 6 (6D): حماية ضد الضغط المزدوج على أزرار الإجراءات المالية - نفس النمط بالظبط المستخدم في
 // satamoni-accounting.html (الباك اند أصلًا idempotent/محمي بقفل صفوف، الحماية دي بس لتجربة استخدام
 // أنضف عشان مايظهرش خطأ مربك للمستخدم لو ضغط مرتين بسرعة)
@@ -694,6 +728,7 @@ async function boot() {
 
   populatePeriodSelectors("sumYear", "sumMonth");
   populatePeriodSelectors("attYear", "attMonth");
+  populatePeriodSelectors("xlsxYear", "xlsxMonth");
   populatePeriodSelectors("mkYear", "mkMonth");
   populatePeriodSelectors("adjFilterYear", "adjFilterMonth");
   populatePeriodSelectors("runYear", "runMonth");
@@ -1197,6 +1232,49 @@ document.getElementById("attImportBtn").onclick = async () => {
     await loadAttendanceTable();
   } catch (e) { errBox.textContent = e.message; }
 };
+
+document.getElementById("xlsxImportBtn").onclick = guardedClick(document.getElementById("xlsxImportBtn"), async () => {
+  const errBox = document.getElementById("xlsxErr");
+  const reportBox = document.getElementById("xlsxReport");
+  errBox.textContent = ""; reportBox.style.display = "none"; reportBox.innerHTML = "";
+  const fileInput = document.getElementById("xlsxFile");
+  const file = fileInput.files[0];
+  if (!file) { errBox.textContent = "اختار ملف Excel الأول"; return; }
+
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("year", document.getElementById("xlsxYear").value);
+  fd.append("month", document.getElementById("xlsxMonth").value);
+
+  try {
+    const r = await apiUpload("/api/payroll/import-excel", fd);
+    const punchesLines = Object.entries(r.punchesImported || {}).map(([b, n]) => `${b}: ${n} بصمة`).join(" — ") || "مفيش";
+    reportBox.innerHTML = `
+      <div style="background:var(--bg-alt);border:1px solid var(--line);border-radius:8px;padding:12px">
+        <div style="font-weight:800;margin-bottom:8px">نتيجة الاستيراد - ${r.month}/${r.year}</div>
+        <div>موظفين جدد: <b>${r.employeesCreated}</b> — موظفين اتحدّثوا: <b>${r.employeesUpdated}</b></div>
+        <div>بصمات: ${punchesLines}</div>
+        <div>حضور المطبخ المركزي: <b>${r.manualAttendanceImported}</b> سطر</div>
+        <div>سلف/جزاءات/مكافآت: <b>${r.adjustmentsImported}</b> جديد${r.adjustmentsSkippedDuplicate ? ` (${r.adjustmentsSkippedDuplicate} كانوا متسجّلين بالفعل)` : ""}</div>
+        ${r.excluded.length ? `<div style="margin-top:8px;color:var(--faint)">استُبعد ${r.excluded.length} صف (بدون اسم/راتب فعلي/صف مثال) - <a href="#" id="xlsxShowExcluded">عرض التفاصيل</a></div>
+          <div id="xlsxExcludedList" style="display:none;font-size:12px;margin-top:4px">${r.excluded.map(e => `${e.name || e.code || "؟"}: ${e.reason}`).join("<br/>")}</div>` : ""}
+        ${r.needsReview.length ? `<div style="margin-top:8px;color:var(--err)">${r.needsReview.length} موظف عنده اسم وراتب حقيقيين بس محتاج تكميل بيانات قبل ما يتضاف (أضفه يدويًا من تاب "الموظفين" بعد كده):<br/>${r.needsReview.map(e => `${e.name} (${e.code || "بدون كود"}) - ${e.reason}`).join("<br/>")}</div>` : ""}
+        ${r.warnings.length ? `<div style="margin-top:8px;color:var(--err)">تحذيرات:<br/>${r.warnings.join("<br/>")}</div>` : ""}
+      </div>
+    `;
+    reportBox.style.display = "block";
+    const showExcludedLink = document.getElementById("xlsxShowExcluded");
+    if (showExcludedLink) {
+      showExcludedLink.onclick = (e) => {
+        e.preventDefault();
+        document.getElementById("xlsxExcludedList").style.display = "block";
+        showExcludedLink.style.display = "none";
+      };
+    }
+    fileInput.value = "";
+    await loadAttendanceTable();
+  } catch (e) { errBox.textContent = e.message; }
+});
 
 document.getElementById("attLoadBtn").onclick = loadAttendanceTable;
 async function loadAttendanceTable() {
