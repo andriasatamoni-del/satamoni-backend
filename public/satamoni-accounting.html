@@ -112,7 +112,6 @@
   <div id="tabs">
     <div class="tabbtn active" data-tab="expenses">المصروفات</div>
     <div class="tabbtn" data-tab="purchases">المشتريات</div>
-    <div class="tabbtn" data-tab="cash">تقفيل الكاش</div>
     <div class="tabbtn" data-tab="shifts">مراجعة الشيفتات</div>
     <div class="tabbtn" data-tab="dayclose">تقفيل يوم الفرع</div>
     <div class="tabbtn" data-tab="ledger">كشف حساب المخزن</div>
@@ -183,7 +182,11 @@
     <table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>سنتر كيتشن</th><th>الحالة</th><th></th></tr></thead><tbody id="purBody"></tbody></table>
   </div>
 
-  <!-- تقفيل الكاش -->
+  <!-- تقفيل الكاش - المرحلة 8.41: التبويب اتشال من شريط التبويبات (البانل والكود لسه موجودين عمدًا،
+       والبيانات القديمة في daily_cash_sessions لسه محفوظة) - نفس الوظيفة (تسوية الكاش اليومي) بقت جزء
+       من نظام الشيفتات الحقيقي (مراجعة شيفتات الكاشير + تقفيل يوم الفرع)، وكان التبويب القديم ده بيسبب
+       لبس (بيتقفل من غير ما يأثّر على قايمة فحص "تقفيل يوم الفرع" أو يمنعها، فحد كان يفتكر إنه لازم
+       يستخدمه عشان يقفل اليوم فعليًا) -->
   <div class="panel" id="panel-cash">
     <div style="font-size:11px;color:var(--faint);margin-bottom:10px">الأرقام تحت بتتحسب أوتوماتيك من المبيعات/المصروفات/المشتريات الفعلية المسجّلة في اليوم ده - راجعها وعدّل لو محتاجة تصحيح، والكاش الفعلي بعد الجرد بس هو اللي محتاج تدخله يدوي من العدّ الفعلي للدرج.</div>
     <div class="formbox">
