@@ -417,18 +417,25 @@ async function handleAction(order, act) {
     if (act === "dispatch") {
       // المرحلة 7F: سائق مسجّل فعليًا بدل اسم حر - تعيين + خروج للتوصيل في خطوة واحدة (نفس تجربة
       // الاستخدام القديمة، بس دلوقتي مرتبط بسجل سائق حقيقي قابل للمساءلة عن الكاش وقت التسليم)
-      const drivers = await driversForBranch(order.branch_id);
-      if (drivers.length === 0) {
-        alert("مفيش سائقين مسجّلين لفرع الطلب ده - سجّلهم الأول من شاشة إدارة السائقين");
-        return;
+      // المرحلة 8.41: لو الطلب ليه سائق متعيّن بالفعل (dispatch_status='ASSIGNED' - اتعيّن قبل كده من
+      // لوحة التوزيع مثلًا)، مينفعش نحاول نعيّن تاني - كان بيرجّع "الطلب ده مش في حالة تسمح بتعيين سائق
+      // جديد" ويوقف كل حركة "خروج مع الطيار" رغم إن السائق فعلاً موجود ومحتاج بس يتسجّل خروجه
+      if (order.dispatch_status === "ASSIGNED") {
+        await api(`/api/deliveries/${order.id}/out-for-delivery`, { method: "POST" });
+      } else {
+        const drivers = await driversForBranch(order.branch_id);
+        if (drivers.length === 0) {
+          alert("مفيش سائقين مسجّلين لفرع الطلب ده - سجّلهم الأول من شاشة إدارة السائقين");
+          return;
+        }
+        const listText = drivers.map((d, i) => `${i + 1}) ${d.name}${d.phone ? " - " + d.phone : ""}`).join("\n");
+        const choice = prompt(`اختار رقم السائق:\n${listText}`);
+        if (!choice) return;
+        const idx = Number(choice) - 1;
+        if (!Number.isInteger(idx) || !drivers[idx]) { alert("اختيار غير صحيح"); return; }
+        await api(`/api/deliveries/${order.id}/assign`, { method: "POST", body: JSON.stringify({ driverId: drivers[idx].id }) });
+        await api(`/api/deliveries/${order.id}/out-for-delivery`, { method: "POST" });
       }
-      const listText = drivers.map((d, i) => `${i + 1}) ${d.name}${d.phone ? " - " + d.phone : ""}`).join("\n");
-      const choice = prompt(`اختار رقم السائق:\n${listText}`);
-      if (!choice) return;
-      const idx = Number(choice) - 1;
-      if (!Number.isInteger(idx) || !drivers[idx]) { alert("اختيار غير صحيح"); return; }
-      await api(`/api/deliveries/${order.id}/assign`, { method: "POST", body: JSON.stringify({ driverId: drivers[idx].id }) });
-      await api(`/api/deliveries/${order.id}/out-for-delivery`, { method: "POST" });
     } else if (act === "complete") {
       // المرحلة 7F: طلب دليفري في الطريق بيتسلّم عن طريق محرك التوصيل (بيسجّل الكاش المحصّل ويرحّل
       // قيده المحاسبي) - أي طلب تاني (تيك أواي/صالة) يفضل زي ما هو بالظبط، مفيش داعي لمحرك التوصيل
