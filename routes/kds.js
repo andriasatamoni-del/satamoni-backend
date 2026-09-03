@@ -21,7 +21,7 @@ router.get("/orders", requirePermission("kitchen.view"), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT o.id, o.order_type, o.table_number, o.customer_name, o.customer_phone,
-              o.kitchen_status, o.kitchen_accepted_at, o.kitchen_ready_at, o.created_at, o.status,
+              o.kitchen_status, o.kitchen_accepted_at, o.kitchen_ready_at, o.created_at, o.status, o.source,
               COALESCE(
                 (SELECT json_agg(json_build_object(
                    'name', COALESCE(mi.name, c.name, 'صنف'),

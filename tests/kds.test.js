@@ -220,6 +220,22 @@ describe("استعلام لوحة المطبخ (GET /api/kds/orders)", () => {
     expect(card.items.length).toBe(1);
     expect(card.items[0].modifiers).toEqual(["إضافة جبنة-جست"]);
     expect(card.kitchen_status).toBe("NEW");
+    expect(card.source).toBe("pos");
+  });
+
+  // المرحلة 8.39: لوحة الكاشير بتحتاج تعرف مصدر الطلب (ويب سايت/كول سنتر) عشان تنبّه الكاشير بأوردر
+  // محتاج قبول - لازم /api/kds/orders يرجّع o.source صح لأي مصدر، مش pos بس
+  test("طلب من الموقع أونلاين بيرجع source الصح في اللوحة", async () => {
+    const res = await request(app).post("/api/orders").set(authed(cashierAToken)).send({
+      branchId: branchA, source: "website", orderType: "pickup",
+      customerName: "عميل جست", customerPhone: `019${Date.now()}`.slice(0, 11),
+      items: [{ itemId, variantId, quantity: 1 }],
+    });
+    expect(res.status).toBe(201);
+    const board = await request(app).get(`/api/kds/orders?branchId=${branchA}`).set(authed(cashierAToken));
+    const card = board.body.find(o => o.id === res.body.orderId);
+    expect(card.source).toBe("website");
+    expect(card.kitchen_status).toBe("NEW");
   });
 
   test("الطلب الملغي مش ظاهر في اللوحة", async () => {

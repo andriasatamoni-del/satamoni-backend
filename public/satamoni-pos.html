@@ -209,6 +209,33 @@
   .order-card .olog { font-size: 11px; color: var(--faint); margin-top: 6px; }
   #ordersEmptyState { text-align: center; color: var(--faint); padding: 60px 20px; }
 
+  /* ===== المرحلة 8.39: تنبيه أوردر جديد (ويب سايت/كول سنتر) محتاج قبول الكاشير ===== */
+  #newOrderBannerBtn {
+    display: none; background: var(--red); border: 1px solid var(--red-deep); color: #fff; border-radius: 6px;
+    padding: 6px 12px; cursor: pointer; font-size: 12px; font-weight: 800; animation: newOrderPulse 1.2s infinite;
+  }
+  #newOrderBannerBtn.show { display: inline-flex; align-items: center; gap: 6px; }
+  @keyframes newOrderPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(194,42,36,.6); } 50% { box-shadow: 0 0 0 8px rgba(194,42,36,0); } }
+  #newOrderAlertOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.8); display: none; align-items: center; justify-content: center; z-index: 200;
+  }
+  #newOrderAlertOverlay.show { display: flex; }
+  #newOrderAlertBox {
+    background: var(--card); border: 3px solid var(--red); border-radius: 14px; padding: 26px; width: min(440px, 92vw);
+    max-height: 85vh; overflow-y: auto; animation: newOrderBoxPulse 1.2s infinite;
+  }
+  @keyframes newOrderBoxPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(194,42,36,.5); } 50% { box-shadow: 0 0 0 14px rgba(194,42,36,0); } }
+  #newOrderAlertBox h2 { color: var(--red); margin: 0 0 4px; font-size: 20px; text-align: center; }
+  #newOrderAlertBox .noaSub { text-align: center; color: var(--faint); font-size: 12px; margin-bottom: 14px; }
+  #newOrderAlertBox .noaMeta { font-size: 13px; margin-bottom: 4px; }
+  #newOrderAlertBox .noaItems { border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line); margin: 12px 0; padding: 10px 0; }
+  #newOrderAlertBox .noaItems .li { font-size: 13px; padding: 3px 0; display: flex; justify-content: space-between; gap: 8px; }
+  #newOrderAlertBox .noaQueue { text-align: center; font-size: 12px; color: var(--red); font-weight: 700; margin-bottom: 10px; }
+  #newOrderAcceptBtn { width: 100%; padding: 14px; background: var(--red); color: #fff; border: none; border-radius: 8px; font-weight: 800; font-size: 15px; cursor: pointer; }
+  #newOrderMinimizeBtn { width: 100%; padding: 9px; background: transparent; color: var(--faint); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; cursor: pointer; margin-top: 8px; }
+  .order-card.needs-accept { border-color: var(--red); border-width: 2px; animation: newOrderPulse 1.5s infinite; }
+  .obadge.needs-accept { background: rgba(194,42,36,.2); color: var(--err); }
+
   /* ===== Item modal (variant + modifiers) ===== */
   #itemModalOverlay, #pinModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 55; }
   #itemModalOverlay.show, #pinModalOverlay.show { display: flex; }
@@ -305,6 +332,7 @@
   <button id="myShiftsBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">📋 شيفتاتي</button>
   <button id="cashEntryBtn">🧾 مصروف/مشترى</button>
   <button id="ordersOpenBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🛵 الطلبات الجارية</button>
+  <button id="newOrderBannerBtn">🔴 <span id="newOrderBannerCount"></span> طلب جديد - اضغط للقبول</button>
   <div id="userInfo">
     <span id="userName"></span>
     <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
@@ -359,6 +387,21 @@
   </div>
   <div id="ordersList"></div>
   <div id="ordersEmptyState" style="display:none">مفيش طلبات مطابقة</div>
+</div>
+
+<!-- المرحلة 8.39: تنبيه أوردر جديد من الويب سايت/الكول سنتر - لازم الكاشير يقبله يدويًا قبل ما
+     المطبخ يبدأ التحضير. صوت عالي بيتكرر + الشاشة تفضل حمرا لحد ما يضغط قبول - راجع newOrderAlert
+     في الجافاسكريبت تحت. -->
+<div id="newOrderAlertOverlay">
+  <div id="newOrderAlertBox">
+    <h2>🔔 طلب جديد!</h2>
+    <div class="noaSub" id="noaSourceLabel"></div>
+    <div id="noaMeta"></div>
+    <div class="noaItems" id="noaItems"></div>
+    <div class="noaQueue" id="noaQueue"></div>
+    <button id="newOrderAcceptBtn">✓ قبول - ابدأ التحضير</button>
+    <button id="newOrderMinimizeBtn">تصغير مؤقتًا (هيرجع يفكّرني تاني)</button>
+  </div>
 </div>
 
 <!-- المرحلة 8.11: نفس تقسيم شاشة الكول سنتر بالظبط - السلة يمين (بس أصناف الطلب)، المنيو في النص
@@ -622,6 +665,7 @@ document.getElementById("loginBtn").onclick = async () => {
 };
 
 document.getElementById("logoutBtn").onclick = () => {
+  stopNewOrderAlertPolling();
   clearSession();
   location.reload();
 };
@@ -666,6 +710,7 @@ async function loadConfig() {
     document.getElementById("loadingState").style.display = "none";
     document.getElementById("tabs").style.display = "flex";
     document.getElementById("grid").style.display = "grid";
+    startNewOrderAlertPolling();
   } catch (e) {
     document.getElementById("connDot").className = "dot err";
     document.getElementById("connText").textContent = "تعذر الاتصال بالسيرفر";
@@ -680,7 +725,12 @@ function renderBranchSelect() {
   sel.value = state.selectedBranchId;
   const isLockedToOwnBranch = auth.user && auth.user.role !== "admin";
   sel.disabled = isLockedToOwnBranch;
-  sel.onchange = () => { state.selectedBranchId = sel.value; applyDineInVisibility(); renderAreaSelect(); };
+  sel.onchange = () => {
+    state.selectedBranchId = sel.value; applyDineInVisibility(); renderAreaSelect();
+    // فرع تاني = تنبيهات أوردرات تانية تمامًا - نصفّر اللي كان معروض عشان منوريش تنبيه فرع قديم
+    newOrderAlert.pending = []; newOrderAlert.knownIds = new Set();
+    closeNewOrderAlertModal(); renderNewOrderBanner();
+  };
   applyDineInVisibility();
 }
 
@@ -2016,11 +2066,14 @@ function renderActiveOrders(orders) {
   empty.style.display = "none";
   list.innerHTML = orders.map(o => {
     const isDelayed = o.status === "preparing" && minutesSince(o.created_at) > DELAY_THRESHOLD_MINUTES;
+    // المرحلة 8.39: طلب ويب سايت/كول سنتر لسه محتاج قبول الكاشير - يفضل بارز بالأحمر لحد ما يتقبل
+    const needsAccept = o.kitchen_status === "NEW" && ["website", "callcenter"].includes(o.source);
     return `
-    <div class="order-card ${isDelayed ? "delayed" : ""}" data-id="${o.id}">
+    <div class="order-card ${isDelayed ? "delayed" : ""} ${needsAccept ? "needs-accept" : ""}" data-id="${o.id}">
       <div class="head">
         <span class="oid">#${o.id} — ${orderTypeLabels2[o.order_type] || o.order_type}</span>
         <span>
+          ${needsAccept ? `<span class="obadge needs-accept">🔔 محتاج قبول</span>` : ""}
           ${isDelayed ? `<span class="obadge delayed">⚠ متأخر (${Math.round(minutesSince(o.created_at))}د)</span>` : ""}
           <span class="obadge ${o.status}">${orderStatusLabels[o.status] || o.status}${o.voided ? " (استرجاع)" : ""}</span>
           <span class="obadge ${o.payment_status}">${orderPaymentLabels[o.payment_status] || o.payment_status}</span>
@@ -2070,6 +2123,151 @@ function renderOrderActions(card, order) {
   wrap.querySelectorAll("button").forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); handleOrderAction(order, btn.dataset.oact); };
   });
+}
+
+// ---------------- المرحلة 8.39: تنبيه أوردر جديد (ويب سايت/كول سنتر) محتاج قبول الكاشير ----------------
+// السيناريو: طلب جاي من الموقع أو الكول سنتر مفيش حد واقف قدامه فعليًا (عكس البيع المباشر) - لازم
+// الكاشير في الفرع ياخد بلاغ واضح (شاشة + صوت عالي) ويضغط "قبول" قبل ما المطبخ يبدأ التحضير، وإلا
+// الطلب ممكن يفضل واقف من غير حد يعرف عنه. بيستخدم kitchen_status الموجود أصلًا (NEW = لسه محتاج
+// قبول، ACCEPTED = اتقبل) - "قبول" هنا هو بالظبط نفس PATCH /:id/kitchen-status لـACCEPTED اللي شاشة
+// المطبخ (KDS) بتستخدمه، فمفيش أي تكرار منطق أو حالة جديدة في قاعدة البيانات.
+const newOrderAlert = {
+  pending: [], // [{id, orderType, tableNumber, customerName, customerPhone, source, items, createdAt}]
+  knownIds: new Set(), // كل الـid اللي سبق وظهرت في المودال (عشان منكررش صوت الفتح الفوري لنفس الطلب)
+  pollTimer: null,
+  reminderTimer: null,
+  audioCtx: null,
+  showing: false,
+};
+
+// الأصوات لازم تتفعّل بعد أول تفاعل حقيقي من المستخدم (قيود المتصفحات) - أي كليك في الصفحة كافي،
+// وده هيحصل أصلًا قبل ما أي طلب جديد يوصل (تسجيل دخول، فتح شيفت...)
+document.addEventListener("click", function unlockAudioOnce() {
+  try {
+    if (!newOrderAlert.audioCtx) newOrderAlert.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (newOrderAlert.audioCtx.state === "suspended") newOrderAlert.audioCtx.resume();
+  } catch (e) { /* المتصفح مش مدعوم - التنبيه البصري (الشاشة الحمرا) هيفضل شغال برضو */ }
+}, { once: false });
+
+function playAlertBeep() {
+  try {
+    const ctx = newOrderAlert.audioCtx;
+    if (!ctx) return;
+    if (ctx.state === "suspended") ctx.resume();
+    // 3 نغمات قصيرة متتالية - عالية وواضحة، مش صوت طبيعي ممكن يتلخبط بضوضاء الفرع
+    [0, 0.35, 0.7].forEach((delay, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.value = i % 2 === 0 ? 880 : 1046;
+      gain.gain.value = 0.35;
+      osc.connect(gain); gain.connect(ctx.destination);
+      const startAt = ctx.currentTime + delay;
+      osc.start(startAt);
+      osc.stop(startAt + 0.28);
+    });
+  } catch (e) { /* تجاهل - التنبيه البصري هيفضل شغال */ }
+}
+
+async function pollNewOrderAlerts() {
+  if (!state.selectedBranchId || !auth.token) return;
+  try {
+    const orders = await ordersApi(`/api/kds/orders?branchId=${state.selectedBranchId}`);
+    const pendingNow = orders
+      .filter(o => o.kitchen_status === "NEW" && ["website", "callcenter"].includes(o.source))
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    const hasBrandNew = pendingNow.some(o => !newOrderAlert.knownIds.has(o.id));
+    newOrderAlert.pending = pendingNow;
+    pendingNow.forEach(o => newOrderAlert.knownIds.add(o.id));
+
+    renderNewOrderBanner();
+    if (pendingNow.length === 0) {
+      closeNewOrderAlertModal();
+      return;
+    }
+    // طلب جديد لسه ماتشافش خالص - افتح المودال فورًا حتى لو الكاشير كان مصغّره من طلب سابق
+    if (hasBrandNew || !newOrderAlert.showing) {
+      openNewOrderAlertModal();
+    }
+  } catch (e) { /* السيرفر مؤقتًا مش راد - هيتحاول تاني في الدورة الجاية، مفيش داعي نزعج الكاشير بايرور */ }
+}
+
+function renderNewOrderBanner() {
+  const btn = document.getElementById("newOrderBannerBtn");
+  const count = document.getElementById("newOrderBannerCount");
+  if (newOrderAlert.pending.length > 0) {
+    count.textContent = newOrderAlert.pending.length;
+    btn.classList.add("show");
+  } else {
+    btn.classList.remove("show");
+  }
+}
+
+function openNewOrderAlertModal() {
+  if (newOrderAlert.pending.length === 0) return;
+  const order = newOrderAlert.pending[0];
+  const sourceLabel = order.source === "website" ? "🌐 طلب من الموقع أونلاين" : "☎️ طلب من الكول سنتر";
+  document.getElementById("noaSourceLabel").textContent = sourceLabel;
+  document.getElementById("noaMeta").innerHTML = `
+    <div class="noaMeta"><b>#${order.id}</b> — ${orderTypeLabels2[order.order_type] || order.order_type}${order.table_number ? ` (ترابيزة ${order.table_number})` : ""}</div>
+    <div class="noaMeta">${order.customer_name || "بدون اسم"} — ${order.customer_phone || "—"}</div>
+    <div class="noaMeta" style="color:var(--faint)">من ${Math.max(0, Math.round(minutesSince(order.created_at)))} دقيقة</div>
+  `;
+  document.getElementById("noaItems").innerHTML = (order.items || []).map(it => `
+    <div class="li"><span>${it.quantity}× ${it.name}${it.variant ? " (" + it.variant + ")" : ""}</span></div>
+    ${(it.components || []).map(c => `<div class="li" style="padding-right:14px;color:var(--faint)">— ${c.quantity}× ${c.name}${c.variant ? " (" + c.variant + ")" : ""}</div>`).join("")}
+  `).join("") || `<div class="li">—</div>`;
+  document.getElementById("noaQueue").textContent = newOrderAlert.pending.length > 1
+    ? `+ ${newOrderAlert.pending.length - 1} طلب تاني في الانتظار` : "";
+  document.getElementById("newOrderAcceptBtn").onclick = () => acceptNewOrder(order.id);
+  document.getElementById("newOrderMinimizeBtn").onclick = closeNewOrderAlertModal;
+
+  document.getElementById("newOrderAlertOverlay").classList.add("show");
+  newOrderAlert.showing = true;
+  playAlertBeep();
+}
+
+function closeNewOrderAlertModal() {
+  document.getElementById("newOrderAlertOverlay").classList.remove("show");
+  newOrderAlert.showing = false;
+}
+
+async function acceptNewOrder(orderId) {
+  const btn = document.getElementById("newOrderAcceptBtn");
+  btn.disabled = true; btn.textContent = "جاري القبول...";
+  try {
+    await ordersApi(`/api/orders/${orderId}/kitchen-status`, { method: "PATCH", body: JSON.stringify({ status: "ACCEPTED" }) });
+    newOrderAlert.pending = newOrderAlert.pending.filter(o => o.id !== orderId);
+    closeNewOrderAlertModal();
+    renderNewOrderBanner();
+    if (newOrderAlert.pending.length > 0) openNewOrderAlertModal();
+    if (document.getElementById("ordersOverlay").classList.contains("show")) loadActiveOrders();
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = "✓ قبول - ابدأ التحضير";
+  }
+}
+
+document.getElementById("newOrderBannerBtn").onclick = openNewOrderAlertModal;
+
+function startNewOrderAlertPolling() {
+  stopNewOrderAlertPolling();
+  pollNewOrderAlerts();
+  newOrderAlert.pollTimer = setInterval(pollNewOrderAlerts, 5000);
+  // تذكير دوري - لو الكاشير صغّر المودال وسابه من غير قبول، يرجع يفتح ويصوّت تاني كل 25 ثانية
+  newOrderAlert.reminderTimer = setInterval(() => {
+    if (newOrderAlert.pending.length > 0 && !newOrderAlert.showing) openNewOrderAlertModal();
+  }, 25000);
+}
+function stopNewOrderAlertPolling() {
+  if (newOrderAlert.pollTimer) clearInterval(newOrderAlert.pollTimer);
+  if (newOrderAlert.reminderTimer) clearInterval(newOrderAlert.reminderTimer);
+  newOrderAlert.pollTimer = null; newOrderAlert.reminderTimer = null;
+  newOrderAlert.pending = []; newOrderAlert.showing = false;
+  closeNewOrderAlertModal();
+  renderNewOrderBanner();
 }
 
 async function handleOrderAction(order, act) {
