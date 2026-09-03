@@ -1221,6 +1221,13 @@ function openOpenShiftModal() {
     const openingCash = Number(document.getElementById("shiftOpeningCash").value);
     const openingNotes = document.getElementById("shiftOpeningNotes").value.trim();
     submitBtn.disabled = true;
+    submitBtn.textContent = "جاري الفتح...";
+    document.getElementById("shiftModalErr").textContent = "";
+    document.getElementById("shiftModalErr").style.color = "";
+    const slowNote = setTimeout(() => {
+      document.getElementById("shiftModalErr").style.color = "var(--faint)";
+      document.getElementById("shiftModalErr").textContent = "لسه بيحمّل... ممكن ياخد لحظات لو السيرفر كان نايم من عدم استخدام. من فضلك متضغطش تاني.";
+    }, 5000);
     try {
       const res = await fetch(`${API_BASE_URL}/api/shifts/open`, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
@@ -1232,9 +1239,12 @@ function openOpenShiftModal() {
       renderShiftPill();
       closeShiftModal();
     } catch (e) {
+      document.getElementById("shiftModalErr").style.color = "";
       document.getElementById("shiftModalErr").textContent = e.message;
     } finally {
+      clearTimeout(slowNote);
       submitBtn.disabled = false;
+      submitBtn.textContent = "فتح الشيفت";
     }
   };
   document.getElementById("shiftModalOverlay").classList.add("show");
@@ -1280,6 +1290,13 @@ function openCloseShiftModal() {
     const userNotes = document.getElementById("shiftClosingNotes").value.trim();
     const closingNotes = [counts ? `عدّ الفئات: ${counts}` : null, userNotes || null].filter(Boolean).join(" - ");
     submitBtn.disabled = true;
+    submitBtn.textContent = "جاري القفل...";
+    document.getElementById("shiftModalErr").textContent = "";
+    document.getElementById("shiftModalErr").style.color = "";
+    const slowNote = setTimeout(() => {
+      document.getElementById("shiftModalErr").style.color = "var(--faint)";
+      document.getElementById("shiftModalErr").textContent = "لسه بيحمّل... ممكن ياخد لحظات لو السيرفر كان نايم من عدم استخدام. من فضلك متضغطش تاني.";
+    }, 5000);
     try {
       const closeRes = await fetch(`${API_BASE_URL}/api/shifts/${state.shift.id}/close`, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
@@ -1292,9 +1309,12 @@ function openCloseShiftModal() {
       closeShiftModal();
       alert("تم تسجيل النقدية وقفل الشيفت. لو محتاج مراجعة، مدير الفرع/المحاسب هيتابعها.");
     } catch (e) {
+      document.getElementById("shiftModalErr").style.color = "";
       document.getElementById("shiftModalErr").textContent = e.message;
     } finally {
+      clearTimeout(slowNote);
       submitBtn.disabled = false;
+      submitBtn.textContent = "قفل الشيفت";
     }
   };
   document.getElementById("shiftModalOverlay").classList.add("show");

@@ -1173,7 +1173,16 @@ function renderDayCloseStatus(status) {
     html += `<div style="color:var(--faint)">اليوم ده مقفول بالفعل${status.dayRecord?.closed_at ? " — " + new Date(status.dayRecord.closed_at).toLocaleString("ar-EG") : ""}</div>`;
   }
   if (status.redItems.length) {
-    html += `<div style="color:var(--err);font-weight:700;margin-top:6px">بنود لازم تتحل الأول:</div><ul style="margin:4px 0;padding-inline-start:20px;font-size:13px">${status.redItems.map(i => `<li>${i.message}</li>`).join("")}</ul>`;
+    html += `<div style="color:var(--err);font-weight:700;margin-top:6px">بنود لازم تتحل الأول:</div><ul style="margin:4px 0;padding-inline-start:20px;font-size:13px">${status.redItems.map(i => {
+      let extra = "";
+      if (i.orders && i.orders.length) {
+        extra = `<ul style="margin:2px 0;padding-inline-start:18px;color:var(--faint)">${i.orders.map(o => `<li>طلب #${o.id} — ${o.order_type} — ${o.status}</li>`).join("")}</ul>`;
+      }
+      if (i.shifts && i.shifts.length) {
+        extra = `<ul style="margin:2px 0;padding-inline-start:18px;color:var(--faint)">${i.shifts.map(s => `<li>شيفت #${s.id} — ${s.cashier_name}</li>`).join("")}</ul>`;
+      }
+      return `<li>${i.message}${extra}</li>`;
+    }).join("")}</ul>`;
   }
   if (status.yellowItems.length) {
     html += `<div style="color:#E8C468;font-weight:700;margin-top:6px">للعلم:</div><ul style="margin:4px 0;padding-inline-start:20px;font-size:13px">${status.yellowItems.map(i => `<li>${i.message}</li>`).join("")}</ul>`;
