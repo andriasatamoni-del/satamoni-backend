@@ -58,6 +58,7 @@ app.use("/api/kitchen-orders", require("./routes/kitchen-orders"));
 app.use("/api/suppliers", require("./routes/suppliers"));
 app.use("/api/cash-sessions", require("./routes/cash-sessions"));
 app.use("/api/customers", require("./routes/customers"));
+app.use("/api/customer-auth", require("./routes/customer-auth"));
 app.use("/api/hr", require("./routes/hr"));
 app.use("/api/sync", require("./routes/sync"));
 app.use("/api/reports", require("./routes/reports"));

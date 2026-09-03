@@ -37,6 +37,23 @@
   }
   #cartFabCount { background: var(--gold); color: #1A1508; border-radius: 50%; min-width: 18px; height: 18px;
     display: none; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; padding: 0 4px; }
+  #accountFab {
+    position: fixed; top: max(16px, env(safe-area-inset-top)); right: 16px; z-index: 50;
+    background: var(--bg-alt); color: var(--ink); border: 1px solid var(--gold); border-radius: 999px;
+    padding: 10px 16px; display: flex; align-items: center; gap: 6px; cursor: pointer;
+    font-size: 12px; font-weight: 700; box-shadow: 0 6px 18px rgba(0,0,0,.4); max-width: 150px;
+  }
+  #accountFab .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; }
+  #accountFab .points { color: var(--gold-bright); font-family: 'Space Mono', monospace; }
+  .auth-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .auth-tab { flex: 1; padding: 9px; border-radius: 8px; border: 1px solid var(--line); background: transparent;
+    cursor: pointer; font-size: 13px; font-weight: 700; color: var(--faint); }
+  .auth-tab.active { border-color: var(--gold); background: #2A2308; color: var(--gold-bright); }
+  .saved-addr-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; cursor: pointer; font-size: 13px; }
+  .saved-addr-row:hover { border-color: var(--gold); }
+  .points-banner { background: #2A2308; border: 1px solid var(--gold); border-radius: 8px; padding: 10px 12px;
+    font-size: 12px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
 
   #infoCard { max-width: 640px; margin: -64px auto 0; position: relative; z-index: 10; padding: 0 16px; }
   #infoCardTop { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px;
@@ -137,6 +154,7 @@
 <div id="app" style="display:none">
   <div id="hero"><img src="/images/satamoni-hero.jpeg" alt="ستاموني" /></div>
   <button id="cartFab"><span>🛍️</span><span id="cartFabCount"></span></button>
+  <button id="accountFab"></button>
 
   <div id="infoCard">
     <div id="infoCardTop">
@@ -180,6 +198,16 @@
   <div class="sheet" id="checkoutBody"></div>
 </div>
 
+<!-- Login/register sheet -->
+<div class="sheet-overlay" id="authSheet">
+  <div class="sheet" id="authBody"></div>
+</div>
+
+<!-- Account sheet (logged in) -->
+<div class="sheet-overlay" id="accountSheet">
+  <div class="sheet" id="accountBody"></div>
+</div>
+
 <script>
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
 function money(n) { return Number(n).toLocaleString("en-US") + " ج.م"; }
@@ -190,12 +218,17 @@ function haversine(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+const CUSTOMER_TOKEN_KEY = "satamoni_customer_token";
+
 const state = {
   config: null, cart: {}, activeCat: null,
   orderType: "delivery", tableNumber: "", branchId: "", areaId: "",
   addressDetails: "", distinguishingMark: "", name: "", phone: "", phone2: "",
   paymentMethodId: "", locating: false, submitting: false, confirmResult: null,
   idempotencyKey: uid(),
+  // حساب العميل (اختياري - تسجيل/دخول برقم تليفون + كلمة سر) - المرحلة 8.38
+  account: null, savedAddresses: [],
+  authMode: "login", authPhone: "", authName: "", authPassword: "", authErr: "", authSubmitting: false,
 };
 
 async function boot() {
@@ -223,6 +256,136 @@ async function boot() {
   renderCatNav();
   renderMenu();
   wireStatic();
+  await loadAccount();
+}
+
+// ---------------- حساب العميل (تسجيل/دخول اختياري) ----------------
+
+async function loadAccount() {
+  const token = localStorage.getItem(CUSTOMER_TOKEN_KEY);
+  if (!token) { renderAccountFab(); return; }
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/customer-auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) { localStorage.removeItem(CUSTOMER_TOKEN_KEY); renderAccountFab(); return; }
+    const data = await res.json();
+    applyAccount(data.customer);
+    loadSavedAddresses();
+  } catch (e) {
+    renderAccountFab();
+  }
+}
+
+function applyAccount(customer) {
+  state.account = customer;
+  if (customer.name) state.name = customer.name;
+  state.phone = customer.phone;
+  renderAccountFab();
+}
+
+async function loadSavedAddresses() {
+  const token = localStorage.getItem(CUSTOMER_TOKEN_KEY);
+  if (!token) return;
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/customer-auth/me/addresses`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) {
+      const data = await res.json();
+      state.savedAddresses = data.addresses || [];
+    }
+  } catch (e) { /* تجاهل - العنوان اليدوي فاضل شغال */ }
+}
+
+function renderAccountFab() {
+  const fab = document.getElementById("accountFab");
+  if (state.account) {
+    fab.innerHTML = `<span>👤</span><span class="name">${escapeHtml(state.account.name || state.account.phone)}</span>` +
+      (state.account.loyaltyPoints > 0 ? `<span class="points">★${state.account.loyaltyPoints}</span>` : "");
+    fab.onclick = () => { renderAccountSheet(); openSheet("accountSheet"); };
+  } else {
+    fab.innerHTML = `<span>👤</span><span>دخول</span>`;
+    fab.onclick = () => { state.authErr = ""; renderAuthSheet(); openSheet("authSheet"); };
+  }
+}
+
+function renderAuthSheet() {
+  const isLogin = state.authMode === "login";
+  document.getElementById("authBody").innerHTML = `
+    <div class="sheet-head"><h2 style="font-size:22px">${isLogin ? "تسجيل الدخول" : "حساب جديد"}</h2><button class="sheet-close" data-close="authSheet">✕</button></div>
+    <div class="auth-tabs">
+      <button class="auth-tab ${isLogin ? "active" : ""}" data-mode="login">عندي حساب</button>
+      <button class="auth-tab ${!isLogin ? "active" : ""}" data-mode="register">حساب جديد</button>
+    </div>
+    ${!isLogin ? `<label class="field"><span>الاسم</span><input id="aName" value="${escapeAttr(state.authName)}" placeholder="اسمك" /></label>` : ""}
+    <label class="field"><span>رقم الموبايل</span><input id="aPhone" value="${escapeAttr(state.authPhone)}" placeholder="01xxxxxxxxx" type="tel" /></label>
+    <label class="field"><span>كلمة السر</span><input id="aPassword" value="${escapeAttr(state.authPassword)}" placeholder="${isLogin ? "كلمة السر" : "6 حروف/أرقام على الأقل"}" type="password" /></label>
+    <div class="err-msg">${escapeHtml(state.authErr)}</div>
+    <button class="btn btn-primary" id="authSubmitBtn" style="margin-top:6px" ${state.authSubmitting ? "disabled" : ""}>
+      ${state.authSubmitting ? "لحظة..." : (isLogin ? "دخول" : "إنشاء الحساب")}
+    </button>
+    <p class="muted" style="font-size:11px;text-align:center;margin-top:12px">التسجيل اختياري - تقدر تكمل طلبك كضيف من غير حساب</p>
+  `;
+  document.querySelectorAll(".auth-tab").forEach(b => b.onclick = () => { state.authMode = b.dataset.mode; state.authErr = ""; renderAuthSheet(); });
+  const aName = document.getElementById("aName"); if (aName) aName.oninput = (e) => { state.authName = e.target.value; };
+  document.getElementById("aPhone").oninput = (e) => { state.authPhone = e.target.value; };
+  document.getElementById("aPassword").oninput = (e) => { state.authPassword = e.target.value; };
+  document.getElementById("authSubmitBtn").onclick = submitAuth;
+}
+
+async function submitAuth() {
+  const isLogin = state.authMode === "login";
+  state.authSubmitting = true; state.authErr = ""; renderAuthSheet();
+  try {
+    const path = isLogin ? "/api/customer-auth/login" : "/api/customer-auth/register";
+    const payload = isLogin
+      ? { phone: state.authPhone.trim(), password: state.authPassword }
+      : { phone: state.authPhone.trim(), name: state.authName.trim(), password: state.authPassword };
+    const res = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "حصل خطأ");
+
+    localStorage.setItem(CUSTOMER_TOKEN_KEY, data.token);
+    applyAccount(data.customer);
+    loadSavedAddresses();
+    state.authPhone = ""; state.authName = ""; state.authPassword = "";
+    closeSheet("authSheet");
+    if (document.getElementById("checkoutSheet").classList.contains("open")) renderCheckout();
+  } catch (e) {
+    state.authErr = e.message;
+  } finally {
+    state.authSubmitting = false;
+    if (document.getElementById("authSheet").classList.contains("open")) renderAuthSheet();
+  }
+}
+
+function renderAccountSheet() {
+  const a = state.account;
+  document.getElementById("accountBody").innerHTML = `
+    <div class="sheet-head"><h2 style="font-size:22px">حسابي</h2><button class="sheet-close" data-close="accountSheet">✕</button></div>
+    <div class="points-banner"><span>نقاط الولاء</span><span class="mono" style="color:var(--gold-bright);font-size:16px">★ ${a.loyaltyPoints}</span></div>
+    <div class="field"><span>الاسم</span><div>${escapeHtml(a.name || "—")}</div></div>
+    <div class="field"><span>رقم الموبايل</span><div class="mono">${escapeHtml(a.phone)}</div></div>
+    ${state.savedAddresses.length ? `
+      <div class="field"><span>عناويني المحفوظة</span>
+        ${state.savedAddresses.map(addr => `
+          <div class="saved-addr-row">
+            <span>${escapeHtml(addr.label || addr.areaName || "عنوان")} — ${escapeHtml(addr.addressDetails)}</span>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
+    <button class="btn btn-outline" id="logoutBtn" style="margin-top:10px">تسجيل الخروج</button>
+  `;
+  document.getElementById("logoutBtn").onclick = logout;
+}
+
+function logout() {
+  localStorage.removeItem(CUSTOMER_TOKEN_KEY);
+  state.account = null; state.savedAddresses = [];
+  state.name = ""; state.phone = ""; state.authMode = "login";
+  closeSheet("accountSheet");
+  renderAccountFab();
+  if (document.getElementById("checkoutSheet").classList.contains("open")) renderCheckout();
 }
 
 function categories() { return Array.from(new Set(state.config.menu.map(m => m.category))); }
@@ -442,6 +605,9 @@ function renderCheckout() {
 
   document.getElementById("checkoutBody").innerHTML = `
     <div class="sheet-head"><h2 style="font-size:22px">إتمام الطلب</h2><button class="sheet-close" data-close="checkoutSheet">✕</button></div>
+    ${state.account
+      ? `<div class="points-banner"><span>مسجل دخول - ${escapeHtml(state.account.name || state.account.phone)}</span><span class="mono" style="color:var(--gold-bright)">★ ${state.account.loyaltyPoints}</span></div>`
+      : `<button type="button" class="link-btn" id="checkoutLoginBtn">👤 عندك حساب؟ سجل دخول لعناوينك ونقاطك</button>`}
     <div class="type-tabs">
       <button class="type-tab ${state.orderType === "dinein" ? "active" : ""}" data-type="dinein">🍽️<br/>في المطعم</button>
       <button class="type-tab ${state.orderType === "pickup" ? "active" : ""}" data-type="pickup">🛍️<br/>استلام</button>
@@ -469,6 +635,14 @@ function renderCheckout() {
           ${(state.config.deliveryAreas || []).map(a => `<option value="${a.id}" ${String(a.id) === String(state.areaId) ? "selected" : ""}>${escapeHtml(a.name)} — ${money(a.fee)}${a.minOrder ? ` (حد أدنى ${money(a.minOrder)})` : ""}</option>`).join("")}
         </select>
       </label>
+      ${state.account && state.savedAddresses.length ? `
+        <label class="field"><span>عنوان محفوظ</span>
+          <select id="fSavedAddr">
+            <option value="">اكتب عنوان جديد تحت</option>
+            ${state.savedAddresses.map((a, i) => `<option value="${i}">${escapeHtml(a.label || a.areaName || "عنوان")} — ${escapeHtml(a.addressDetails)}</option>`).join("")}
+          </select>
+        </label>
+      ` : ""}
       <label class="field"><span>العنوان بالتفصيل</span><textarea id="fAddress" placeholder="اسم الشارع، رقم العمارة، الدور، الشقة...">${escapeHtml(state.addressDetails)}</textarea></label>
       <label class="field"><span>علامة مميزة (اختياري)</span><input id="fMark" value="${escapeAttr(state.distinguishingMark)}" placeholder="بجوار إيه، لون العمارة..." /></label>
       ${belowMinOrder() ? `<div class="err-msg">أقل قيمة طلب للمنطقة دي ${money(selectedArea().minOrder)} - أضف أصناف أكتر</div>` : ""}
@@ -499,6 +673,17 @@ function renderCheckout() {
   `;
 
   document.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { state.orderType = b.dataset.type; state.checkoutErr = ""; renderCheckout(); });
+  const checkoutLoginBtn = document.getElementById("checkoutLoginBtn");
+  if (checkoutLoginBtn) checkoutLoginBtn.onclick = () => { state.authErr = ""; renderAuthSheet(); openSheet("authSheet"); };
+  const fSavedAddr = document.getElementById("fSavedAddr");
+  if (fSavedAddr) fSavedAddr.onchange = (e) => {
+    if (e.target.value === "") return;
+    const a = state.savedAddresses[Number(e.target.value)];
+    state.addressDetails = a.addressDetails;
+    state.distinguishingMark = a.distinguishingMark || "";
+    if (a.deliveryAreaId) state.areaId = a.deliveryAreaId;
+    renderCheckout();
+  };
   const fBranch = document.getElementById("fBranch"); if (fBranch) fBranch.onchange = (e) => { state.branchId = e.target.value; };
   const fTable = document.getElementById("fTable"); if (fTable) fTable.oninput = (e) => { state.tableNumber = e.target.value; renderCheckoutSubmitState(); };
   const fArea = document.getElementById("fArea"); if (fArea) fArea.onchange = (e) => { state.areaId = e.target.value; renderCheckout(); };
@@ -575,7 +760,13 @@ function renderConfirm() {
 function wireStatic() {
   document.getElementById("cartFab").onclick = () => { renderCart(); openSheet("cartSheet"); };
   document.getElementById("goCheckoutBtn").onclick = () => { closeSheet("cartSheet"); state.checkoutErr = ""; renderCheckout(); openSheet("checkoutSheet"); };
-  document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => closeSheet(b.dataset.close));
+  // تفويض الحدث (event delegation) مش ربط مباشر - عشان أزرار الإغلاق جوه شيتات بتتبني ديناميكيًا
+  // (checkout/auth/account) بعد ما wireStatic() بتشتغل مرة واحدة وقت الإقلاع، فربط مباشر وقتها
+  // كان هيفوّتها تمامًا (الزرار كان هيفضل ميتلوش onclick خالص)
+  document.addEventListener("click", (e) => {
+    const closeBtn = e.target.closest("[data-close]");
+    if (closeBtn) closeSheet(closeBtn.dataset.close);
+  });
   document.querySelectorAll(".sheet-overlay").forEach(ov => ov.addEventListener("click", (e) => { if (e.target === ov) closeSheet(ov.id); }));
   flashCartFab();
 }

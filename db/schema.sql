@@ -1324,6 +1324,7 @@ CREATE TABLE customers (
   distinguishing_mark  TEXT,             -- علامة مميزة (بجوار كذا، لون العمارة...) تساعد الطيار يوصل
   notes                TEXT,             -- ملاحظات كول سنتر (شكوى سابقة، تفضيلات، ...)
   loyalty_points       INTEGER DEFAULT 0,
+  password_hash        TEXT,             -- حساب عميل حقيقي على موقع الطلب أونلاين (تسجيل/دخول) - NULL يعني لسه عميل ضيف من غير حساب
   -- المرحلة 7P: حظر عميل - منع تسجيل طلبات دليفري جديدة له (عميل مشاكل/بلاغات كاذبة/عدم دفع متكرر)
   is_blocked           BOOLEAN NOT NULL DEFAULT FALSE,
   block_reason         TEXT,
