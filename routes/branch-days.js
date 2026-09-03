@@ -12,8 +12,13 @@ const { requireAuth, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 
+// المرحلة 8.41: توقيت الجلسة الافتراضي في Postgres على استضافة سحابية زي Render بيبقى UTC، ومصر
+// UTC+2/+3 - يعني أي طلب اتسجل في أول 2-3 ساعات بعد نص الليل بتوقيت القاهرة كان لسه بيتحسب "إمبارح"
+// في المقارنات المعتمدة على UTC (زي new Date().toISOString() هنا، أو DATE(created_at) تحت في
+// buildChecklist/الاستعلامات) - فطلب اتحصّل فعليًا النهاردة كان بيختفي من "مبيعات اليوم" ويقفل قايمة
+// تقفيل اليوم غلط. الحل: توقيت القاهرة صراحة في كل مقارنة تاريخ هنا، مش توقيت السيرفر الافتراضي
 function todayDate() {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
 }
 
 async function buildChecklist(executor, branchId) {
@@ -80,7 +85,7 @@ router.get("/:branchId/status", requireAuth, requirePermission("branch_day.view"
     );
     const summary = await pool.query(
       `SELECT COALESCE(SUM(total), 0) AS total_sales, COUNT(*) AS order_count
-       FROM orders WHERE branch_id = $1 AND status <> 'cancelled' AND DATE(created_at) = $2`,
+       FROM orders WHERE branch_id = $1 AND status <> 'cancelled' AND (created_at AT TIME ZONE 'Africa/Cairo')::date = $2`,
       [branchId, businessDate]
     );
     res.json({
@@ -123,12 +128,12 @@ router.post("/:branchId/close", requireAuth, requirePermission("branch_day.close
 
     const summary = await client.query(
       `SELECT COALESCE(SUM(total), 0) AS total_sales, COUNT(*) AS order_count
-       FROM orders WHERE branch_id = $1 AND status <> 'cancelled' AND DATE(created_at) = $2`,
+       FROM orders WHERE branch_id = $1 AND status <> 'cancelled' AND (created_at AT TIME ZONE 'Africa/Cairo')::date = $2`,
       [branchId, businessDate]
     );
     const varianceSummary = await client.query(
       `SELECT COALESCE(SUM(cash_variance), 0) AS total_variance
-       FROM pos_shifts WHERE branch_id = $1 AND status IN ('CLOSED', 'FORCE_CLOSED') AND DATE(opened_at) = $2`,
+       FROM pos_shifts WHERE branch_id = $1 AND status IN ('CLOSED', 'FORCE_CLOSED') AND (opened_at AT TIME ZONE 'Africa/Cairo')::date = $2`,
       [branchId, businessDate]
     );
 

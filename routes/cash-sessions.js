@@ -43,6 +43,9 @@ router.get("/expected", requireAuth, canOperate, async (req, res) => {
   if (!branchId || !date) return res.status(400).json({ error: "لازم فرع وتاريخ" });
 
   try {
+    // المرحلة 8.41: كل مقارنة تاريخ هنا بقت صراحة بتوقيت القاهرة (AT TIME ZONE) مش توقيت جلسة Postgres
+    // الافتراضي (UTC على استضافة زي Render) - غير كده أي طلب/مصروف اتسجل في أول 2-3 ساعات بعد نص الليل
+    // بتوقيت القاهرة كان بيتحسب "إمبارح" هنا، فيختفي من أرقام اليوم الحالي بالغلط
     // كاش أول اليوم = الكاش الفعلي المسجّل آخر تقفيل قبل اليوم ده لنفس الفرع (رصيد آخر يوم بيبقى بداية
     // اليوم اللي بعده) - صفر لو مفيش تقفيل قبل كده خالص
     const openingRes = await pool.query(
@@ -67,7 +70,7 @@ router.get("/expected", requireAuth, canOperate, async (req, res) => {
          COALESCE(SUM(o.total) FILTER (WHERE pm.kind = 'credit' AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0) AS credit_sales,
          COALESCE(SUM(o.total) FILTER (WHERE o.source = 'talabat' AND o.status <> 'cancelled' AND o.payment_status = 'collected'), 0) AS delivery_app_sales
        FROM orders o LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
-       WHERE o.branch_id = $1 AND o.created_at::date = $2`,
+       WHERE o.branch_id = $1 AND (o.created_at AT TIME ZONE 'Africa/Cairo')::date = $2`,
       [branchId, date]
     );
 
@@ -75,14 +78,14 @@ router.get("/expected", requireAuth, canOperate, async (req, res) => {
     const purchasesRes = await pool.query(
       `SELECT COALESCE(SUM(p.amount), 0) AS cash_purchases_total
        FROM purchases p
-       WHERE p.branch_id = $1 AND p.status <> 'REJECTED' AND p.created_at::date = $2`,
+       WHERE p.branch_id = $1 AND p.status <> 'REJECTED' AND (p.created_at AT TIME ZONE 'Africa/Cairo')::date = $2`,
       [branchId, date]
     );
     const expensesRes = await pool.query(
       `SELECT COALESCE(SUM(e.amount), 0) AS cash_expenses_total
        FROM expenses e JOIN payment_methods pm ON pm.id = e.payment_method_id
        WHERE e.branch_id = $1 AND e.status IN ('SUBMITTED', 'APPROVED', 'POSTED') AND pm.kind = 'cash'
-         AND COALESCE(e.posted_at, e.created_at)::date = $2`,
+         AND (COALESCE(e.posted_at, e.created_at) AT TIME ZONE 'Africa/Cairo')::date = $2`,
       [branchId, date]
     );
 
