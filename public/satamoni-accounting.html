@@ -122,6 +122,8 @@
     <div class="tabbtn" data-tab="journal">القيود</div>
     <div class="tabbtn" data-tab="ledgerpl">قائمة الدخل (الدفتر)</div>
     <div class="tabbtn" data-tab="ap">الموردون والمدفوعات</div>
+    <div class="tabbtn" data-tab="treasuries">الخزائن</div>
+    <div class="tabbtn" data-tab="banks">البنوك</div>
     <div class="tabbtn" data-tab="statements">كشوف الحسابات</div>
     <div class="tabbtn" data-tab="recon">المطابقة والفترات</div>
     <div class="tabbtn" data-tab="balance">الميزانية العمومية</div>
@@ -555,6 +557,71 @@
     </div>
   </div>
 
+  <!-- المرحلة 8.42: الخزائن - خزينة رئيسية للفرع (بيتجمّع عليها الكاش وقت تسليم الشيفتات) + درج مؤقت
+       لكل كاشير أثناء شيفته النشطة بس (بيتفضّى تلقائيًا وقت القفل) + خزائن البنوك (تحت). كل الأرصدة
+       لحظية دايمًا (محسوبة من journal_entry_lines، مفيش رصيد مخزّن) -->
+  <div class="panel" id="panel-treasuries">
+    <h1>الخزائن</h1>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">"درج الكاشير" بيستقبل مبيعات الكاش لحظيًا أثناء الشيفت النشط بس، وبيتفضّى تلقائيًا (تسليم الدرج) وقت قفل الشيفت لصالح الخزينة الرئيسية - مش بيتقفل هو نفسه، بيختفي من القايمة أول ما شيفته تتقفل.</div>
+    <table>
+      <thead><tr><th>الخزينة</th><th>النوع</th><th>الرصيد</th><th></th></tr></thead>
+      <tbody id="treasuriesBody"></tbody>
+    </table>
+
+    <div id="treasuryTransferBox" style="display:none">
+      <h1>تحويل بين الخزائن</h1>
+      <div style="font-size:11px;color:var(--faint);margin-bottom:8px">من الخزينة الرئيسية لحساب بنكي (إيداع)، أو أي اتجاه تاني بين خزينتين. القيد بيترحّل فورًا.</div>
+      <div class="formbox">
+        <div class="row">
+          <select id="trFrom"></select>
+          <select id="trTo"></select>
+          <input id="trAmount" type="number" placeholder="المبلغ" />
+        </div>
+        <div class="row">
+          <input id="trNotes" placeholder="ملاحظات (اختياري)" />
+          <button id="trSubmit">تحويل</button>
+        </div>
+        <div class="err" id="trErr"></div>
+        <div class="ok" id="trOk"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- المرحلة 8.42: البنوك وحساباتها - إدارة (إضافة بنك/حساب) أدمن بس، رؤية للمحاسب. كل حساب بنكي
+       مربوط بخزينة وحساب محاسبي حقيقي فعليًا (createBankAccountTreasury) - كشف حسابه هو نفس زرار
+       "كشف الحركة" في تبويب "الخزائن" فوق -->
+  <div class="panel" id="panel-banks">
+    <h1>البنوك وحساباتها</h1>
+    <table>
+      <thead><tr><th>البنك</th><th>الحساب</th><th>رقم الحساب</th><th>الآيبان</th><th>الرصيد</th><th></th></tr></thead>
+      <tbody id="bankAccountsBody"></tbody>
+    </table>
+
+    <div id="bankManageBox" style="display:none">
+      <h1>بنك جديد</h1>
+      <div class="formbox">
+        <div class="row"><input id="bankNewName" placeholder="اسم البنك" /><button id="bankCreate">إضافة بنك</button></div>
+        <div class="err" id="bankErr"></div>
+      </div>
+
+      <h1>حساب بنكي جديد</h1>
+      <div class="formbox">
+        <div class="row">
+          <select id="bankAccBank"></select>
+          <input id="bankAccName" placeholder="اسم الحساب (مثلاً: الحساب الجاري)" />
+          <select id="bankAccBranch"><option value="">مشترك (كل الشركة)</option></select>
+        </div>
+        <div class="row">
+          <input id="bankAccNumber" placeholder="رقم الحساب (اختياري)" />
+          <input id="bankAccIban" placeholder="الآيبان (اختياري)" />
+          <button id="bankAccCreate">إضافة الحساب</button>
+        </div>
+        <div class="err" id="bankAccErr"></div>
+        <div class="ok" id="bankAccOk"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- كشوف الحسابات: تيك أواي/دليفري/خدمة توصيل (مناطق+سائقين)/طريقة دفع/تقسيم الطلبات (كاش-آجل-خصومات) -->
   <div class="panel" id="panel-statements">
     <h1>كشوف الحسابات</h1>
@@ -751,7 +818,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 
 // المرحلة 4B: التبويبات الجديدة بتتحمّل أول مرة تتفتح بس (مش وقت boot() زي التبويبات القديمة) - عشان
 // نتجنب نداءات مش لازمة لمدير فرع/محاسب لسه مفتحش التبويب ده أصلًا
-const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false, balance: false, shifts: false, dayclose: false, vat: false, statements: false };
+const accountingTabLoaded = { coa: false, journal: false, ledgerpl: false, ap: false, recon: false, balance: false, shifts: false, dayclose: false, vat: false, statements: false, treasuries: false, banks: false };
 function onTabOpen(tab) {
   if (tab === "statements" && !accountingTabLoaded.statements) { accountingTabLoaded.statements = true; initStatementsTab(); }
   if (tab === "coa" && !accountingTabLoaded.coa) { accountingTabLoaded.coa = true; loadAccountsForForms().then(loadTrialBalance); }
@@ -767,6 +834,8 @@ function onTabOpen(tab) {
   if (tab === "balance" && !accountingTabLoaded.balance) { accountingTabLoaded.balance = true; loadBalanceSheet(); }
   if (tab === "vat" && !accountingTabLoaded.vat) { accountingTabLoaded.vat = true; loadVatSummary(); }
   if (tab === "shifts" && !accountingTabLoaded.shifts) { accountingTabLoaded.shifts = true; loadShifts(); }
+  if (tab === "treasuries") loadTreasuries(); // أرصدة لحظية - يتحدّث كل مرة يفتح فيها التبويب مش أول مرة بس
+  if (tab === "banks" && !accountingTabLoaded.banks) { accountingTabLoaded.banks = true; loadBankAccountsForms().then(loadBankAccounts); }
   if (tab === "dayclose" && !accountingTabLoaded.dayclose) {
     accountingTabLoaded.dayclose = true;
     document.getElementById("dayCloseDate").value = todayStr();
@@ -805,10 +874,17 @@ async function boot() {
     // الميزانية العمومية مفهوم على مستوى الشركة كلها بطبيعتها (حقوق الملكية مش قابلة للتقسيم على فرع) -
     // تبويب أدمن/محاسب بس، زي تبويب المطابقة بالظبط
     document.querySelector('.tabbtn[data-tab="balance"]').style.display = "none";
+    // المرحلة 8.42: تبويب البنوك مالي بحت (رؤية للمحاسب/الأدمن بس - banks.view) - مدير الفرع مالوش
+    // وصول خالص، زي تبويب المطابقة/الميزانية بالظبط
+    document.querySelector('.tabbtn[data-tab="banks"]').style.display = "none";
   }
   if (auth.user.role === "admin") {
     document.getElementById("periodsAdmin").style.display = "block";
   }
+  // المرحلة 8.42: التحويل بين الخزائن مالي بحت (محاسب/أدمن بس - treasuries.transfer)، ومدير الفرع يشوف
+  // بس (treasuries.view). إدارة البنوك (إضافة بنك/حساب جديد) أدمن بس (banks.manage)
+  if (auth.user.role !== "branch_manager") document.getElementById("treasuryTransferBox").style.display = "block";
+  if (auth.user.role === "admin") document.getElementById("bankManageBox").style.display = "block";
   populateIncPeriodSelectors();
   populateReconSelectors();
   await loadBranches();
@@ -824,7 +900,7 @@ async function loadBranches() {
     sel.value = auth.user.branchId;
     sel.disabled = true;
   }
-  sel.onchange = () => Promise.all([loadExpenses(), loadPurchases(), loadCash(), loadLedger()]);
+  sel.onchange = () => Promise.all([loadExpenses(), loadPurchases(), loadCash(), loadLedger(), loadTreasuries()]);
 
   const incSel = document.getElementById("incBranchSelect");
   const allBranchesOption = auth.user.role !== "branch_manager" ? `<option value="">كل الفروع</option>` : "";
@@ -1535,6 +1611,110 @@ document.getElementById("glRefresh").onclick = loadGeneralLedger;
 document.getElementById("glClose").onclick = () => {
   currentGlAccountId = null;
   document.getElementById("glWrap").style.display = "none";
+};
+
+// ---------------- المرحلة 8.42: الخزائن ----------------
+// كشف حركة خزينة/حساب بنكي بيستخدم نفس تقرير general-ledger وشاشة عرضه الموجودة أصلًا في تبويب
+// "شجرة الحسابات" (glWrap فوق) - بنحول للتبويب ده وبعدين نفتح الكشف عليه، بدل ما نكرر نفس منطق العرض
+const treasuryKindLabel = { MAIN: "خزينة رئيسية", CASHIER: "درج كاشير", BANK: "حساب بنكي" };
+function viewLedgerFromOtherTab(accountId, label) {
+  document.querySelector('.tabbtn[data-tab="coa"]').click();
+  openGeneralLedger(accountId, label);
+}
+async function loadTreasuries() {
+  const branchId = currentBranchId();
+  if (!branchId) return;
+  const rows = await api(`/api/treasuries?${new URLSearchParams({ branchId })}`);
+  document.getElementById("treasuriesBody").innerHTML = rows.map(t => `
+    <tr>
+      <td>${t.name}${t.cashier_name ? ` (${t.cashier_name})` : ""}</td>
+      <td>${treasuryKindLabel[t.kind] || t.kind}</td>
+      <td>${money(t.balance)}</td>
+      <td><button class="linkbtn" data-tracc="${t.account_id}" data-trname="${t.name}">كشف الحركة</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="4">مفيش خزائن للفرع ده</td></tr>`;
+  document.querySelectorAll("[data-tracc]").forEach(btn => {
+    btn.onclick = () => viewLedgerFromOtherTab(btn.dataset.tracc, btn.dataset.trname);
+  });
+  const opts = rows.map(t => `<option value="${t.id}">${t.name}${t.cashier_name ? ` (${t.cashier_name})` : ""} - ${money(t.balance)}</option>`).join("");
+  document.getElementById("trFrom").innerHTML = opts;
+  document.getElementById("trTo").innerHTML = opts;
+}
+document.getElementById("trSubmit").onclick = async () => {
+  const errBox = document.getElementById("trErr"); const okBox = document.getElementById("trOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    const fromId = document.getElementById("trFrom").value;
+    const toId = document.getElementById("trTo").value;
+    const amount = Number(document.getElementById("trAmount").value);
+    if (!fromId || !toId) throw new Error("لازم تختار الخزينة المصدر والوجهة");
+    if (fromId === toId) throw new Error("مينفعش تحوّل خزينة لنفسها");
+    if (!amount || amount <= 0) throw new Error("لازم مبلغ أكبر من صفر");
+    await api(`/api/treasuries/${fromId}/transfer`, {
+      method: "POST",
+      body: JSON.stringify({ toTreasuryId: Number(toId), amount, notes: document.getElementById("trNotes").value.trim() || undefined }),
+    });
+    document.getElementById("trAmount").value = "";
+    document.getElementById("trNotes").value = "";
+    okBox.textContent = "تم التحويل";
+    await loadTreasuries();
+  } catch (e) { errBox.textContent = e.message; }
+};
+
+// ---------------- المرحلة 8.42: البنوك ----------------
+async function loadBankAccountsForms() {
+  const [banks, branches] = await Promise.all([api("/api/banks"), api("/api/branches")]);
+  document.getElementById("bankAccBank").innerHTML = banks.filter(b => b.is_active).map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+  document.getElementById("bankAccBranch").innerHTML = `<option value="">مشترك (كل الشركة)</option>` + branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+}
+async function loadBankAccounts() {
+  const rows = await api("/api/banks/accounts");
+  document.getElementById("bankAccountsBody").innerHTML = rows.map(a => `
+    <tr>
+      <td>${a.bank_name}</td><td>${a.treasury_name}</td><td>${a.account_number || "—"}</td><td>${a.iban || "—"}</td>
+      <td>${money(a.balance)}</td>
+      <td><button class="linkbtn" data-tracc="${a.account_id}" data-trname="${a.treasury_name}">كشف الحركة</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">مفيش حسابات بنكية لسه</td></tr>`;
+  document.querySelectorAll("[data-tracc]").forEach(btn => {
+    btn.onclick = () => viewLedgerFromOtherTab(btn.dataset.tracc, btn.dataset.trname);
+  });
+}
+document.getElementById("bankCreate").onclick = async () => {
+  const errBox = document.getElementById("bankErr");
+  errBox.textContent = "";
+  try {
+    const name = document.getElementById("bankNewName").value.trim();
+    if (!name) throw new Error("لازم اسم البنك");
+    await api("/api/banks", { method: "POST", body: JSON.stringify({ name }) });
+    document.getElementById("bankNewName").value = "";
+    await loadBankAccountsForms();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("bankAccCreate").onclick = async () => {
+  const errBox = document.getElementById("bankAccErr"); const okBox = document.getElementById("bankAccOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    const bankId = document.getElementById("bankAccBank").value;
+    const name = document.getElementById("bankAccName").value.trim();
+    if (!bankId) throw new Error("لازم بنك الأول");
+    if (!name) throw new Error("لازم اسم للحساب");
+    await api("/api/banks/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        bankId: Number(bankId), name,
+        accountNumber: document.getElementById("bankAccNumber").value.trim() || undefined,
+        iban: document.getElementById("bankAccIban").value.trim() || undefined,
+        branchId: document.getElementById("bankAccBranch").value || undefined,
+      }),
+    });
+    document.getElementById("bankAccName").value = "";
+    document.getElementById("bankAccNumber").value = "";
+    document.getElementById("bankAccIban").value = "";
+    okBox.textContent = "تم إضافة الحساب";
+    await loadBankAccounts();
+    await loadTreasuries(); // عشان الحساب الجديد يبان في سلكتور التحويل فورًا
+  } catch (e) { errBox.textContent = e.message; }
 };
 
 // ---------------- القيود ----------------

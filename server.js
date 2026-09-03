@@ -96,6 +96,9 @@ app.use("/api/kitchen-stations", require("./routes/kitchen-stations"));
 app.use("/api/print-jobs", require("./routes/print-jobs"));
 app.use("/api/home-tiles", require("./routes/home-tiles"));
 app.use("/api/order-ratings", require("./routes/order-ratings"));
+// المرحلة 8.42: الخزائن (خزينة رئيسية لكل فرع + دروج الكاشيرية) والبنوك/حساباتها
+app.use("/api/treasuries", require("./routes/treasuries"));
+app.use("/api/banks", require("./routes/banks"));
 
 // المرحلة 6 (6F): /health كان بيرجّع "ok" ثابتة دايمًا حتى لو قاعدة البيانات مش شغالة خالص - ده بيخلي
 // أي مراقبة/health-check بتعتمد عليه (لوحة تحكم استضافة، uptime monitor) تعتقد السيرفر تمام رغم إن

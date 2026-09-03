@@ -5,7 +5,7 @@ const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/aut
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
-const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
+const { postJournalEntry, reverseJournalEntry, resolveCashDestinationAccount, getAccountByCode } = require("../db/accounting-engine");
 const { upsertCustomerAddress } = require("../db/customer-addresses");
 const { maybeSendOrderConfirmation, maybeSendRatingRequest } = require("../db/order-notifications");
 const { validateIdParam } = require("../middleware/validate-id-param");
@@ -615,7 +615,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       if (source === "talabat") {
         const receivableAccount = await getAccountByCode(client, "1350");
         if (talabatCashCollectedFinal > 0) {
-          const cashAccount = await getOrCreateBranchCashAccount(client, branchId);
+          const cashAccount = await resolveCashDestinationAccount(client, { branchId, shiftId });
           revenueLines.push({ accountId: cashAccount.id, debit: talabatCashCollectedFinal, description: "جزء نقدي محصّل من أوردر طلبات" });
           const remainder = total - talabatCashCollectedFinal;
           if (remainder > 0) {
@@ -627,7 +627,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       } else {
         let debitAccount;
         if (paymentKind === "cash" && initialPaymentStatus === "collected") {
-          debitAccount = await getOrCreateBranchCashAccount(client, branchId);
+          debitAccount = await resolveCashDestinationAccount(client, { branchId, shiftId });
         } else if (initialPaymentStatus === "pending_collection") {
           debitAccount = await getAccountByCode(client, "1300");
         } else {
@@ -1674,7 +1674,7 @@ router.put(
         if (order.source === "talabat") {
           debitAccount = await getAccountByCode(client, "1350");
         } else if (paymentKind === "cash" && order.payment_status === "collected") {
-          debitAccount = await getOrCreateBranchCashAccount(client, order.branch_id);
+          debitAccount = await resolveCashDestinationAccount(client, { branchId: order.branch_id, shiftId: order.shift_id });
         } else if (order.payment_status === "pending_collection") {
           debitAccount = await getAccountByCode(client, "1300");
         } else {

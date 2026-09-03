@@ -142,7 +142,12 @@ async function reverseJournalEntry(client, { originalEntryId, entryDate, reason,
 async function getOrCreateBranchCashAccount(client, branchId) {
   const code = `1100-${branchId}`;
   const existing = await client.query("SELECT * FROM accounts WHERE code = $1", [code]);
-  if (existing.rows.length > 0) return existing.rows[0];
+  if (existing.rows.length > 0) {
+    // المرحلة 8.42: تسجيل ذاتي في سجل الخزائن حتى لو الحساب اتنشأ قبل المرحلة دي - بيضمن إن خزينة
+    // الفرع الرئيسية تظهر في شاشة الخزائن أول ما أي عملية كاش تلمسها، من غير migration باكفيل مطلوبة
+    await ensureTreasuryRow(client, { accountId: existing.rows[0].id, branchId, kind: "MAIN", name: existing.rows[0].name });
+    return existing.rows[0];
+  }
 
   const parent = await client.query("SELECT id FROM accounts WHERE code = '1100'");
   const branch = await client.query("SELECT name FROM branches WHERE id = $1", [branchId]);
@@ -153,6 +158,7 @@ async function getOrCreateBranchCashAccount(client, branchId) {
      RETURNING *`,
     [code, `الكاش - ${branch.rows[0]?.name || "فرع " + branchId}`, parent.rows[0]?.id || null, branchId]
   );
+  await ensureTreasuryRow(client, { accountId: inserted.rows[0].id, branchId, kind: "MAIN", name: inserted.rows[0].name });
   return inserted.rows[0];
 }
 
@@ -203,8 +209,104 @@ async function getAccountByCode(client, code) {
   return result.rows[0];
 }
 
+// المرحلة 8.42: صف "خزينة" مربوط بحساب موجود بالفعل - upsert بسيط، مفيش رصيد مخزّن هنا (بيتحسب دايمًا
+// من journal_entry_lines بتاع account_id). مشترك بين خزينة الفرع الرئيسية وخزينة الكاشير تحت
+async function ensureTreasuryRow(client, { accountId, branchId, kind, name, cashierUserId = null }) {
+  const inserted = await client.query(
+    `INSERT INTO treasuries (account_id, branch_id, kind, name, cashier_user_id)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (account_id) DO UPDATE SET name = EXCLUDED.name
+     RETURNING *`,
+    [accountId, branchId, kind, name, cashierUserId]
+  );
+  return inserted.rows[0];
+}
+
+// خزينة الفرع الرئيسية - نفس حساب الكاش الحالي بتاع الفرع بالظبط (getOrCreateBranchCashAccount)، بس
+// دلوقتي مسجّل كمان في treasuries عشان يظهر في شاشة الخزائن. مفيش تغيير في سلوك الحساب نفسه أو كوده -
+// أي كود قديم بيستخدم getOrCreateBranchCashAccount مباشرة (سداد موردين، مصروفات...) لسه شغال زي ما هو
+async function getOrCreateMainTreasury(client, branchId) {
+  const account = await getOrCreateBranchCashAccount(client, branchId);
+  const treasury = await ensureTreasuryRow(client, {
+    accountId: account.id, branchId, kind: "MAIN", name: account.name,
+  });
+  return { treasury, account };
+}
+
+// المرحلة 8.42: درج كاشير معيّن أثناء شيفته - حساب فرعي جديد تحت خزينة الفرع الرئيسية (1100-<فرع>-<مستخدم>)،
+// بيتنشئ تلقائيًا أول مرة (نفس نمط getOrCreateBranchCashAccount/getOrCreateDriverCustodyAccount بالظبط).
+// بيستقبل مبيعاته الكاش لحظيًا أثناء الشيفت (routes/orders.js)، وبيتفضّى وقت قفل الشيفت (تسليم الدرج -
+// db/shift-engine.js) لخزينة الفرع الرئيسية
+async function getOrCreateCashierTreasuryAccount(client, { branchId, userId }) {
+  const code = `1100-${branchId}-${userId}`;
+  const existing = await client.query("SELECT * FROM accounts WHERE code = $1", [code]);
+  if (existing.rows.length > 0) {
+    await ensureTreasuryRow(client, {
+      accountId: existing.rows[0].id, branchId, kind: "CASHIER", name: existing.rows[0].name, cashierUserId: userId,
+    });
+    return existing.rows[0];
+  }
+
+  const mainAccount = await getOrCreateBranchCashAccount(client, branchId);
+  const user = await client.query("SELECT name FROM users WHERE id = $1", [userId]);
+  const inserted = await client.query(
+    `INSERT INTO accounts (code, name, account_type, parent_account_id, branch_id, is_system_account)
+     VALUES ($1,$2,'ASSET',$3,$4,TRUE)
+     ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
+     RETURNING *`,
+    [code, `درج الكاشير - ${user.rows[0]?.name || "مستخدم " + userId}`, mainAccount.id, branchId]
+  );
+  await ensureTreasuryRow(client, {
+    accountId: inserted.rows[0].id, branchId, kind: "CASHIER", name: inserted.rows[0].name, cashierUserId: userId,
+  });
+  return inserted.rows[0];
+}
+
+async function getOrCreateCashierTreasury(client, { branchId, userId }) {
+  const account = await getOrCreateCashierTreasuryAccount(client, { branchId, userId });
+  const treasury = await ensureTreasuryRow(client, {
+    accountId: account.id, branchId, kind: "CASHIER", name: account.name, cashierUserId: userId,
+  });
+  return { treasury, account };
+}
+
+// المرحلة 8.42: أثناء شيفت شغال، الكاش المحصّل فعليًا (بيع أو تحصيل جزء نقدي من طلب طلبات) بيروح لدرج
+// الكاشير نفسه (بيمثّل الكاش الفعلي في إيده دلوقتي)، مش لخزينة الفرع مباشرة - بيتحوّل للخزينة الرئيسية
+// وقت قفل الشيفت بس. لو مفيش shiftId (طلب اتسجّل من غير شيفت - نادر، أو الشيفت مقفول بالفعل)، يرجع
+// لخزينة الفرع الرئيسية زي ما كان يحصل دايمًا قبل المرحلة دي
+async function resolveCashDestinationAccount(client, { branchId, shiftId }) {
+  if (shiftId) {
+    const shift = await client.query("SELECT user_id, status FROM pos_shifts WHERE id = $1", [shiftId]);
+    if (shift.rows.length > 0 && shift.rows[0].status === "ACTIVE") {
+      return getOrCreateCashierTreasuryAccount(client, { branchId, userId: shift.rows[0].user_id });
+    }
+  }
+  return getOrCreateBranchCashAccount(client, branchId);
+}
+
+// المرحلة 8.42: حساب بنكي حقيقي جديد - يتنشئ صراحة (مش lazy زي الكاش/الدرج) لأنه مالوش هوية خارجية
+// جاهزة (زي branchId/driverId) يتحسب منها كود ثابت مقدّمًا. بنحجز id الحساب الأول (nextval) عشان نقدر
+// نبني كود فريد منه (1200-<accountId>) في نفس الإدخال - نفس فكرة الأكواد الديناميكية التانية فوق، بس
+// من غير هوية خارجية جاهزة نعتمد عليها
+async function createBankAccountTreasury(client, { name, branchId = null }) {
+  const parent = await getAccountByCode(client, "1200");
+  const reserved = await client.query(`SELECT nextval(pg_get_serial_sequence('accounts', 'id')) AS id`);
+  const accountId = reserved.rows[0].id;
+  const code = `1200-${accountId}`;
+  const inserted = await client.query(
+    `INSERT INTO accounts (id, code, name, account_type, parent_account_id, branch_id, is_system_account)
+     VALUES ($1,$2,$3,'ASSET',$4,$5,TRUE) RETURNING *`,
+    [accountId, code, name, parent.id, branchId]
+  );
+  const account = inserted.rows[0];
+  const treasury = await ensureTreasuryRow(client, { accountId: account.id, branchId, kind: "BANK", name });
+  return { treasury, account };
+}
+
 module.exports = {
   postJournalEntry, reverseJournalEntry, ensurePeriodOpen,
   getOrCreateBranchCashAccount, getOrCreateDriverCustodyAccount, getOrCreateEmployeeReceivableAccount,
   getAccountByCode,
+  ensureTreasuryRow, getOrCreateMainTreasury, getOrCreateCashierTreasuryAccount, getOrCreateCashierTreasury,
+  resolveCashDestinationAccount, createBankAccountTreasury,
 };

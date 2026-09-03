@@ -2003,8 +2003,57 @@ INSERT INTO accounts (code, name, account_type, is_system_account) VALUES
   ('6600', 'عمولات تطبيقات التوصيل', 'EXPENSE', TRUE),
   ('6700', 'التسويق', 'EXPENSE', TRUE),
   ('6800', 'الصيانة', 'EXPENSE', TRUE),
-  ('6900', 'مصروفات تشغيل أخرى', 'EXPENSE', TRUE)
+  ('6900', 'مصروفات تشغيل أخرى', 'EXPENSE', TRUE),
+  -- المرحلة 8.42: فرق كاش شيفت اتقفّل تلقائيًا (جوّه حد الاعتماد) أو المدير "أقرّ" بيه من غير ما يحمّله
+  -- للكاشير - مش سلفة موظف (2100/1160) ولا إيراد حقيقي، مجرد إقرار إن فيه فرق صغير اتقبل كمصروف تشغيلي
+  ('6950', 'فروق كاش', 'EXPENSE', TRUE)
 ON CONFLICT (code) DO NOTHING;
+
+-- المرحلة 8.42: الخزائن - طبقة تسمية/تصنيف صديقة فوق شجرة الحسابات (accounts) نفسها، مش جدول مالي
+-- منفصل - كل خزينة مربوطة بحساب أصل (account_id) حقيقي، ورصيدها بيتحسب دايمًا من journal_entry_lines
+-- بتاعته زي أي حساب تاني (مفيش عمود "رصيد" مخزّن هنا يعمل drift). الغرض الوحيد من الجدول ده إنه يدّي
+-- واجهة صديقة (اسم الكاشير، النوع) بدل ما المستخدم يتعامل مع شجرة الحسابات الخام مباشرة.
+-- MAIN: خزينة الفرع الرئيسية - نفس حساب 1100-<branchId> الموجود بالفعل (getOrCreateBranchCashAccount)،
+-- بس دلوقتي مسجّل هنا كمان عشان يظهر في شاشة الخزائن مع الباقي. CASHIER: درج كاشير معيّن أثناء شيفته -
+-- بيستقبل كل مبيعاته الكاش لحظيًا (بدل ما تروح لخزينة الفرع مباشرة)، وبتتحوّل الفلوس منه للخزينة الرئيسية
+-- وقت قفل الشيفت (تسليم الدرج - راجع db/shift-engine.js). BANK: حساب بنكي حقيقي - مربوط بصف في
+-- bank_accounts تحت.
+CREATE TABLE treasuries (
+  id                SERIAL PRIMARY KEY,
+  account_id        INTEGER NOT NULL UNIQUE REFERENCES accounts(id),
+  branch_id         INTEGER REFERENCES branches(id), -- NULL بس لخزائن البنوك المشتركة على مستوى الشركة
+  kind              TEXT NOT NULL CHECK (kind IN ('MAIN', 'CASHIER', 'BANK')),
+  name              TEXT NOT NULL,
+  cashier_user_id   INTEGER REFERENCES users(id), -- إلزامي لو kind='CASHIER' بس (متحقق منه تطبيقيًا)
+  is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_treasuries_main_per_branch ON treasuries(branch_id) WHERE kind = 'MAIN';
+CREATE UNIQUE INDEX idx_treasuries_cashier_per_branch_user ON treasuries(branch_id, cashier_user_id) WHERE kind = 'CASHIER';
+CREATE INDEX idx_treasuries_branch ON treasuries(branch_id);
+CREATE INDEX idx_treasuries_kind ON treasuries(kind);
+
+-- البنوك وحسابات البنوك - كيان منفصل عن treasuries (بيانات البنك نفسه: اسمه، رقم الحساب، الآيبان)، بس
+-- كل حساب بنكي لازم يتربط بخزينة (treasury) عشان يشتغل جوه نفس محرك القيود والتحويلات العام
+CREATE TABLE banks (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE bank_accounts (
+  id                SERIAL PRIMARY KEY,
+  bank_id           INTEGER NOT NULL REFERENCES banks(id),
+  treasury_id       INTEGER NOT NULL UNIQUE REFERENCES treasuries(id),
+  account_number    TEXT,
+  iban              TEXT,
+  bank_branch_name  TEXT, -- فرع البنك نفسه (اسم حر) - مش فرع ستاموني
+  notes             TEXT,
+  is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_bank_accounts_bank ON bank_accounts(bank_id);
 
 -- ============================================================
 -- محرك موافقات عام (Approval Requests) - لطلبات مش لازم تتحسم فورًا وقت البيع

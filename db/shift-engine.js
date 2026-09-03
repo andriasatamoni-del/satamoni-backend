@@ -7,6 +7,7 @@
 const { logAudit } = require("./audit");
 const {
   postJournalEntry, getOrCreateBranchCashAccount, getOrCreateEmployeeReceivableAccount, getAccountByCode,
+  getOrCreateCashierTreasuryAccount,
 } = require("./accounting-engine");
 
 // المرحلة 8.6: الكاشير مايشوفش أي رقم مالي حساس عن شيفته خالص (كاش متوقع/فعلي/فرق/تفاصيل مبيعات) -
@@ -196,12 +197,54 @@ async function closeShift(client, { shift, actualCash, closingNotes, closedBy, t
       varianceStatus, financials.cashPurchasesTotal, shift.id,
     ]
   );
+  // المرحلة 8.42: تسليم الدرج - الكاش المعدود فعليًا بيتحوّل من درج الكاشير (اللي كان بيستقبل مبيعاته
+  // الكاش لحظيًا أثناء الشيفت - راجع resolveCashDestinationAccount في accounting-engine.js) لخزينة الفرع
+  // الرئيسية. لو مفيش فرق بعد التسليم (أو الفرق جوه حد الاعتماد) بيتصفّى تلقائيًا هنا كمان - غير كده
+  // بيفضل الفرق قايم في درج الكاشير لحد ما reviewShiftVariance يتصرف فيه (approve/acknowledge)
+  if (Number(actualCash) > 0) {
+    const mainAccount = await getOrCreateBranchCashAccount(client, shift.branch_id);
+    const cashierAccount = await getOrCreateCashierTreasuryAccount(client, { branchId: shift.branch_id, userId: shift.user_id });
+    await postJournalEntry(client, {
+      entryDate: closedAt.toISOString().slice(0, 10),
+      description: `تسليم درج شيفت #${shift.id}`,
+      sourceType: "shift_handover", sourceId: shift.id, branchId: shift.branch_id,
+      lines: [
+        { accountId: mainAccount.id, debit: Number(actualCash) },
+        { accountId: cashierAccount.id, credit: Number(actualCash) },
+      ],
+      idempotencyKey: `shift-handover-${shift.id}`, userId: closedBy,
+    });
+  }
+  if (shiftStatus === "CLOSED" && cashVariance !== 0) {
+    await postVarianceWriteoffEntry(client, { shift, cashVariance, actorId: closedBy });
+  }
+
   await logAudit(client, {
     branchId: shift.branch_id, userId: closedBy, action: "SHIFT_CLOSED", entityType: "pos_shift", entityId: shift.id,
     oldValues: { status: shift.status },
     newValues: { status: shiftStatus, expectedCash, actualCash: Number(actualCash), cashVariance, varianceStatus },
   });
   return result.rows[0];
+}
+
+// المرحلة 8.42: تصفية الفرق المتبقي في درج الكاشير بعد تسليمه (expectedCash - actualCash) على حساب
+// "فروق كاش" (6950) - فرق تافه اتقفل تلقائيًا (جوّه حد الاعتماد) أو المدير "أقرّ" بيه من غير ما يحمّله
+// للكاشير. لازم يتصفّى بحاجة (مش بس يفضل قايم) وإلا هيلخبط رصيد الدرج في الشيفت الجاية لنفس الكاشير -
+// الفرق "المعتمد" فعليًا (approve - سلفة موظف حقيقية أو إيراد آخر) منفصل، في reviewShiftVariance تحت
+async function postVarianceWriteoffEntry(client, { shift, cashVariance, actorId }) {
+  const amount = Math.round(Math.abs(cashVariance) * 100) / 100;
+  if (amount === 0) return null;
+  const cashierAccount = await getOrCreateCashierTreasuryAccount(client, { branchId: shift.branch_id, userId: shift.user_id });
+  const writeoffAccount = await getAccountByCode(client, "6950");
+  const lines = cashVariance < 0
+    ? [{ accountId: writeoffAccount.id, debit: amount }, { accountId: cashierAccount.id, credit: amount }]
+    : [{ accountId: cashierAccount.id, debit: amount }, { accountId: writeoffAccount.id, credit: amount }];
+  return postJournalEntry(client, {
+    entryDate: new Date().toISOString().slice(0, 10),
+    description: `فرق كاش شيفت #${shift.id} - ${cashVariance < 0 ? "عجز" : "زيادة"} مقبول`,
+    sourceType: "shift_variance_writeoff", sourceId: shift.id, branchId: shift.branch_id,
+    lines, idempotencyKey: `shift-variance-writeoff-${shift.id}`, userId: actorId,
+  });
 }
 
 // مراجعة المدير على فرق كاش معلّق (PENDING_REVIEW) - "اعتماد" (ACKNOWLEDGED) يعني المدير قرأ السبب
@@ -240,12 +283,17 @@ async function reviewShiftVariance(client, { shift, reviewerId, decision, notes 
   // لآلية تسوية منفصلة). زيادة مؤكّدة (variance موجب) -> بتترحّل كإيراد آخر (4300)، نفس السياسة
   // المستخدمة أصلًا لفرق تسليم كاش السائق في db/delivery-engine.js (settleDriverCash) - مش سياسة مخترعة.
   let debtCreated = null;
+  if (decision === "acknowledge" && cashVariance !== 0) {
+    // المرحلة 8.42: "إقرار" لسه مفيش مسؤولية مالية على الكاشير - بس لازم يتصفّى الفرق المتبقي في درجه
+    // (زي الفرق التافه اللي بيتصفّى تلقائيًا في closeShift بالظبط)، وإلا هيفضل قايم لحد الشيفت الجاية
+    await postVarianceWriteoffEntry(client, { shift, cashVariance, actorId: reviewerId });
+  }
   if (decision === "approve" && cashVariance !== 0) {
     const employeeRes = await client.query(
       "SELECT id, name FROM employees WHERE user_id = $1 LIMIT 1",
       [shift.user_id]
     );
-    const branchCashAccount = await getOrCreateBranchCashAccount(client, shift.branch_id);
+    const cashierAccount = await getOrCreateCashierTreasuryAccount(client, { branchId: shift.branch_id, userId: shift.user_id });
 
     if (cashVariance < 0) {
       if (employeeRes.rows.length === 0) {
@@ -267,7 +315,7 @@ async function reviewShiftVariance(client, { shift, reviewerId, decision, notes 
           sourceType: "shift_variance_debt", sourceId: shift.id, branchId: shift.branch_id,
           lines: [
             { accountId: receivableAccount.id, debit: shortage, branchId: shift.branch_id },
-            { accountId: branchCashAccount.id, credit: shortage, branchId: shift.branch_id },
+            { accountId: cashierAccount.id, credit: shortage, branchId: shift.branch_id },
           ],
           idempotencyKey: `shift-variance-debt-${shift.id}`, userId: reviewerId,
         });
@@ -291,7 +339,7 @@ async function reviewShiftVariance(client, { shift, reviewerId, decision, notes 
         description: `زيادة كاش شيفت #${shift.id}`,
         sourceType: "shift_variance_surplus", sourceId: shift.id, branchId: shift.branch_id,
         lines: [
-          { accountId: branchCashAccount.id, debit: surplus, branchId: shift.branch_id },
+          { accountId: cashierAccount.id, debit: surplus, branchId: shift.branch_id },
           { accountId: otherRevenue.id, credit: surplus, branchId: shift.branch_id },
         ],
         idempotencyKey: `shift-variance-surplus-${shift.id}`, userId: reviewerId,
@@ -351,6 +399,24 @@ async function forceCloseShift(client, { shift, actualCash, closingNotes, closed
       varianceStatus, financials.cashPurchasesTotal, shift.id,
     ]
   );
+  // المرحلة 8.42: لو معروف كام كاش فعلي (actualCashVal مش NULL)، نفس تسليم الدرج بتاع closeShift العادي -
+  // لكن من غير تصفية تلقائية للفرق (لو موجود): القفل القسري استثنائي أصلًا (الكاشير مش موجود يتصرف)،
+  // فالفرق بيفضل قايم في درجه كبند مفتوح لحد ما حد يراجعه يدويًا (زي حالة "مفيش ملف موظف" فوق بالظبط)
+  if (actualCashVal !== null && actualCashVal > 0) {
+    const mainAccount = await getOrCreateBranchCashAccount(client, shift.branch_id);
+    const cashierAccount = await getOrCreateCashierTreasuryAccount(client, { branchId: shift.branch_id, userId: shift.user_id });
+    await postJournalEntry(client, {
+      entryDate: closedAt.toISOString().slice(0, 10),
+      description: `تسليم درج شيفت #${shift.id} (قفل قسري)`,
+      sourceType: "shift_handover", sourceId: shift.id, branchId: shift.branch_id,
+      lines: [
+        { accountId: mainAccount.id, debit: actualCashVal },
+        { accountId: cashierAccount.id, credit: actualCashVal },
+      ],
+      idempotencyKey: `shift-handover-${shift.id}`, userId: closedBy,
+    });
+  }
+
   await logAudit(client, {
     branchId: shift.branch_id, userId: closedBy, action: "SHIFT_FORCE_CLOSED", entityType: "pos_shift", entityId: shift.id,
     oldValues: { status: shift.status },
