@@ -76,7 +76,10 @@ CREATE TABLE pos_settings (
   vat_rate NUMERIC NOT NULL DEFAULT 0.14,
   -- المرحلة 7S: تأكيد الطلب بـSMS للعميل - افتراضيًا معطّل لحد ما بوابة إرسال حقيقية تتظبط
   -- (SMS_WEBHOOK_URL في متغيرات البيئة - راجع db/sms-provider.js)
-  sms_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE
+  sms_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  -- المرحلة 8.40: رسالة تقييم بعد التسليم/الاستلام - مفتاح منفصل عن sms_confirmations_enabled عمدًا
+  -- (منشأة ممكن تحب تفعّل تأكيد الطلب من غير طلب تقييم، أو العكس)
+  sms_rating_requests_enabled BOOLEAN NOT NULL DEFAULT FALSE
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -319,7 +322,11 @@ CREATE TABLE orders (
   -- الباقي). العمود ده بيسجل الجزء المحصّل كاش بس - افتراضيًا صفر (يعني الطلب كله آجل زي السلوك القديم
   -- بالظبط، مفيش تأثير على أي طلب موجود). NOT NULL DEFAULT 0 عشان يشتغل في أي معادلة SUM من غير
   -- COALESCE إضافي، ومعناه واضح لأي طلب مش طلبات أصلًا (دايمًا صفر)
-  talabat_cash_collected NUMERIC NOT NULL DEFAULT 0
+  talabat_cash_collected NUMERIC NOT NULL DEFAULT 0,
+  -- المرحلة 8.40: توكن عشوائي لصفحة تقييم الطلب العامة (public/rate.html) - بيتبعت في لينك رسالة
+  -- الواتساب بدل رقم الطلب لوحده، عشان محدش يقدر "يخمّن" رقم طلب تاني ويقيّمه/يشوفه (نفس فلسفة
+  -- sync_uuid فوق: هوية عشوائية مش متوقّعة، مش تسلسلية)
+  rating_token           UUID NOT NULL DEFAULT gen_random_uuid()
 );
 CREATE UNIQUE INDEX idx_orders_idempotency_key ON orders(idempotency_key) WHERE idempotency_key IS NOT NULL;
 -- المرحلة 7G: لوحة المطبخ بتفلتر بالفرع + استبعاد READY القديم (الاستعلام في routes/kds.js) على كل تحديث
@@ -350,6 +357,9 @@ CREATE TABLE order_notifications (
   id         SERIAL PRIMARY KEY,
   order_id   INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
   channel    TEXT NOT NULL CHECK (channel IN ('sms', 'whatsapp')),
+  -- المرحلة 8.40: نوع الرسالة - تأكيد وقت التسجيل، أو طلب تقييم بعد التسليم/الاستلام - نفس آلية
+  -- الإرسال (db/sms-provider.js) والسجل، بس بنص/توقيت مختلف لكل نوع
+  kind       TEXT NOT NULL DEFAULT 'confirmation' CHECK (kind IN ('confirmation', 'rating_request')),
   phone      TEXT NOT NULL,
   message    TEXT NOT NULL,
   status     TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'not_configured')),
@@ -357,6 +367,21 @@ CREATE TABLE order_notifications (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_order_notifications_order ON order_notifications(order_id);
+
+-- المرحلة 8.40: تقييم العميل للطلب (نجوم 1-5 + تعليق اختياري) - بيوصل من صفحة تقييم عامة
+-- (public/rate.html) مربوطة بلينك في رسالة الواتساب بعد التسليم/الاستلام، مقفولة بـorders.rating_token
+-- (مش رقم الطلب لوحده) عشان محدش يقدر يقيّم/يشوف طلب مش بتاعه. order_id UNIQUE - تقييم واحد بس لكل
+-- طلب (لو العميل حاول يبعت تاني بنفس اللينك، بيتحدّث نفس الصف مش صف جديد)
+CREATE TABLE order_ratings (
+  id         SERIAL PRIMARY KEY,
+  order_id   INTEGER NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+  branch_id  INTEGER REFERENCES branches(id),
+  stars      INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  comment    TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_order_ratings_branch ON order_ratings(branch_id);
 
 CREATE TABLE order_items (
   id                       SERIAL PRIMARY KEY,

@@ -17,8 +17,8 @@ router.get("/", requireAuth, async (req, res) => {
 // PATCH /api/pos-settings - تعديل الحد المسموح للخصم من غير موافقة و/أو معدّل نقاط الولاء و/أو نسبة
 // الضريبة (أدمن بس)
 router.patch("/", requireAuth, requireRole("admin"), async (req, res) => {
-  const { maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp, vatRate, smsConfirmationsEnabled } = req.body;
-  if ([maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp, vatRate, smsConfirmationsEnabled].every((v) => v === undefined)) {
+  const { maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp, vatRate, smsConfirmationsEnabled, smsRatingRequestsEnabled } = req.body;
+  if ([maxUnapprovedDiscountPercent, discountManagerMaxPercent, loyaltyPointsPerEgp, loyaltyRedeemValueEgp, vatRate, smsConfirmationsEnabled, smsRatingRequestsEnabled].every((v) => v === undefined)) {
     return res.status(400).json({ error: "مفيش حاجة تتعدل" });
   }
   if (maxUnapprovedDiscountPercent !== undefined && (maxUnapprovedDiscountPercent < 0 || maxUnapprovedDiscountPercent > 1)) {
@@ -45,6 +45,7 @@ router.patch("/", requireAuth, requireRole("admin"), async (req, res) => {
   if (loyaltyRedeemValueEgp !== undefined) { fields.push(`loyalty_redeem_value_egp = $${i++}`); values.push(loyaltyRedeemValueEgp); }
   if (vatRate !== undefined) { fields.push(`vat_rate = $${i++}`); values.push(vatRate); }
   if (smsConfirmationsEnabled !== undefined) { fields.push(`sms_confirmations_enabled = $${i++}`); values.push(!!smsConfirmationsEnabled); }
+  if (smsRatingRequestsEnabled !== undefined) { fields.push(`sms_rating_requests_enabled = $${i++}`); values.push(!!smsRatingRequestsEnabled); }
   try {
     const result = await pool.query(
       `UPDATE pos_settings SET ${fields.join(", ")} WHERE id = 1 RETURNING *`,

@@ -164,6 +164,11 @@
       <button id="smsConfirmationsSubmit">حفظ</button>
     </div>
     <div id="smsConfirmationsErr" class="err"></div>
+    <div class="row">
+      <label class="chk" style="flex:0 0 auto"><input id="smsRatingRequestsInput" type="checkbox" /> تفعيل رسالة تقييم الطلب بعد التسليم/الاستلام - نفس بوابة الإرسال، ولينك تقييم بسيط للعميل</label>
+      <button id="smsRatingRequestsSubmit">حفظ</button>
+    </div>
+    <div id="smsRatingRequestsErr" class="err"></div>
   </div>
 
   <h1>تخصيص الصفحة الرئيسية</h1>
@@ -347,6 +352,7 @@ async function loadPosSettings() {
   document.getElementById("maxDiscountInput").value = Math.round(Number(settings.max_unapproved_discount_percent) * 100);
   document.getElementById("vatRateInput").value = Number(settings.vat_rate) * 100;
   document.getElementById("smsConfirmationsInput").checked = !!settings.sms_confirmations_enabled;
+  document.getElementById("smsRatingRequestsInput").checked = !!settings.sms_rating_requests_enabled;
 }
 document.getElementById("posSettingsSubmit").onclick = async () => {
   const errBox = document.getElementById("posSettingsErr");
@@ -374,6 +380,16 @@ document.getElementById("smsConfirmationsSubmit").onclick = async () => {
   try {
     const enabled = document.getElementById("smsConfirmationsInput").checked;
     await api("/api/pos-settings", { method: "PATCH", body: JSON.stringify({ smsConfirmationsEnabled: enabled }) });
+    errBox.style.color = "var(--green)";
+    errBox.textContent = "اتحفظ ✓";
+  } catch (e) { errBox.style.color = "var(--err)"; errBox.textContent = e.message; }
+};
+document.getElementById("smsRatingRequestsSubmit").onclick = async () => {
+  const errBox = document.getElementById("smsRatingRequestsErr");
+  errBox.textContent = "";
+  try {
+    const enabled = document.getElementById("smsRatingRequestsInput").checked;
+    await api("/api/pos-settings", { method: "PATCH", body: JSON.stringify({ smsRatingRequestsEnabled: enabled }) });
     errBox.style.color = "var(--green)";
     errBox.textContent = "اتحفظ ✓";
   } catch (e) { errBox.style.color = "var(--err)"; errBox.textContent = e.message; }

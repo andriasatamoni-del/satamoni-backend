@@ -578,7 +578,7 @@ function belowMinOrder() {
 function canCheckout() {
   if (cartList().length === 0 || !state.name.trim() || !state.phone.trim() || !state.paymentMethodId || belowMinOrder()) return false;
   if (state.orderType === "dinein") return !!(state.tableNumber.trim() && state.branchId);
-  if (state.orderType === "pickup") return !!state.branchId;
+  if (state.orderType === "takeaway") return !!state.branchId;
   if (state.orderType === "delivery") return !!(state.areaId && state.addressDetails.trim());
   return false;
 }
@@ -610,7 +610,7 @@ function renderCheckout() {
       : `<button type="button" class="link-btn" id="checkoutLoginBtn">👤 عندك حساب؟ سجل دخول لعناوينك ونقاطك</button>`}
     <div class="type-tabs">
       <button class="type-tab ${state.orderType === "dinein" ? "active" : ""}" data-type="dinein">🍽️<br/>في المطعم</button>
-      <button class="type-tab ${state.orderType === "pickup" ? "active" : ""}" data-type="pickup">🛍️<br/>استلام</button>
+      <button class="type-tab ${state.orderType === "takeaway" ? "active" : ""}" data-type="takeaway">🛍️<br/>استلام</button>
       <button class="type-tab ${state.orderType === "delivery" ? "active" : ""}" data-type="delivery">🛵<br/>توصيل</button>
     </div>
 
@@ -621,7 +621,7 @@ function renderCheckout() {
       <label class="field"><span>رقم الترابيزة</span><input id="fTable" value="${escapeAttr(state.tableNumber)}" placeholder="مثال: 12" /></label>
     ` : ""}
 
-    ${state.orderType === "pickup" ? `
+    ${state.orderType === "takeaway" ? `
       <label class="field"><span>الفرع</span>
         <select id="fBranch">${branches.map(b => `<option value="${b.id}" ${String(b.id) === String(state.branchId) ? "selected" : ""}>${escapeHtml(b.name)} — ${escapeHtml(b.address || "")}</option>`).join("")}</select>
       </label>

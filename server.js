@@ -30,6 +30,12 @@ if (envCheck.errors.length > 0) {
 }
 
 const app = express();
+// المرحلة 8.40: السيرفر شغال ورا بروكسي واحد دايمًا (Render وأشباهه) - من غيرها req.protocol كان دايمًا
+// "http" حتى لو الطلب الحقيقي https (TLS بيتقفل عند البروكسي مش عندنا)، وده كان بيبوّظ أي لينك خارجي
+// بيتبني من req (زي لينك تقييم الطلب في رسالة الواتساب). بالتبعية req.ip بقى بيقرا X-Forwarded-For
+// الحقيقي بدل عنوان IP البروكسي نفسه لكل الطلبات - ده كمان بيصلّح قفل محاولات الدخول الغلط في
+// routes/auth.js اللي كان بيتصرف كأن كل الطلبات جايه من نفس الـIP (عنوان البروكسي) قبل كده
+app.set("trust proxy", 1);
 app.use(securityHeaders);
 app.use(errorSanitizer);
 app.use(requestLogger);
@@ -89,6 +95,7 @@ app.use("/api/printers", require("./routes/printers"));
 app.use("/api/kitchen-stations", require("./routes/kitchen-stations"));
 app.use("/api/print-jobs", require("./routes/print-jobs"));
 app.use("/api/home-tiles", require("./routes/home-tiles"));
+app.use("/api/order-ratings", require("./routes/order-ratings"));
 
 // المرحلة 6 (6F): /health كان بيرجّع "ok" ثابتة دايمًا حتى لو قاعدة البيانات مش شغالة خالص - ده بيخلي
 // أي مراقبة/health-check بتعتمد عليه (لوحة تحكم استضافة، uptime monitor) تعتقد السيرفر تمام رغم إن

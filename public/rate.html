@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>ستاموني — قيّم طلبك</title>
+<meta name="theme-color" content="#0E0E10" />
+<link rel="apple-touch-icon" href="/images/satamoni-logo.jpeg" />
+<link rel="icon" href="/images/satamoni-logo.jpeg" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lalezar&family=Cairo:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" />
+<style>
+  :root {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --line: #2A2A2E; --card-border: #2E2C27;
+    --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --red-deep: #8F1E19;
+    --gold: #CBA135; --gold-bright: #E8C468; --neon: #F5D400; --err: #F08A83;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font-family: 'Cairo', sans-serif; }
+  body { padding-bottom: env(safe-area-inset-bottom); }
+  h1, h2, h3 { font-family: 'Lalezar', sans-serif; font-weight: 400; margin: 0; }
+  button { font-family: 'Cairo', sans-serif; }
+  .mono { font-family: 'Space Mono', monospace; }
+  .muted { color: var(--faint); }
+
+  main { max-width: 480px; margin: 0 auto; padding: 32px 18px 60px; min-height: 100vh; display: flex; flex-direction: column; }
+  #logo { text-align: center; margin-bottom: 18px; }
+  #logo img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; border: 2px solid var(--gold); }
+  #logo h1 { font-size: 24px; color: var(--gold-bright); margin-top: 10px; }
+
+  .card { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+  .order-meta { font-size: 13px; color: var(--faint); margin-bottom: 14px; text-align: center; }
+  .order-meta .num { color: var(--gold-bright); font-family: 'Space Mono', monospace; }
+  .items-list { margin-bottom: 18px; }
+  .item-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .item-row:last-child { border-bottom: none; }
+
+  #starsRow { display: flex; justify-content: center; gap: 10px; margin: 18px 0; direction: ltr; }
+  .star-btn { background: none; border: none; font-size: 38px; cursor: pointer; color: var(--line); line-height: 1; padding: 0; }
+  .star-btn.on { color: var(--gold); }
+
+  textarea { width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 8px; color: var(--ink);
+    padding: 10px 12px; font-family: 'Cairo', sans-serif; font-size: 13px; resize: vertical; min-height: 70px; margin-bottom: 14px; }
+  textarea::placeholder { color: var(--faint); }
+
+  .btn { width: 100%; padding: 13px; border: none; border-radius: 8px; font-weight: 700; font-size: 14px; cursor: pointer; }
+  .btn-primary { background: var(--red); color: #fff; }
+  .btn-primary:disabled { background: #3A3630; cursor: not-allowed; color: var(--faint); }
+
+  #err { color: var(--err); font-size: 13px; text-align: center; margin-top: 10px; display: none; }
+  #state-loading, #state-error, #state-thanks { text-align: center; padding: 60px 20px; }
+  #state-thanks h2 { color: var(--gold-bright); font-size: 26px; margin-bottom: 10px; }
+  #state-thanks p { color: var(--faint); font-size: 14px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div id="logo">
+    <img src="/images/satamoni-logo.jpeg" alt="ستاموني" />
+    <h1>ستاموني</h1>
+  </div>
+
+  <div id="state-loading" class="card">جاري تحميل بيانات الطلب...</div>
+
+  <div id="state-error" class="card" hidden>
+    <p id="errMsg" class="muted">اللينك ده غير صالح أو منتهي</p>
+  </div>
+
+  <div id="state-form" class="card" hidden>
+    <div class="order-meta">طلب رقم <span class="num" id="orderNum"></span> — <span id="branchName"></span></div>
+    <div class="items-list" id="itemsList"></div>
+    <div id="starsRow">
+      <button class="star-btn" data-star="5">★</button>
+      <button class="star-btn" data-star="4">★</button>
+      <button class="star-btn" data-star="3">★</button>
+      <button class="star-btn" data-star="2">★</button>
+      <button class="star-btn" data-star="1">★</button>
+    </div>
+    <textarea id="commentInput" placeholder="اكتب رأيك (اختياري)"></textarea>
+    <button class="btn btn-primary" id="submitBtn" disabled>إرسال التقييم</button>
+    <div id="err"></div>
+  </div>
+
+  <div id="state-thanks" class="card" hidden>
+    <h2>شكرًا لتقييمك!</h2>
+    <p>نورتنا ودايمًا بنحاول نبقى أحسن</p>
+  </div>
+</main>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const orderId = params.get("order");
+  const token = params.get("token");
+  let stars = 0;
+
+  function show(id) {
+    ["state-loading", "state-error", "state-form", "state-thanks"].forEach((s) => {
+      document.getElementById(s).hidden = s !== id;
+    });
+  }
+
+  function renderStars() {
+    document.querySelectorAll(".star-btn").forEach((btn) => {
+      btn.classList.toggle("on", Number(btn.dataset.star) <= stars);
+    });
+    document.getElementById("submitBtn").disabled = stars < 1;
+  }
+
+  async function load() {
+    if (!orderId || !token) { show("state-error"); return; }
+    try {
+      const res = await fetch(`/api/order-ratings/${orderId}?token=${encodeURIComponent(token)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        document.getElementById("errMsg").textContent = data.error || "اللينك ده غير صالح";
+        show("state-error");
+        return;
+      }
+      document.getElementById("orderNum").textContent = `#${data.orderId}`;
+      document.getElementById("branchName").textContent = data.branchName || "";
+      document.getElementById("itemsList").innerHTML = data.items
+        .map((it) => `<div class="item-row"><span>${it.name}${it.variant ? " (" + it.variant + ")" : ""}</span><span class="mono">x${it.quantity}</span></div>`)
+        .join("");
+      if (data.existingRating) {
+        stars = data.existingRating.stars;
+        document.getElementById("commentInput").value = data.existingRating.comment || "";
+        renderStars();
+      }
+      show("state-form");
+    } catch (e) {
+      document.getElementById("errMsg").textContent = "حصل خطأ، حاول تاني";
+      show("state-error");
+    }
+  }
+
+  document.querySelectorAll(".star-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      stars = Number(btn.dataset.star);
+      renderStars();
+    });
+  });
+
+  document.getElementById("submitBtn").addEventListener("click", async () => {
+    const errEl = document.getElementById("err");
+    errEl.style.display = "none";
+    const btn = document.getElementById("submitBtn");
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/order-ratings/${orderId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, stars, comment: document.getElementById("commentInput").value }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error || "حصل خطأ، حاول تاني";
+        errEl.style.display = "block";
+        btn.disabled = false;
+        return;
+      }
+      show("state-thanks");
+    } catch (e) {
+      errEl.textContent = "حصل خطأ، حاول تاني";
+      errEl.style.display = "block";
+      btn.disabled = false;
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>

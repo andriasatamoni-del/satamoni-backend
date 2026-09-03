@@ -7,7 +7,7 @@ const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
 const { upsertCustomerAddress } = require("../db/customer-addresses");
-const { maybeSendOrderConfirmation } = require("../db/order-notifications");
+const { maybeSendOrderConfirmation, maybeSendRatingRequest } = require("../db/order-notifications");
 const { validateIdParam } = require("../middleware/validate-id-param");
 const { queueOrderCreationPrintJobs, queueDineInPreparingPrintJobs, queueDineInBillPrintJob } = require("../db/print-queue");
 
@@ -852,7 +852,7 @@ router.patch(
     try {
       await client.query("BEGIN");
       const existing = await client.query(
-        "SELECT branch_id, status, customer_phone, loyalty_points_earned, loyalty_points_redeemed FROM orders WHERE id = $1 FOR UPDATE",
+        "SELECT branch_id, status, order_type, customer_phone, loyalty_points_earned, loyalty_points_redeemed FROM orders WHERE id = $1 FOR UPDATE",
         [req.params.id]
       );
       if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلب مش موجود" }); }
@@ -903,6 +903,13 @@ router.patch(
       }
 
       await client.query("COMMIT");
+      // المرحلة 8.40: الطلب وصل فعليًا للعميل (الطيار سلّم/رجع) - دلوقتي وقت طلب التقييم، مش وقت الإنشاء
+      if (status === "completed") {
+        await maybeSendRatingRequest({
+          orderId: Number(req.params.id), orderType: current.order_type, customerPhone: current.customer_phone,
+          baseUrl: `${req.protocol}://${req.get("host")}`,
+        });
+      }
       res.json(result.rows[0]);
     } catch (err) {
       await client.query("ROLLBACK");
@@ -970,7 +977,7 @@ router.patch(
     try {
       await client.query("BEGIN");
       const existing = await client.query(
-        "SELECT branch_id, status, kitchen_status FROM orders WHERE id = $1 FOR UPDATE",
+        "SELECT branch_id, status, kitchen_status, order_type, customer_phone FROM orders WHERE id = $1 FOR UPDATE",
         [req.params.id]
       );
       if (existing.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلب مش موجود" }); }
@@ -1013,6 +1020,16 @@ router.patch(
       }
 
       await client.query("COMMIT");
+      // المرحلة 8.40: طلب تيك أواي هاتفي بقى جاهز - أقرب إشارة حقيقية موجودة لـ"جاهز للعميل" (مفيش
+      // تتبّع منفصل لحظة الاستلام الفعلي في الفرع). طلبات الدليفري بتاخد رسالة التقييم من PATCH
+      // /:id/status لما status يبقى completed (الطيار رجع/سلّم) - لازم نستبعدها هنا صراحة، وإلا
+      // هتاخد رسالتين (واحدة لما تجهز في المطبخ، وتانية لما فعليًا توصل للعميل)
+      if (status === "READY" && current.order_type !== "delivery") {
+        await maybeSendRatingRequest({
+          orderId: Number(req.params.id), orderType: current.order_type, customerPhone: current.customer_phone,
+          baseUrl: `${req.protocol}://${req.get("host")}`,
+        });
+      }
       res.json(result.rows[0]);
     } catch (err) {
       await client.query("ROLLBACK");
