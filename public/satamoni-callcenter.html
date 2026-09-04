@@ -296,6 +296,7 @@
       <input id="phoneInput" placeholder="رقم موبايل العميل" />
       <input id="phone2Input" placeholder="رقم موبايل تاني (اختياري)" />
       <select id="branchSelect"></select>
+      <div id="branchOfflineWarning" style="display:none;color:#b30000;background:#fff3f3;border:1px solid #f5c2c2;border-radius:6px;padding:6px 10px;font-size:12px;margin:4px 0"></div>
       <select id="areaSelect"></select>
       <input id="addressInput" placeholder="تفاصيل العنوان (شارع/عمارة/دور/شقة)" />
       <input id="markInput" placeholder="علامة مميزة (بجوار كذا...)" />
@@ -513,7 +514,25 @@ function renderBranchSelect() {
   sel.innerHTML = state.branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
   sel.value = state.selectedBranchId;
   state.selectedBranchId = sel.value; // لو القيمة الأصلية مش موجودة في القايمة، المتصفح بيختار أول عنصر - نتأكد الحالة متطابقة مع الظاهر فعليًا
-  sel.onchange = () => { state.selectedBranchId = sel.value; renderAreaSelect(); updateSubmitState(); };
+  sel.onchange = () => { state.selectedBranchId = sel.value; renderAreaSelect(); renderBranchOfflineWarning(); updateSubmitState(); };
+  renderBranchOfflineWarning();
+}
+
+// المرحلة 8.43: تحذير لو الفرع ده شغال بالوضع المحلي (branches.last_synced_at مش NULL) والمزامنة
+// متأخرة كتير - غالبًا يبقى قاطع نت دلوقتي، فأي أوردر هنسجله له مش هيوصله/يتطبع في المطبخ لحد ما
+// النت يرجع. مفيش تحذير خالص لو last_synced_at = NULL (الفرع أصلًا متصل مباشرة بالمركزي، زي كل الفروع
+// اللي لسه ما اتنقلتش للوضع المحلي - العتبة 15 دقيقة (3 أضعاف الدورة الافتراضية 5 دقايق) هامش أمان
+// كافي ضد تأخير عادي في الشبكة من غير ما يبقى تحذير حساس زيادة عن اللزوم
+const OFFLINE_WARNING_THRESHOLD_MS = 15 * 60 * 1000;
+function renderBranchOfflineWarning() {
+  const box = document.getElementById("branchOfflineWarning");
+  const branch = state.branches.find(b => String(b.id) === String(state.selectedBranchId));
+  if (!branch || !branch.lastSyncedAt) { box.style.display = "none"; return; }
+  const ageMs = Date.now() - new Date(branch.lastSyncedAt).getTime();
+  if (ageMs < OFFLINE_WARNING_THRESHOLD_MS) { box.style.display = "none"; return; }
+  const ageMinutes = Math.round(ageMs / 60000);
+  box.style.display = "block";
+  box.textContent = `⚠️ الفرع ده ممكن يكون قاطع عن الإنترنت دلوقتي (آخر تواصل من ${ageMinutes} دقيقة) - الأوردر ده مش هيوصله/يتطبع في المطبخ لحد ما النت يرجع. لو مستعجل، اتصل بالفرع مباشرة بدل ما تسجّله هنا.`;
 }
 function renderAreaSelect() {
   const sel = document.getElementById("areaSelect");

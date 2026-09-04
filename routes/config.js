@@ -76,6 +76,8 @@ router.get("/full", async (req, res) => {
       branches: branches.rows.map((b) => ({
         id: b.id, name: b.name, address: b.address, phone: b.phone,
         hours: b.hours, lat: b.lat, lng: b.lng, supportsDineIn: b.supports_dine_in,
+        // المرحلة 8.43: NULL يعني الفرع مش شغال بوضع محلي/مزامنة خالص - متصل بالمركزي مباشرة زي دايمًا
+        lastSyncedAt: b.last_synced_at,
       })),
       deliveryAreas: areas.rows.map((a) => ({
         id: a.id, name: a.name, fee: Number(a.fee),

@@ -25,6 +25,11 @@ CREATE TABLE branches (
   is_central_kitchen BOOLEAN DEFAULT FALSE, -- TRUE لسجل سنتر كيتشن
   opening_debt_to_kitchen NUMERIC DEFAULT 0, -- الرصيد الافتتاحي المستحق للمخزن الرئيسي
   supports_dine_in BOOLEAN DEFAULT TRUE, -- هل الفرع ده فيه صالة تناول داخلي (يظهر خيار "صالة" في شاشة البيع)
+  -- المرحلة 8.43: آخر مرة نبضة (heartbeat) وصلت من سيرفر الفرع المحلي (db/sync-worker.js) للمركزي -
+  -- NULL يعني الفرع ده أصلًا مش شغال بالوضع المحلي/المزامنة خالص (متصل بالمركزي مباشرة زي ما هو دايمًا).
+  -- مش رصيد/مصدر حقيقة لأي حاجة تشغيلية - بس إشارة تقريبية لواجهات زي الكول سنتر تحذّر بيها ("الفرع ده
+  -- ممكن يكون قاطع نت دلوقتي") قبل ما تحوّل عليه أوردر هيفضل مش مرئي له لحد ما النت يرجع
+  last_synced_at TIMESTAMPTZ,
   created_at    TIMESTAMPTZ DEFAULT now()
 );
 

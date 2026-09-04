@@ -19,6 +19,20 @@ async function assertBranchExists(branchId) {
   return result.rows.length > 0;
 }
 
+// POST /api/sync/heartbeat - {branchId} - المرحلة 8.43: بتترفع كل دورة مزامنة (كل SYNC_INTERVAL_SECONDS)
+// من db/sync-worker.js بغض النظر عن وجود بيانات جديدة تترفع أصلًا (orders/expenses/purchases لو كانت
+// صفر، ده كان معناه إن last_synced_at مش هيتحدّث خالص حتى لو الفرع متصل تمام - مجرد مفيش عمليات جديدة).
+// نجاح النداء ده لوحده كافي كإشارة "وصلنا للمركزي فعليًا في الدورة دي" - مش مربوط بأي جدول بيانات تاني
+router.post("/heartbeat", async (req, res) => {
+  const { branchId } = req.body;
+  if (!branchId) return res.status(400).json({ error: "بيانات ناقصة" });
+  if (!(await assertBranchExists(branchId))) {
+    return res.status(400).json({ error: `مفيش فرع بالرقم ${branchId} في السيرفر المركزي` });
+  }
+  await pool.query("UPDATE branches SET last_synced_at = now() WHERE id = $1", [branchId]);
+  res.json({ ok: true });
+});
+
 // POST /api/sync/orders
 // ملاحظة: مش بنحاول نربط delivery_area_id/payment_method_id/item_id/variant_id/created_by/
 // voided_by/discount_approved_by بالمركزي، لأن IDs الفرع المحلي منفصلة تمامًا عن IDs المركزي

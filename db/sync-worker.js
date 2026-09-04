@@ -115,9 +115,16 @@ async function syncSimpleTable(table) {
   return rows.length;
 }
 
+// المرحلة 8.43: نبضة بسيطة بتترفع كل دورة بغض النظر عن وجود بيانات جديدة - عشان لو الفرع متصل بس هادي
+// (مفيش أوردرات جديدة في آخر دورة) branches.last_synced_at يفضل محدّث برضو، مش يبان "قاطع" غلط
+async function sendHeartbeat() {
+  await postJson("/api/sync/heartbeat", { branchId: BRANCH_ID });
+}
+
 async function runOnce() {
   const results = {};
   try {
+    await sendHeartbeat();
     results.orders = await syncOrders();
     results.expenses = await syncExpenses();
     for (const table of SIMPLE_TABLES) {
