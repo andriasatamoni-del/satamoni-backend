@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ستاموني — طلبات وشكاوى واتساب</title>
+<style>
+  :root {
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --err: #F08A83;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  :root:not([data-theme="dark"]) #topbar { background: #1B5FA8; border-bottom: 1px solid #164E8A; --ink: #FFFFFF; --faint: rgba(255,255,255,.82); --line: rgba(255,255,255,.45); --green: #6FCF7A; --red: #FF6B60; --err: #FF8A80; }
+  :root:not([data-theme="dark"]) #topbar .brand { color: #FFFFFF; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn, #themeToggleBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  #tabs { display: flex; gap: 6px; margin: 0 0 16px; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .cardHead { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .cardHead .id { font-weight: 800; color: var(--gold-bright); }
+  .meta { color: var(--faint); font-size: 12px; margin: 6px 0; }
+  .items { background: var(--bg-alt); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 8px 0; white-space: pre-wrap; }
+  .rowActions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  select, input { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 7px 9px; font-size: 12px; }
+  button.act { padding: 8px 14px; border: none; border-radius: 8px; font-weight: 800; cursor: pointer; font-size: 12px; }
+  button.confirm { background: var(--green); color: #fff; }
+  button.reject { background: var(--red); color: #fff; }
+  button.resolve { background: var(--green); color: #fff; }
+  .empty { color: var(--faint); text-align: center; padding: 30px; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .err { color: var(--err); font-size: 12px; margin-top: 6px; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">💬 ستاموني — طلبات وشكاوى واتساب</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي">🌙</button>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>💬 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="pending">الطلبات المعلّقة</div>
+    <div class="tabbtn" data-tab="complaints">الشكاوى</div>
+  </div>
+
+  <div class="panel active" id="panel-pending">
+    <div class="meta">أوردرات جمّعها البوت من محادثات واتساب - لسه محتاجة مراجعة وتسجيل فعلي (مفيش خصم مخزون أو حساب بيحصل غير بعد ما تتسجل هنا).</div>
+    <div id="pendingList"></div>
+  </div>
+
+  <div class="panel" id="panel-complaints">
+    <div class="meta">شكاوى وصلت من واتساب - محتاجة متابعة من الفريق.</div>
+    <div id="complaintsList"></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الشاشة دي.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "cashier", "callcenter"];
+const canRegisterOrderRoles = ["admin", "callcenter"]; // نفس القيد الموجود فعليًا في POST /api/orders (source=callcenter)
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+document.getElementById("themeToggleBtn").onclick = () => {
+  const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+  if (isDark) { document.documentElement.removeAttribute("data-theme"); localStorage.setItem("satamoni-theme", "light"); }
+  else { document.documentElement.setAttribute("data-theme", "dark"); localStorage.setItem("satamoni-theme", "dark"); }
+};
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    if (btn.dataset.tab === "pending") loadPending();
+    if (btn.dataset.tab === "complaints") loadComplaints();
+  };
+});
+
+const dt = (s) => s ? new Date(s).toLocaleString("ar-EG", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+const money = (n) => `${Number(n).toFixed(2)} ج.م`;
+const CATEGORY_LABEL = { late_order: "تأخير", wrong_item: "غلط في الطلب", quality: "جودة", other: "أخرى" };
+
+let paymentMethods = [];
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  try {
+    const cfg = await api("/api/config/full");
+    paymentMethods = cfg.paymentMethods || [];
+  } catch (e) { /* لو فشل، سيلكت طرق الدفع هيفضل فاضي */ }
+  await loadPending();
+}
+
+function itemsSummary(items) {
+  return (items || []).map(it => {
+    const mods = (it.modifiers || []).map(m => m.name).join("، ");
+    return `${it.quantity}× ${it.itemName} (${it.variantLabel})${mods ? " + " + mods : ""} — ${money(it.lineTotal)}`;
+  }).join("\n");
+}
+
+async function loadPending() {
+  const list = document.getElementById("pendingList");
+  list.innerHTML = `<div class="empty">...جاري التحميل</div>`;
+  try {
+    const orders = await api("/api/whatsapp/pending-orders?status=pending");
+    if (orders.length === 0) { list.innerHTML = `<div class="empty">مفيش طلبات معلّقة دلوقتي 🎉</div>`; return; }
+    const canRegister = canRegisterOrderRoles.includes(auth.user.role);
+    const paymentOptions = paymentMethods.filter(p => p.enabled).map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+    list.innerHTML = orders.map(o => `
+      <div class="card" data-id="${o.id}">
+        <div class="cardHead">
+          <span class="id">طلب #${o.id} - ${o.customer_name || "بدون اسم"} (${o.customer_phone})</span>
+          <span class="pill">${o.order_type === "delivery" ? "توصيل" : "استلام"}</span>
+        </div>
+        <div class="meta">${dt(o.created_at)} — ${o.branch_name ? "فرع " + o.branch_name : "فرع غير محدد"}${o.area_name ? " — منطقة " + o.area_name : ""}</div>
+        ${o.order_type === "delivery" ? `<div class="meta">📍 ${o.address_details || "—"}${o.distinguishing_mark ? " (" + o.distinguishing_mark + ")" : ""}</div>` : ""}
+        <div class="items">${itemsSummary(o.items)}\n\nالإجمالي: ${money(o.total)}${o.order_type === "delivery" ? ` (شامل توصيل ${money(o.delivery_fee)})` : ""}</div>
+        <div class="rowActions">
+          ${canRegister ? `
+            <select class="paySelect">${paymentOptions || '<option value="">مفيش طرق دفع متاحة</option>'}</select>
+            <button class="act confirm" data-action="confirm">✅ تسجيل الطلب فعليًا</button>
+          ` : `<span class="meta">تسجيل الطلب متاح لموظف الكول سنتر/الأدمن بس</span>`}
+          <button class="act reject" data-action="reject">✋ رفض</button>
+        </div>
+        <div class="err"></div>
+      </div>
+    `).join("");
+
+    list.querySelectorAll(".card").forEach(card => {
+      const id = card.dataset.id;
+      const errBox = card.querySelector(".err");
+      const confirmBtn = card.querySelector('[data-action="confirm"]');
+      const rejectBtn = card.querySelector('[data-action="reject"]');
+
+      if (confirmBtn) confirmBtn.onclick = async () => {
+        errBox.textContent = "";
+        try {
+          const orders = await api("/api/whatsapp/pending-orders?status=pending");
+          const po = orders.find(o => String(o.id) === id);
+          if (!po) throw new Error("الطلب ده مش موجود");
+          if (!po.branch_id) throw new Error("مفيش فرع محدد للطلب ده - كلم العميل تاكد من منطقته الأول");
+          const paymentMethodId = card.querySelector(".paySelect").value;
+          if (!paymentMethodId) throw new Error("اختار طريقة دفع");
+
+          confirmBtn.disabled = true;
+          const orderPayload = {
+            branchId: po.branch_id, source: "callcenter", orderType: po.order_type,
+            deliveryAreaId: po.delivery_area_id, addressDetails: po.address_details,
+            customerName: po.customer_name, customerPhone: po.customer_phone,
+            distinguishingMark: po.distinguishing_mark, paymentMethodId: Number(paymentMethodId),
+            deliveryFee: Number(po.delivery_fee) || 0,
+            items: (po.items || []).map(it => ({
+              itemId: it.itemId, variantId: it.variantId, quantity: it.quantity,
+              modifiers: (it.modifiers || []).map(m => ({ id: m.id })), notes: it.notes || undefined,
+            })),
+          };
+          const created = await api("/api/orders", { method: "POST", body: JSON.stringify(orderPayload) });
+          await api(`/api/whatsapp/pending-orders/${id}/link-order`, { method: "POST", body: JSON.stringify({ orderId: created.orderId }) });
+          loadPending();
+        } catch (e) { errBox.textContent = e.message; confirmBtn.disabled = false; }
+      };
+
+      rejectBtn.onclick = async () => {
+        const reason = prompt("سبب الرفض (اختياري):") || "";
+        try {
+          await api(`/api/whatsapp/pending-orders/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+          loadPending();
+        } catch (e) { errBox.textContent = e.message; }
+      };
+    });
+  } catch (e) { list.innerHTML = `<div class="empty err">${e.message}</div>`; }
+}
+
+async function loadComplaints() {
+  const list = document.getElementById("complaintsList");
+  list.innerHTML = `<div class="empty">...جاري التحميل</div>`;
+  try {
+    const complaints = await api("/api/whatsapp/complaints?status=open");
+    if (complaints.length === 0) { list.innerHTML = `<div class="empty">مفيش شكاوى مفتوحة دلوقتي 🎉</div>`; return; }
+    list.innerHTML = complaints.map(c => `
+      <div class="card" data-id="${c.id}">
+        <div class="cardHead">
+          <span class="id">شكوى #${c.id} - ${c.customer_phone}</span>
+          <span class="pill">${CATEGORY_LABEL[c.category] || c.category}</span>
+        </div>
+        <div class="meta">${dt(c.created_at)}${c.order_id ? " — طلب #" + c.order_id : ""}</div>
+        <div class="items">${c.description}</div>
+        <div class="rowActions">
+          <button class="act resolve" data-action="resolve">✅ اتحلت</button>
+        </div>
+        <div class="err"></div>
+      </div>
+    `).join("");
+
+    list.querySelectorAll(".card").forEach(card => {
+      const id = card.dataset.id;
+      const errBox = card.querySelector(".err");
+      card.querySelector('[data-action="resolve"]').onclick = async () => {
+        const resolutionNotes = prompt("ملاحظات الحل (اختياري):") || "";
+        try {
+          await api(`/api/whatsapp/complaints/${id}/resolve`, { method: "POST", body: JSON.stringify({ resolutionNotes }) });
+          loadComplaints();
+        } catch (e) { errBox.textContent = e.message; }
+      };
+    });
+  } catch (e) { list.innerHTML = `<div class="empty err">${e.message}</div>`; }
+}
+
+if (auth.token && auth.user) {
+  if (!allowedRoles.includes(auth.user.role)) {
+    document.getElementById("accessDenied").style.display = "block";
+  } else {
+    document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+    hideLogin();
+    boot();
+  }
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>

@@ -79,7 +79,11 @@ CREATE TABLE pos_settings (
   sms_confirmations_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   -- المرحلة 8.40: رسالة تقييم بعد التسليم/الاستلام - مفتاح منفصل عن sms_confirmations_enabled عمدًا
   -- (منشأة ممكن تحب تفعّل تأكيد الطلب من غير طلب تقييم، أو العكس)
-  sms_rating_requests_enabled BOOLEAN NOT NULL DEFAULT FALSE
+  sms_rating_requests_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  -- المرحلة 8.43: بوت واتساب أوتوميشن خدمة العملاء - افتراضيًا معطّل لحد ما بيانات اعتماد Meta Cloud
+  -- API + مفتاح Anthropic تتظبط فعليًا في متغيرات البيئة (راجع db/whatsapp-client.js وdb/ai-client.js) -
+  -- نفس فلسفة sms_confirmations_enabled بالظبط (مفتاح تشغيل/إيقاف مستقل عن وجود بيانات الاعتماد نفسها)
+  whatsapp_bot_enabled BOOLEAN NOT NULL DEFAULT FALSE
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -102,6 +106,7 @@ INSERT INTO home_tiles (tile_key, href, icon, title, description, display_order)
   ('delivery', 'satamoni-delivery.html', '🛵', 'دورة حياة الدليفري', 'تحت التحضير، في الطريق، تحصيل الفلوس، وسجل كل الطلبات', 30),
   ('drivers', 'satamoni-drivers.html', '🛵', 'إدارة السائقين (أدمن/مدير فرع)', 'إضافة سائق جديد، وتفعيل/تعطيل السائقين الحاليين', 32),
   ('dispatch', 'satamoni-dispatch.html', '🛵', 'لوحة توزيع وتسوية السائقين', 'لوحة توزيع الطلبات على السائقين، ومعاينة/تسوية دفعاتهم', 34),
+  ('whatsapp', 'satamoni-whatsapp.html', '💬', 'طلبات وشكاوى واتساب', 'مراجعة الطلبات اللي جمّعها بوت واتساب من العملاء وتسجيلها فعليًا، ومتابعة الشكاوى الواردة', 36),
   ('dashboard', 'satamoni-dashboard.html', '📊', 'داش بورد المالك', 'كل تفاصيل الشغل في شاشة واحدة: مبيعات، أصناف وفروع ومناطق الأكثر مبيعًا، تكلفة، ربحية', 40),
   ('items', 'satamoni-items.html', '🗂️', 'الأصناف', 'كتالوج شامل للمواد الخام والمصنّعة وأصناف المنيو - بحث سريع وتفاصيل كل صنف في مكان واحد', 45),
   ('accounting', 'satamoni-accounting.html', '💰', 'الحسابات', 'مصروفات، مشتريات، تقفيل كاش، كشف حساب المخزن', 50),
@@ -2354,3 +2359,84 @@ CREATE TABLE packaging_order_batches (
 );
 CREATE INDEX idx_packaging_order_batches_order ON packaging_order_batches(packaging_order_id);
 CREATE INDEX idx_packaging_order_batches_batch ON packaging_order_batches(batch_id);
+
+-- ---------------- المرحلة 8.43: أتمتة واتساب (رد آلي بذكاء اصطناعي على استفسارات العملاء وتسجيل
+-- طلبات/شكاوى) ----------------
+-- محادثة واحدة لكل رقم واتساب عميل - سجل مستمر (مش بيتقفل/يتفتح لكل رسالة)، بيحمل آخر اسم معروف
+-- للعميل (من بروفايل واتساب أو من كلامه في المحادثة) عشان البوت ميسألش عليه تاني كل مرة
+CREATE TABLE whatsapp_conversations (
+  id               SERIAL PRIMARY KEY,
+  phone            TEXT NOT NULL UNIQUE,
+  customer_name    TEXT,
+  last_message_at  TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- سجل كل رسالة (واردة من العميل أو صادرة من البوت) - append-only، ده اللي بيتغذّى منه سياق الذكاء
+-- الاصطناعي لكل رد جديد (آخر كام رسالة) وبيستخدم كمرجع للمراجعة البشرية لو لزم. wa_message_id بتاع
+-- ميتا نفسه بيتخزن للرسايل الواردة عشان لو webhook اتكرر (إعادة إرسال شبكة) الرسالة ميتسجلش مرتين
+CREATE TABLE whatsapp_messages (
+  id             SERIAL PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES whatsapp_conversations(id) ON DELETE CASCADE,
+  direction      TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+  body           TEXT NOT NULL,
+  wa_message_id  TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_whatsapp_messages_conversation ON whatsapp_messages(conversation_id, created_at);
+CREATE UNIQUE INDEX idx_whatsapp_messages_wa_id ON whatsapp_messages(wa_message_id) WHERE wa_message_id IS NOT NULL;
+
+-- طلب بيتجمّع من خلال المحادثة (أصناف/عنوان/اسم) - 'draft' لحد ما العميل يأكد إنه عايز يبعت الطلب،
+-- بعدها 'pending' (لازم كاشير/كول سنتر يراجعها ويسجلها فعليًا كطلب حقيقي عن طريق الشاشة العادية -
+-- القرار ده متعمّد: مفيش خصم مخزون ولا قيد محاسبي بيحصل من غير مراجعة بشرية على أوردر جاي من محادثة
+-- آلية). items JSONB بيحمل الأصناف بعد ما اتربطت فعليًا بمنيو حقيقي (مش نص حر من العميل) عن طريق أداة
+-- save_draft_order (راجع services/whatsapp-bot/tools.js) - العميل مبيقدرش "يخترع" صنف أو سعر
+CREATE TABLE whatsapp_pending_orders (
+  id                  SERIAL PRIMARY KEY,
+  conversation_id     INTEGER NOT NULL REFERENCES whatsapp_conversations(id) ON DELETE CASCADE,
+  customer_phone      TEXT NOT NULL,
+  customer_name       TEXT,
+  order_type          TEXT NOT NULL DEFAULT 'delivery' CHECK (order_type IN ('delivery', 'takeaway')),
+  branch_id           INTEGER REFERENCES branches(id),
+  delivery_area_id    INTEGER REFERENCES delivery_areas(id),
+  address_details     TEXT,
+  distinguishing_mark TEXT,
+  items               JSONB NOT NULL DEFAULT '[]',
+  subtotal            NUMERIC NOT NULL DEFAULT 0,
+  delivery_fee        NUMERIC NOT NULL DEFAULT 0,
+  total                NUMERIC NOT NULL DEFAULT 0,
+  status              TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'pending', 'confirmed', 'rejected')),
+  rejection_reason    TEXT,
+  reviewed_by         INTEGER REFERENCES users(id),
+  reviewed_at         TIMESTAMPTZ,
+  -- بيتربط بالطلب الحقيقي (orders.id) بعد ما الكاشير/الكول سنتر يسجله فعليًا من satamoni-whatsapp.html
+  -- (بينادي POST /api/orders العادي نفسه اللي شاشة الكول سنتر بتستخدمه - مفيش منطق محاسبي/مخزون
+  -- مكرر هنا خالص)
+  confirmed_order_id  INTEGER REFERENCES orders(id),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- مسودة واحدة بس مفتوحة لكل محادثة في نفس اللحظة - لو العميل عايز يعمل طلب تاني بعد ما الأول
+-- اتأكد/اترفض، مسودة جديدة بتتعمل (الصف القديم فضل زي ما هو بحالته النهائية، للتاريخ/المراجعة)
+CREATE UNIQUE INDEX idx_whatsapp_pending_orders_open_draft
+  ON whatsapp_pending_orders(conversation_id) WHERE status = 'draft';
+CREATE INDEX idx_whatsapp_pending_orders_status ON whatsapp_pending_orders(status);
+
+-- شكوى عميل جاية من واتساب - بتتسجل فورًا وقت ما العميل يشتكي (مستقلة عن أي رد آلي بيتبعتله) عشان
+-- فريق حقيقي يقدر يتابعها، حتى لو مفيش رقم طلب واضح مربوط بيها (order_id اختياري عمدًا)
+CREATE TABLE whatsapp_complaints (
+  id                SERIAL PRIMARY KEY,
+  conversation_id   INTEGER NOT NULL REFERENCES whatsapp_conversations(id) ON DELETE CASCADE,
+  customer_phone    TEXT NOT NULL,
+  order_id          INTEGER REFERENCES orders(id),
+  category          TEXT NOT NULL DEFAULT 'other' CHECK (category IN ('late_order', 'wrong_item', 'quality', 'other')),
+  description       TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved')),
+  resolution_notes  TEXT,
+  assigned_to       INTEGER REFERENCES users(id),
+  resolved_by       INTEGER REFERENCES users(id),
+  resolved_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_whatsapp_complaints_status ON whatsapp_complaints(status);
+CREATE INDEX idx_whatsapp_complaints_order ON whatsapp_complaints(order_id);
