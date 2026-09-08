@@ -78,6 +78,30 @@
   #bootStatus .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; text-align: center; }
   #bootStatus .box.error { border-color: var(--red); }
   #bootStatus button { margin-top: 10px; padding: 8px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+
+  /* المرحلة 8.45: مودال مراجعة شيفت مفصّل - بديل الـprompt() الخام القديم */
+  .modalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; z-index: 70; overflow-y: auto; padding: 30px 12px; }
+  .modalOverlay.hidden { display: none; }
+  .modalBox { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: 100%; max-width: 780px; }
+  .modalBox h2 { margin: 0 0 4px; font-size: 17px; color: var(--gold-bright); }
+  .modalBox h3 { margin: 18px 0 8px; font-size: 13px; color: var(--faint); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  .modalClose { float: left; background: none; border: none; color: var(--faint); font-size: 20px; cursor: pointer; line-height: 1; }
+  .reviewGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 10px 0; }
+  .reviewGrid .cell { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .reviewGrid .cell .lbl { font-size: 11px; color: var(--faint); }
+  .reviewGrid .cell .val { font-size: 14px; font-weight: 800; margin-top: 2px; }
+  .miniTable { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .miniTable th, .miniTable td { padding: 5px 6px; text-align: right; border-bottom: 1px solid var(--line); }
+  .miniTable th { color: var(--faint); font-weight: 700; }
+  .missedForm { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; background: var(--bg-alt); border: 1px dashed var(--line); border-radius: 8px; padding: 10px; margin-top: 8px; }
+  .missedForm select, .missedForm input { background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 7px 8px; font-size: 12px; }
+  .missedForm input[type="number"] { width: 100px; }
+  .missedForm input[type="text"] { flex: 1; min-width: 120px; }
+  .reviewActions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .reviewActions button { padding: 10px 16px; border: none; border-radius: 8px; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .reviewActions .btnApprove { background: var(--red); color: #fff; }
+  .reviewActions .btnAck { background: var(--green); color: #fff; }
+  .reviewActions .btnCancel { background: transparent; border: 1px solid var(--line); color: var(--faint); }
 </style>
 </head>
 <body>
@@ -700,6 +724,11 @@
 <div id="accessDenied" style="display:none">مفيش صلاحية على الحساب ده.</div>
 <div id="bootStatus" style="display:none"></div>
 
+<!-- المرحلة 8.45: مودال مراجعة شيفت تفصيلي (خزينة + طلبات + مصروفات + مشتريات + إضافة بند منسي) -->
+<div id="reviewModalOverlay" class="modalOverlay hidden">
+  <div class="modalBox" id="reviewModalBox">جاري التحميل...</div>
+</div>
+
 <script src="/js/print-reports.js"></script>
 <script>
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
@@ -1217,28 +1246,159 @@ document.getElementById("shiftsBranchSelect").onchange = loadShifts;
 document.getElementById("shiftsStatusFilter").onchange = loadShifts;
 document.getElementById("shiftsRefresh").onclick = loadShifts;
 
+// المرحلة 8.45: مودال مراجعة شيفت تفصيلي - بديل الـprompt() الخام القديم. بيعرض الخزينة/الطلبات/
+// المصروفات/المشتريات النقدية جوه نافذة الشيفت بالظبط (نفس نافذة computeShiftFinancials)، وبيدّي المدير
+// فرصة يسجل بند نسيه الكاشير (POST /:id/missed-entry) قبل ما يقرر اعتماد/إقرار الفرق النهائي
+function closeReviewModal() {
+  document.getElementById("reviewModalOverlay").classList.add("hidden");
+}
+
 async function reviewShift(shiftId) {
-  // المرحلة 8.6: "approve" دلوقتي بيترتب عليه فعليًا إما سلفة حقيقية على الكاشير (لو عجز - بتتخصم من
-  // صافي راتبه في التشغيلة الجاية) أو ترحيل الزيادة كإيراد آخر - القرار ده مش شكلي، لازم المراجع يفهمه
-  const decision = prompt(
-    'اكتب "approve" لو الفرق ده هيترتب عليه إجراء فعلي (عجز = سلفة حقيقية على الكاشير تتخصم من راتبه، زيادة = إيراد للفرع)، أو "acknowledge" لو تحققت من السبب واقتنعت بيه من غير أي إجراء مالي:',
-    "acknowledge"
-  );
-  if (!decision) return;
-  const trimmed = decision.trim();
-  if (!["approve", "acknowledge"].includes(trimmed)) {
-    alert('القيمة لازم تكون approve أو acknowledge بالظبط');
+  document.getElementById("reviewModalOverlay").classList.remove("hidden");
+  await renderReviewModal(shiftId);
+}
+
+async function renderReviewModal(shiftId) {
+  const box = document.getElementById("reviewModalBox");
+  box.innerHTML = "جاري التحميل...";
+  let detail;
+  try {
+    detail = await api(`/api/shifts/${shiftId}/review-detail`);
+  } catch (e) {
+    box.innerHTML = `<button class="modalClose" onclick="closeReviewModal()">✕</button><div class="err">${e.message}</div>`;
     return;
   }
-  const notes = prompt("ملاحظات المراجعة (اختياري):") || "";
+  const s = detail.shift;
+  const fl = detail.financialsLive;
+  const isPending = s.status === "PENDING_REVIEW";
+  let activeCats = [];
+  if (isPending) {
+    try { activeCats = (await api("/api/expenses/categories")).filter(c => c.is_active); } catch (e) { /* الفورم هيوضّح الخطأ لو حد اختار مصروف من غير بنود */ }
+  }
+
+  const ordersRows = detail.orders.map(o => `
+    <tr>
+      <td>#${o.id}</td><td>${o.order_type}</td><td>${o.source}</td>
+      <td>${money(o.total)}</td><td>${o.payment_status}</td>
+      <td>${o.voided ? "ملغي" : "—"}</td>
+      <td>${new Date(o.created_at).toLocaleString("ar-EG")}</td>
+    </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--faint)">مفيش طلبات مرتبطة</td></tr>`;
+
+  const expensesRows = detail.expenses.map(e => `
+    <tr><td>${e.category_name}</td><td>${money(e.amount)}</td><td>${e.notes || "—"}</td>
+      <td>${new Date(e.posted_at || e.created_at).toLocaleString("ar-EG")}</td></tr>`).join("")
+    || `<tr><td colspan="4" style="text-align:center;color:var(--faint)">مفيش مصروفات نقدية جوه نافذة الشيفت</td></tr>`;
+
+  const purchasesRows = detail.purchases.map(p => `
+    <tr><td>${p.category || "—"}</td><td>${money(p.amount)}</td><td>${p.notes || "—"}</td>
+      <td>${new Date(p.created_at).toLocaleString("ar-EG")}</td></tr>`).join("")
+    || `<tr><td colspan="4" style="text-align:center;color:var(--faint)">مفيش مشتريات نقدية جوه نافذة الشيفت</td></tr>`;
+
+  const varianceClass = fl.cashVariance != null && Number(fl.cashVariance) < 0 ? "diffneg" : "diffpos";
+
+  box.innerHTML = `
+    <button class="modalClose" onclick="closeReviewModal()">✕</button>
+    <h2>مراجعة شيفت #${s.id} — ${s.cashier_name}</h2>
+    <div style="font-size:11px;color:var(--faint)">فتح ${new Date(s.opened_at).toLocaleString("ar-EG")} — قفل ${s.closed_at ? new Date(s.closed_at).toLocaleString("ar-EG") : "—"}</div>
+
+    <div class="reviewGrid">
+      <div class="cell"><div class="lbl">افتتاحي</div><div class="val">${money(s.opening_cash)}</div></div>
+      <div class="cell"><div class="lbl">مبيعات كاش</div><div class="val">${money(fl.cashSales)}</div></div>
+      <div class="cell"><div class="lbl">مبيعات كارت</div><div class="val">${money(fl.cardSales)}</div></div>
+      <div class="cell"><div class="lbl">مرتجعات كاش</div><div class="val">${money(fl.cashRefunds)}</div></div>
+      <div class="cell"><div class="lbl">مصروفات كاش</div><div class="val">${money(fl.cashExpensesTotal)}</div></div>
+      <div class="cell"><div class="lbl">مشتريات كاش</div><div class="val">${money(fl.cashPurchasesTotal)}</div></div>
+      <div class="cell"><div class="lbl">متوقع (محدّث)</div><div class="val">${money(fl.expectedCash)}</div></div>
+      <div class="cell"><div class="lbl">فعلي (معدود)</div><div class="val">${moneyOrNA(s.actual_cash)}</div></div>
+      <div class="cell"><div class="lbl">الفرق الحالي</div><div class="val ${varianceClass}">${fl.cashVariance != null ? money(fl.cashVariance) : "—"}</div></div>
+      <div class="cell"><div class="lbl">الحالة</div><div class="val">${shiftStatusLabel(s.status, s.variance_status)}</div></div>
+    </div>
+
+    <h3>الطلبات المرتبطة بالشيفت (${detail.orders.length})</h3>
+    <div style="max-height:160px;overflow-y:auto">
+      <table class="miniTable"><thead><tr><th>#</th><th>النوع</th><th>المصدر</th><th>الإجمالي</th><th>التحصيل</th><th>حالة</th><th>الوقت</th></tr></thead>
+      <tbody>${ordersRows}</tbody></table>
+    </div>
+
+    <h3>المصروفات النقدية جوه نافذة الشيفت (${detail.expenses.length})</h3>
+    <table class="miniTable"><thead><tr><th>البند</th><th>المبلغ</th><th>ملاحظات</th><th>الوقت</th></tr></thead>
+    <tbody>${expensesRows}</tbody></table>
+
+    <h3>المشتريات النقدية جوه نافذة الشيفت (${detail.purchases.length})</h3>
+    <table class="miniTable"><thead><tr><th>الصنف</th><th>المبلغ</th><th>ملاحظات</th><th>الوقت</th></tr></thead>
+    <tbody>${purchasesRows}</tbody></table>
+
+    ${isPending ? `
+      <h3>نسي الكاشير يسجل مصروف أو مشترى؟ سجله هنا بأثر رجعي - هيتحسب الفرق تاني فورًا</h3>
+      <div class="missedForm">
+        <select id="missedType">
+          <option value="expense">مصروف</option>
+          <option value="purchase">مشترى</option>
+        </select>
+        <select id="missedCategory">${activeCats.map(c => `<option value="${c.id}">${c.name}</option>`).join("") || `<option value="">لسه مفيش بنود مصروفات مفعّلة</option>`}</select>
+        <input id="missedAmount" type="number" min="0.01" step="0.01" placeholder="المبلغ" />
+        <input id="missedNotes" type="text" placeholder="ملاحظات (اختياري)" />
+        <button id="missedSubmitBtn">تسجيل وإعادة الحساب</button>
+      </div>
+      <div class="err" id="missedErr"></div>
+
+      <h3>القرار النهائي</h3>
+      <div style="font-size:11px;color:var(--faint);margin-bottom:6px">عجز مؤكّد (اعتماد) = سلفة حقيقية على الكاشير بتتخصم من راتبه؛ إقرار = تحققت من السبب واقتنعت بيه من غير أي إجراء مالي.</div>
+      <input id="reviewDecisionNotes" type="text" placeholder="ملاحظات المراجعة (اختياري)" style="width:100%;box-sizing:border-box;background:var(--bg-alt);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 10px;font-size:12px" />
+      <div class="reviewActions">
+        <button class="btnApprove" id="reviewApproveBtn">اعتماد (عجز = سلفة)</button>
+        <button class="btnAck" id="reviewAckBtn">إقرار (بدون إجراء مالي)</button>
+        <button class="btnCancel" onclick="closeReviewModal()">إغلاق</button>
+      </div>
+    ` : `
+      <div class="ok" style="margin-top:14px">الشيفت اتقفل تلقائيًا - الفرق بقى جوه حد الاعتماد بعد تسجيل البند المنسي.</div>
+      <div class="reviewActions"><button class="btnCancel" onclick="closeReviewModal()">إغلاق</button></div>
+    `}
+  `;
+
+  if (isPending) {
+    document.getElementById("missedType").onchange = () => {
+      document.getElementById("missedCategory").style.display = document.getElementById("missedType").value === "expense" ? "" : "none";
+    };
+    document.getElementById("missedSubmitBtn").onclick = guardedClick(document.getElementById("missedSubmitBtn"), () => submitMissedEntry(shiftId));
+    document.getElementById("reviewApproveBtn").onclick = guardedClick(document.getElementById("reviewApproveBtn"), () => submitReviewDecision(shiftId, "approve"));
+    document.getElementById("reviewAckBtn").onclick = guardedClick(document.getElementById("reviewAckBtn"), () => submitReviewDecision(shiftId, "acknowledge"));
+  }
+}
+
+async function submitMissedEntry(shiftId) {
+  const errBox = document.getElementById("missedErr");
+  errBox.textContent = "";
+  const entryType = document.getElementById("missedType").value;
+  const amount = Number(document.getElementById("missedAmount").value);
+  const categoryId = document.getElementById("missedCategory").value || undefined;
+  const notes = document.getElementById("missedNotes").value.trim() || undefined;
+  if (!(amount > 0)) { errBox.textContent = "لازم تدخل مبلغ أكبر من صفر"; return; }
+  if (entryType === "expense" && !categoryId) { errBox.textContent = "لازم تختار بند المصروف"; return; }
   try {
-    const result = await api(`/api/shifts/${shiftId}/review`, { method: "POST", body: JSON.stringify({ decision: trimmed, notes }) });
+    await api(`/api/shifts/${shiftId}/missed-entry`, {
+      method: "POST", body: JSON.stringify({ entryType, amount, categoryId, notes }),
+    });
+    await loadShifts();
+    await renderReviewModal(shiftId);
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+}
+
+async function submitReviewDecision(shiftId, decision) {
+  const notesInput = document.getElementById("reviewDecisionNotes");
+  const notes = notesInput ? notesInput.value.trim() : "";
+  try {
+    const result = await api(`/api/shifts/${shiftId}/review`, { method: "POST", body: JSON.stringify({ decision, notes }) });
     if (result.debtCreated) {
       alert(`تم تسجيل سلفة ${money(result.debtCreated.amount)} على الموظف - هتتخصم من صافي راتبه في تشغيلة الرواتب الجاية.`);
     }
+    closeReviewModal();
     await loadShifts();
   } catch (e) {
-    alert(e.message);
+    const errBox = document.getElementById("missedErr");
+    if (errBox) errBox.textContent = e.message; else alert(e.message);
   }
 }
 

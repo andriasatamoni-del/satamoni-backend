@@ -426,8 +426,153 @@ async function forceCloseShift(client, { shift, actualCash, closingNotes, closed
   return result.rows[0];
 }
 
+// المرحلة 8.45: أثناء مراجعة شيفت PENDING_REVIEW، المدير ممكن يكتشف إن الكاشير نسي يسجل مصروف أو
+// مشترى نقدي فعلي حصل أثناء الشيفت (سبب عجز/زيادة وهمي). الدالة دي بتسجل البند بأثر رجعي (created_at
+// = وقت قفل الشيفت بالظبط، عشان يقع جوه نافذة computeShiftFinancials بتاعته) وبترحّله محاسبيًا على
+// درج الكاشير نفسه (getOrCreateCashierTreasuryAccount) - مش حساب كاش الفرع الرئيسي - لأن الكاش ده
+// أصلًا خرج من الدرج ده قبل التسليم في closeShift (actualCash اللي اتسلّم وقتها كان بالفعل صافي من
+// المبلغ ده، حتى لو محدش سجله في النظام)، فالدرج لسه شايل رصيد معلّق (orphaned) بقد المبلغ ده بالظبط -
+// تسجيله دلوقتي وترحيله على نفس الدرج هو اللي بيصفّي الرصيد المعلّق ده، مش تحريك كاش فعلي جديد.
+// بعد التسجيل بيعيد حساب الفرق بنفس نافذة القفل الأصلية [opened_at, closed_at] (مش "دلوقتي") ويحدّث
+// أعمدة الشيفت المجمّدة، وبيقفل الشيفت تلقائيًا (زي أي تسوية عادية) لو الفرق الجديد بقى جوه حد الاعتماد
+async function addMissedCashEntryAndRecalculate(client, { shift, entryType, amount, categoryId, notes, actorId, thresholds }) {
+  if (shift.status !== "PENDING_REVIEW") {
+    const err = new Error("الشيفت ده مش في حالة انتظار مراجعة");
+    err.code = "SHIFT_NOT_PENDING_REVIEW";
+    throw err;
+  }
+  if (!["expense", "purchase"].includes(entryType)) {
+    const err = new Error("نوع البند لازم يكون مصروف أو مشترى");
+    err.code = "INVALID_ENTRY_TYPE";
+    throw err;
+  }
+  const amt = Number(amount);
+  if (!(amt > 0)) {
+    const err = new Error("المبلغ لازم يكون أكبر من صفر");
+    err.code = "INVALID_AMOUNT";
+    throw err;
+  }
+
+  const backdatedAt = new Date(shift.closed_at);
+  const businessDate = backdatedAt.toISOString().slice(0, 10);
+  const cashierAccount = await getOrCreateCashierTreasuryAccount(client, { branchId: shift.branch_id, userId: shift.user_id });
+
+  let createdEntry;
+  if (entryType === "expense") {
+    if (!categoryId) {
+      const err = new Error("لازم تختار بند المصروف");
+      err.code = "CATEGORY_REQUIRED";
+      throw err;
+    }
+    const categoryRes = await client.query("SELECT id, account_id, name FROM expense_categories WHERE id = $1", [categoryId]);
+    if (categoryRes.rows.length === 0) {
+      const err = new Error("بند المصروف ده مش موجود");
+      err.code = "CATEGORY_NOT_FOUND";
+      throw err;
+    }
+    const category = categoryRes.rows[0];
+    const debitAccount = category.account_id
+      ? (await client.query("SELECT * FROM accounts WHERE id = $1", [category.account_id])).rows[0]
+      : await getAccountByCode(client, "6900");
+    const cashPm = await client.query("SELECT id FROM payment_methods WHERE kind = 'cash' AND enabled = TRUE ORDER BY id LIMIT 1");
+    if (cashPm.rows.length === 0) {
+      const err = new Error("مفيش طريقة دفع كاش مفعّلة في النظام");
+      err.code = "NO_CASH_PAYMENT_METHOD";
+      throw err;
+    }
+
+    const inserted = await client.query(
+      `INSERT INTO expenses (branch_id, business_date, category_id, amount, notes, payment_method_id, status, created_by, created_at, posted_by, posted_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'POSTED',$7,$8,$7,$8) RETURNING *`,
+      [shift.branch_id, businessDate, categoryId, amt, notes || null, cashPm.rows[0].id, actorId, backdatedAt]
+    );
+    createdEntry = inserted.rows[0];
+
+    const je = await postJournalEntry(client, {
+      entryDate: businessDate,
+      description: `مصروف منسي اتكشف في مراجعة شيفت #${shift.id}: ${category.name}`,
+      sourceType: "expense", sourceId: createdEntry.id, branchId: shift.branch_id,
+      lines: [
+        { accountId: debitAccount.id, debit: amt },
+        { accountId: cashierAccount.id, credit: amt },
+      ],
+      idempotencyKey: `expense-${createdEntry.id}`, userId: actorId,
+    });
+    await client.query("UPDATE expenses SET journal_entry_id = $1 WHERE id = $2", [je.entry.id, createdEntry.id]);
+    createdEntry = { ...createdEntry, journal_entry_id: je.entry.id, category_name: category.name };
+  } else {
+    const inventoryAccount = await getAccountByCode(client, "1400");
+    const inserted = await client.query(
+      `INSERT INTO purchases (branch_id, business_date, category, amount, notes, status, created_by, created_at)
+       VALUES ($1,$2,$3,$4,$5,'CONFIRMED',$6,$7) RETURNING *`,
+      [shift.branch_id, businessDate, "مشترى منسي (مراجعة شيفت)", amt, notes || null, actorId, backdatedAt]
+    );
+    createdEntry = inserted.rows[0];
+
+    const je = await postJournalEntry(client, {
+      entryDate: businessDate,
+      description: `مشترى منسي اتكشف في مراجعة شيفت #${shift.id}`,
+      sourceType: "purchase", sourceId: createdEntry.id, branchId: shift.branch_id,
+      lines: [
+        { accountId: inventoryAccount.id, debit: amt },
+        { accountId: cashierAccount.id, credit: amt },
+      ],
+      idempotencyKey: `purchase-missed-${createdEntry.id}`, userId: actorId,
+    });
+    await client.query("UPDATE purchases SET posted_to_inventory = TRUE WHERE id = $1", [createdEntry.id]);
+    createdEntry = { ...createdEntry, journal_entry_id: je.entry.id, posted_to_inventory: true };
+  }
+
+  const financials = await computeShiftFinancials(client, {
+    shiftId: shift.id, branchId: shift.branch_id, openedAt: shift.opened_at, toTs: shift.closed_at,
+  });
+  const expectedCash = calcExpectedCash({
+    openingCash: shift.opening_cash, cashSales: financials.cashSales,
+    cashRefunds: financials.cashRefunds, cashExpensesTotal: financials.cashExpensesTotal,
+    cashPurchasesTotal: financials.cashPurchasesTotal,
+  });
+  const cashVariance = Number(shift.actual_cash) - expectedCash;
+  const varianceStatus = classifyVariance(cashVariance, thresholds);
+  const resolved = varianceStatus === "NONE";
+  const newStatus = resolved ? "CLOSED" : "PENDING_REVIEW";
+
+  const updated = await client.query(
+    `UPDATE pos_shifts SET
+       status = $1, expected_cash = $2, cash_variance = $3, variance_status = $4,
+       cash_sales = $5, card_sales = $6, other_sales = $7, cash_refunds = $8,
+       discounts_total = $9, cash_expenses_total = $10, order_count = $11, void_count = $12,
+       cash_purchases_total = $13, updated_at = now()
+     WHERE id = $14
+     RETURNING *`,
+    [
+      newStatus, expectedCash, cashVariance, varianceStatus,
+      financials.cashSales, financials.cardSales, financials.otherSales, financials.cashRefunds,
+      financials.discountsTotal, financials.cashExpensesTotal, financials.orderCount, financials.voidCount,
+      financials.cashPurchasesTotal, shift.id,
+    ]
+  );
+  let updatedShift = updated.rows[0];
+
+  if (resolved && cashVariance !== 0) {
+    await postVarianceWriteoffEntry(client, { shift: updatedShift, cashVariance, actorId });
+  }
+
+  await logAudit(client, {
+    branchId: shift.branch_id, userId: actorId, action: "SHIFT_MISSED_ENTRY_ADDED",
+    entityType: "pos_shift", entityId: shift.id,
+    oldValues: { cashVariance: Number(shift.cash_variance), status: shift.status },
+    newValues: {
+      entryType, amount: amt, entryId: createdEntry.id,
+      oldCashVariance: Number(shift.cash_variance), newCashVariance: cashVariance,
+      newStatus, resolved,
+    },
+  });
+
+  return { shift: updatedShift, entry: createdEntry, resolved };
+}
+
 module.exports = {
   computeShiftFinancials, calcExpectedCash, classifyVariance,
   openShift, previewExpectedCash, closeShift, reviewShiftVariance, forceCloseShift,
-  sanitizeShiftForCashier,
+  sanitizeShiftForCashier, addMissedCashEntryAndRecalculate,
 };
