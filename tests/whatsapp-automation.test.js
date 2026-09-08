@@ -172,6 +172,23 @@ describe("دورة حياة الطلب المعلّق", () => {
   });
 });
 
+describe("PATCH /api/pos-settings - whatsapp_bot_enabled", () => {
+  afterEach(async () => {
+    await pool.query("UPDATE pos_settings SET whatsapp_bot_enabled = FALSE WHERE id = 1");
+  });
+
+  it("أدمن يقدر يفعّل/يعطّل بوت واتساب من غير Shell", async () => {
+    const res = await request(app).patch("/api/pos-settings").set(authed(adminToken)).send({ whatsappBotEnabled: true });
+    expect(res.status).toBe(200);
+    expect(res.body.whatsapp_bot_enabled).toBe(true);
+  });
+
+  it("كول سنتر معندوش صلاحية يفعّل البوت (أدمن بس)", async () => {
+    const res = await request(app).patch("/api/pos-settings").set(authed(callcenterToken)).send({ whatsappBotEnabled: true });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe("دورة حياة الشكاوى", () => {
   it("تسجيل شكوى وحلها", async () => {
     const phone = nextPhone();
