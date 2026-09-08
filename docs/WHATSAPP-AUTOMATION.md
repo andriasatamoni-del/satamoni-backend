@@ -75,11 +75,24 @@ Render (`WHATSAPP_PHONE_NUMBER_ID` و`WHATSAPP_ACCESS_TOKEN` بقيم الرقم
 كل المتغيرات فوق بتتحط في إعدادات البيئة بتاعة السيرفر (Render أو غيره - زي `DATABASE_URL` بالظبط).
 بعد كده، البوت لسه معطّل افتراضيًا لحد ما تفعّله صراحة:
 
+أسهل طريقة (من غير Shell أو أي وصول لقاعدة البيانات) - من متصفحك وإنت داخل كأدمن على أي صفحة من
+صفحات النظام (`satamoni-staging.onrender.com`)، افتح أدوات المطور (F12) → تبويب **Console** والصق:
+
+```js
+fetch("/api/pos-settings", {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionStorage.getItem("satamoni_token") },
+  body: JSON.stringify({ whatsappBotEnabled: true }),
+}).then((r) => r.json()).then(console.log);
+```
+
+أو عن طريق قاعدة البيانات مباشرة (لو عندك وصول Shell/psql):
+
 ```sql
 UPDATE pos_settings SET whatsapp_bot_enabled = TRUE WHERE id = 1;
 ```
 
-(هيتضاف toggle من لوحة الإعدادات لاحقًا - دلوقتي عن طريق قاعدة البيانات مباشرة أو `PATCH /api/pos-settings`).
+(هيتضاف toggle من لوحة الإعدادات لاحقًا).
 
 ## 5) مراجعة الطلبات والشكاوى
 
