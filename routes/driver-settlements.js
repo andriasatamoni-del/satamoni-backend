@@ -5,7 +5,7 @@ const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission, hasPermission } = require("../middleware/permissions");
-const { computeDriverUnsettledSummary, createSettlement, reviewSettlement } = require("../db/delivery-engine");
+const { computeDriverUnsettledSummary, createSettlement, reviewSettlement, calcDriverOrderBonus } = require("../db/delivery-engine");
 
 router.use(requireAuth);
 
@@ -49,6 +49,35 @@ router.get("/preview", async (req, res) => {
   }
 });
 
+// المرحلة 8.46: GET /api/driver-settlements/pending-drivers?branchId= - السائقين اللي عندهم كاش معلّق
+// تسوية دلوقتي في الفرع بس (مش كل سائقي الفرع) - عشان شاشة "تحصيل مجمع" عند الكاشير تعرض قايمة قصيرة
+// ذات صلة بدل ما تسرد كل السائقين وتخليه يدور. نفس صلاحيات المعاينة بالظبط (driver_settlements.create
+// أو .review) - الكاشير هيبقى عنده create بس، وده كافي
+router.get("/pending-drivers", async (req, res) => {
+  const branchId = req.query.branchId || req.user.branchId;
+  if (!branchId) return res.status(400).json({ error: "لازم تحدد الفرع" });
+  if (!hasPermission(req.user.role, "driver_settlements.create") && !hasPermission(req.user.role, "driver_settlements.review")) {
+    return res.status(403).json({ error: "معندكش صلاحية تشوف تسويات السائقين" });
+  }
+  if (!assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+  try {
+    const result = await pool.query(
+      `SELECT d.id, d.name, d.driver_code, COUNT(o.id)::int AS pending_order_count,
+              COALESCE(SUM(o.collected_amount), 0) AS pending_cash
+       FROM drivers d
+       JOIN orders o ON o.driver_id = d.id
+       JOIN payment_methods pm ON pm.id = o.payment_method_id
+       WHERE d.branch_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL AND pm.kind = 'cash'
+       GROUP BY d.id, d.name, d.driver_code
+       ORDER BY d.name`,
+      [branchId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/driver-settlements - {driverId, actualHandover, notes?}
 router.post("/", requirePermission("driver_settlements.create"), async (req, res) => {
   const { driverId, actualHandover, notes } = req.body;
@@ -69,7 +98,7 @@ router.post("/", requirePermission("driver_settlements.create"), async (req, res
     const thresholds = await getThresholds(client);
     const settlement = await createSettlement(client, {
       driverId, branchId: driver.branch_id, settledByUserId: req.user.id,
-      actualHandover: Number(actualHandover), notes, thresholds,
+      actualHandover: Number(actualHandover), notes, thresholds, driverEmployeeId: driver.employee_id,
     });
     await client.query("COMMIT");
     res.status(201).json(settlement);
@@ -136,11 +165,15 @@ router.get("/:id", async (req, res) => {
     } else if (!assertOwnBranch(req.user, settlement.branch_id)) {
       return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
     }
+    // المرحلة 8.46: delivery_fee لكل طلب اتضافت هنا عشان الإيصال/التقرير يقدر يعرض البونص المحسوب لكل
+    // طلب (calcDriverOrderBonus) - نفس منطق التسوية بالظبط، محسوب لايف من delivery_fee مش مخزّن مكرر
     const orders = await pool.query(
-      `SELECT id, total, collected_amount, collection_variance, delivered_at FROM orders WHERE driver_settlement_id = $1 ORDER BY delivered_at`,
+      `SELECT id, total, collected_amount, collection_variance, delivery_fee, delivered_at
+       FROM orders WHERE driver_settlement_id = $1 ORDER BY delivered_at`,
       [req.params.id]
     );
-    res.json({ ...settlement, orders: orders.rows });
+    const ordersWithBonus = orders.rows.map((o) => ({ ...o, bonus: calcDriverOrderBonus(o.delivery_fee || 0) }));
+    res.json({ ...settlement, orders: ordersWithBonus });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

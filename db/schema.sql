@@ -592,6 +592,15 @@ CREATE TABLE driver_settlements (
   variance_reviewed_at   TIMESTAMPTZ,
   variance_review_notes  TEXT,
   notes                  TEXT,
+  -- المرحلة 8.46: بونص التوصيل التلقائي للسائق - 5 جنيه لكل طلب خدمة توصيله أقل من 40 جنيه، 10 جنيه
+  -- لو 40 جنيه أو أكتر (calcDriverOrderBonus في db/delivery-engine.js). bonus_total مجموع البونص على
+  -- كل طلبات الدفعة دي - محسوب ومجمّد وقت التسوية زي باقي أرقامها. bonus_payroll_adjustment_id بيربط
+  -- بقيد payroll_adjustments (adjustment_type='bonus') اللي اتسجل فعليًا للسائق - بيفضل NULL لو السائق
+  -- مالوش employee_id مرتبط بعد (البونص لسه محسوب ومسجّل هنا للتقرير، بس محتاج ربط موظف يدوي بعدين
+  -- عشان يترحّل فعليًا في الرواتب - مفيش قفل للتسوية نفسها بسبب كده، زي نمط "مفيش ملف موظف" في shift-engine.js)
+  bonus_total               NUMERIC NOT NULL DEFAULT 0,
+  -- bonus_payroll_adjustment_id: payroll_adjustments معرّف بعد كدة في الملف - الـFK بيتضاف بـALTER TABLE هناك
+  bonus_payroll_adjustment_id INTEGER,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1632,6 +1641,10 @@ CREATE TABLE payroll_adjustments (
   -- من غير تكرار أرقام الكاش المتوقع/الفعلي/الفرق (موجودين أصلًا على pos_shifts، بيوصلهم بالـjoin)
   shift_id        INTEGER REFERENCES pos_shifts(id)
 );
+
+-- المرحلة 8.46: ربط تسوية كاش سائق ببونص التوصيل اللي اتسجل فعليًا للسائق (لو كان عنده employee_id مرتبط)
+ALTER TABLE driver_settlements ADD CONSTRAINT fk_driver_settlements_bonus_adjustment
+  FOREIGN KEY (bonus_payroll_adjustment_id) REFERENCES payroll_adjustments(id);
 
 -- مبيعات كل قسم في كل فرع شهريًا (لمقارنة تكلفة الرواتب بالمبيعات في لوحة التحكم)
 CREATE TABLE department_sales (

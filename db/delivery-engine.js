@@ -12,6 +12,13 @@ const {
   postJournalEntry, getOrCreateBranchCashAccount, getOrCreateDriverCustodyAccount, getAccountByCode,
 } = require("./accounting-engine");
 
+// المرحلة 8.46: بونص التوصيل التلقائي للسائق - 5 جنيه لكل طلب خدمة توصيله أقل من 40 جنيه، 10 جنيه لو
+// 40 جنيه أو أكتر. سياسة ثابتة (مش إعداد قابل للتعديل من pos_settings) بناءً على طلب صريح - لو احتاجت
+// تتغيّر لاحقًا لأرقام مختلفة حسب الفرع/الوقت، ده المكان الوحيد اللي محتاج يتعدّل
+function calcDriverOrderBonus(deliveryFee) {
+  return Number(deliveryFee) >= 40 ? 10 : 5;
+}
+
 const ASSIGNABLE_DRIVER_STATUSES = ["AVAILABLE", "BUSY"];
 const FAILURE_REASONS = ["CUSTOMER_UNREACHABLE", "CUSTOMER_REFUSED", "WRONG_ADDRESS", "CLOSED_LOCATION", "OTHER"];
 
@@ -219,17 +226,29 @@ async function rescheduleFailed(client, { order, actorUserId }) {
 // المعاينة قبل التسوية وفي التسوية نفسها (بيتجمّد وقتها)
 async function computeDriverUnsettledSummary(client, driverId) {
   const res = await client.query(
-    `SELECT o.id, o.total, o.collected_amount, o.delivery_fee
+    `SELECT o.id, o.total, o.collected_amount, o.delivery_fee, o.delivered_at
      FROM orders o
      JOIN payment_methods pm ON pm.id = o.payment_method_id
-     WHERE o.driver_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL AND pm.kind = 'cash'`,
+     WHERE o.driver_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL AND pm.kind = 'cash'
+     ORDER BY o.delivered_at`,
     [driverId]
   );
-  const orders = res.rows;
-  const codExpected = orders.reduce((s, o) => s + Number(o.total), 0);
-  const codCollected = orders.reduce((s, o) => s + Number(o.collected_amount || 0), 0);
-  const deliveryFeesTotal = orders.reduce((s, o) => s + Number(o.delivery_fee || 0), 0);
+  // المرحلة 8.46: تفصيل كل طلب على حدة (مش مجاميع بس) - عشان شاشة التحصيل المجمّع للكاشير تقدر تعرض
+  // خدمة توصيل + بونص كل طلب قبل التحصيل، ونفس التفصيل ده هو التقرير/الإيصال بعد التحصيل مباشرة
+  const orders = res.rows.map((o) => ({
+    id: o.id,
+    total: Number(o.total),
+    collectedAmount: o.collected_amount != null ? Number(o.collected_amount) : null,
+    deliveryFee: Number(o.delivery_fee || 0),
+    bonus: calcDriverOrderBonus(o.delivery_fee || 0),
+    deliveredAt: o.delivered_at,
+  }));
+  const codExpected = orders.reduce((s, o) => s + o.total, 0);
+  const codCollected = orders.reduce((s, o) => s + (o.collectedAmount || 0), 0);
+  const deliveryFeesTotal = orders.reduce((s, o) => s + o.deliveryFee, 0);
+  const bonusTotal = orders.reduce((s, o) => s + o.bonus, 0);
   return {
+    orders,
     orderIds: orders.map((o) => o.id),
     orderCount: orders.length,
     codExpected,
@@ -237,6 +256,7 @@ async function computeDriverUnsettledSummary(client, driverId) {
     codVariance: Math.round((codCollected - codExpected) * 100) / 100,
     deliveryFeesTotal,
     expectedHandover: codCollected,
+    bonusTotal,
   };
 }
 
@@ -248,7 +268,7 @@ function classifySettlementVariance(variance, { ackThreshold }) {
 // صفوف الطلبات المرشحة (FOR UPDATE OF o) قبل إعادة حساب الملخص - لو تسوية تانية بدأت في نفس اللحظة
 // هتستنى القفل ده، وبعد ما الأولى تعمل commit (وتحدد driver_settlement_id للطلبات) هتلاقي مفيش طلبات
 // معلّقة خالص فتاخد NOTHING_TO_SETTLE بدل ما تمسك نفس الطلبات تاني
-async function createSettlement(client, { driverId, branchId, settledByUserId, actualHandover, notes, thresholds }) {
+async function createSettlement(client, { driverId, branchId, settledByUserId, actualHandover, notes, thresholds, driverEmployeeId }) {
   const lockRes = await client.query(
     `SELECT o.id FROM orders o JOIN payment_methods pm ON pm.id = o.payment_method_id
      WHERE o.driver_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL AND pm.kind = 'cash'
@@ -269,19 +289,53 @@ async function createSettlement(client, { driverId, branchId, settledByUserId, a
   const inserted = await client.query(
     `INSERT INTO driver_settlements
       (driver_id, branch_id, settled_by, order_count, cod_expected, cod_collected, cod_variance,
-       delivery_fees_total, expected_handover, actual_handover, handover_variance, variance_status, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       delivery_fees_total, expected_handover, actual_handover, handover_variance, variance_status, notes, bonus_total)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      RETURNING *`,
     [driverId, branchId, settledByUserId, summary.orderCount, summary.codExpected, summary.codCollected,
      summary.codVariance, summary.deliveryFeesTotal, summary.expectedHandover, actualHandoverVal,
-     handoverVariance, varianceStatus, notes || null]
+     handoverVariance, varianceStatus, notes || null, summary.bonusTotal]
   );
-  const settlement = inserted.rows[0];
+  let settlement = inserted.rows[0];
 
   await client.query(
     `UPDATE orders SET driver_settlement_id = $1 WHERE id = ANY($2::int[])`,
     [settlement.id, summary.orderIds]
   );
+
+  // المرحلة 8.46: بونص التوصيل بيترحّل كـpayroll_adjustments (adjustment_type='bonus') بس لو السائق ده
+  // عنده ملف موظف مربوط فعليًا (drivers.employee_id) - مش كل السائقين بالضرورة عندهم واحد. لو مفيش،
+  // البونص بيفضل محسوب ومسجّل على التسوية نفسها (bonus_total، للتقرير/الإيصال) من غير ما يترحّل فعليًا
+  // في الرواتب - بيتسجل صراحة في الـaudit للمتابعة اليدوية، بدل ما يمنع التحصيل نفسه (زي نمط "مفيش ملف
+  // موظف" بالظبط في reviewShiftVariance بـdb/shift-engine.js)
+  if (summary.bonusTotal > 0) {
+    const employeeRes = driverEmployeeId
+      ? await client.query("SELECT id, name FROM employees WHERE id = $1", [driverEmployeeId])
+      : { rows: [] };
+    if (employeeRes.rows.length === 0) {
+      await logAudit(client, {
+        branchId, userId: settledByUserId, action: "DRIVER_BONUS_SKIPPED_NO_EMPLOYEE",
+        entityType: "driver_settlement", entityId: settlement.id,
+        newValues: { driverId, bonusTotal: summary.bonusTotal },
+      });
+    } else {
+      const employee = employeeRes.rows[0];
+      const adjustment = await client.query(
+        `INSERT INTO payroll_adjustments (employee_id, entry_date, adjustment_type, amount, notes, created_by)
+         VALUES ($1, CURRENT_DATE, 'bonus', $2, $3, $4) RETURNING *`,
+        [employee.id, summary.bonusTotal, `بونص توصيل - تسوية سائق #${settlement.id} - ${summary.orderCount} طلب`, settledByUserId]
+      );
+      const updatedSettlement = await client.query(
+        `UPDATE driver_settlements SET bonus_payroll_adjustment_id = $1 WHERE id = $2 RETURNING *`,
+        [adjustment.rows[0].id, settlement.id]
+      );
+      settlement = updatedSettlement.rows[0];
+      await logAudit(client, {
+        branchId, userId: settledByUserId, action: "DRIVER_BONUS_POSTED", entityType: "payroll_adjustment", entityId: adjustment.rows[0].id,
+        newValues: { driverId, employeeId: employee.id, settlementId: settlement.id, bonusTotal: summary.bonusTotal },
+      });
+    }
+  }
 
   const custodyAccount = await getOrCreateDriverCustodyAccount(client, driverId);
   const branchCashAccount = await getOrCreateBranchCashAccount(client, branchId);
@@ -343,5 +397,5 @@ async function reviewSettlement(client, { settlement, reviewerId, decision, note
 module.exports = {
   FAILURE_REASONS,
   assignDriver, unassignDriver, markOutForDelivery, markDelivered, markFailed, rescheduleFailed,
-  computeDriverUnsettledSummary, createSettlement, reviewSettlement,
+  computeDriverUnsettledSummary, createSettlement, reviewSettlement, calcDriverOrderBonus,
 };
