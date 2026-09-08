@@ -4,7 +4,7 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission, hasPermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
-const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
+const { postJournalEntry, reverseJournalEntry, getAccountByCode, resolveCashCreditAccount } = require("../db/accounting-engine");
 
 const canManage = requireRole("admin", "accountant", "branch_manager");
 
@@ -28,10 +28,10 @@ async function postExpenseJournalEntry(client, expense, userId) {
   } else if (expense.payment_method_id) {
     const pm = await client.query("SELECT kind FROM payment_methods WHERE id = $1", [expense.payment_method_id]);
     creditAccount = pm.rows[0]?.kind === "cash"
-      ? await getOrCreateBranchCashAccount(client, expense.branch_id)
+      ? await resolveCashCreditAccount(client, { branchId: expense.branch_id, createdByUserId: expense.created_by })
       : await getAccountByCode(client, "1200");
   } else {
-    creditAccount = await getOrCreateBranchCashAccount(client, expense.branch_id);
+    creditAccount = await resolveCashCreditAccount(client, { branchId: expense.branch_id, createdByUserId: expense.created_by });
   }
 
   const je = await postJournalEntry(client, {

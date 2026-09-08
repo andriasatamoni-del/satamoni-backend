@@ -5,7 +5,7 @@ const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/aut
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
-const { postJournalEntry, getAccountByCode, getOrCreateBranchCashAccount } = require("../db/accounting-engine");
+const { postJournalEntry, getAccountByCode, resolveCashCreditAccount } = require("../db/accounting-engine");
 const { validateIdParam } = require("../middleware/validate-id-param");
 
 const canManage = requireRole("admin", "accountant", "branch_manager");
@@ -42,7 +42,7 @@ async function postPurchaseToInventory(client, purchase, userId, req) {
 
   if (totalValue > 0) {
     const inventoryAccount = await getAccountByCode(client, "1400");
-    const cashAccount = await getOrCreateBranchCashAccount(client, purchase.branch_id);
+    const cashAccount = await resolveCashCreditAccount(client, { branchId: purchase.branch_id, createdByUserId: purchase.created_by });
     await postJournalEntry(client, {
       entryDate: new Date().toISOString().slice(0, 10), description: `مشترى نقدي - فاتورة #${purchase.id}`,
       sourceType: "purchase", sourceId: purchase.id, branchId: purchase.branch_id,
