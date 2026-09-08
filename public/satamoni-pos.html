@@ -1303,7 +1303,17 @@ function openCloseShiftModal() {
         body: JSON.stringify({ actualCash, closingNotes: closingNotes || null }),
       });
       const closeData = await closeRes.json();
-      if (!closeRes.ok) throw new Error(closeData.error || "تعذر قفل الشيفت");
+      if (!closeRes.ok) {
+        // المرحلة 8.44: فيه طلبات لسه مفتوحة مرتبطة بالشيفت - نعرضها بدل رسالة الخطأ العادية، مع
+        // زرار "سلّم" لكل واحدة (لشيفت تاني شغال دلوقتي لو موجود) عشان الكاشير يقدر يحل المشكلة من
+        // نفس الشاشة من غير ما يفتح "الطلبات الجارية" بنفسه
+        if (closeData.code === "OPEN_ORDERS_ON_SHIFT") {
+          await renderOpenOrdersBlock(closeData.openOrders);
+          document.getElementById("shiftModalErr").textContent = closeData.error;
+          return;
+        }
+        throw new Error(closeData.error || "تعذر قفل الشيفت");
+      }
       state.shift = null;
       renderShiftPill();
       closeShiftModal();
@@ -1318,6 +1328,65 @@ function openCloseShiftModal() {
     }
   };
   document.getElementById("shiftModalOverlay").classList.add("show");
+}
+
+// المرحلة 8.44: بيبان بدل رسالة الخطأ العادية لما القفل يترفض بسبب طلبات مفتوحة مرتبطة بالشيفت - قايمة
+// الطلبات + (لو فيه شيفت تاني شغال دلوقتي في نفس الفرع) زرار "سلّم" لكل واحدة. بعد التسليم بينادي على
+// قفل الشيفت تاني لوحده - مفيش داعي الكاشير يضغط "قفل الشيفت" يدوي تاني
+async function renderOpenOrdersBlock(openOrders) {
+  let otherShifts = [];
+  try {
+    otherShifts = await fetch(`${API_BASE_URL}/api/shifts/active-others?branchId=${state.selectedBranchId}`, {
+      headers: { Authorization: `Bearer ${auth.token}` },
+    }).then((r) => (r.ok ? r.json() : []));
+  } catch (e) { /* لو فشل، هيبان بس بدون خيار تسليم - رسالة الخطأ الأساسية لسه بتوضح المشكلة */ }
+
+  const orderTypeLabelsShort = { delivery: "دليفري", takeaway: "تيك أواي", dinein: "صالة", talabat: "طلبات" };
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px";
+  wrap.innerHTML = `
+    <div style="font-weight:700;margin-bottom:6px">الطلبات اللي لازم تتقفل أو تتسلّم الأول:</div>
+    ${openOrders.map((o) => `
+      <div class="row" data-open-order="${o.id}" style="align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span>#${o.id} — ${orderTypeLabelsShort[o.order_type] || o.order_type} — ${orderStatusLabels[o.status] || o.status}</span>
+        ${otherShifts.length > 0 ? `
+          <span>
+            <select class="handoffTarget" data-order="${o.id}">
+              ${otherShifts.map((s) => `<option value="${s.id}">سلّم لـ${s.cashier_name}</option>`).join("")}
+            </select>
+            <button type="button" class="handoffBtn" data-order="${o.id}">سلّم</button>
+          </span>` : ""}
+      </div>
+    `).join("")}
+    ${otherShifts.length === 0 ? `<div style="font-size:12px;color:var(--faint)">مفيش شيفت تاني شغال دلوقتي في الفرع تسلّم له - لازم تقفل الطلبات دي (من "الطلبات الجارية") قبل ما تقدر تقفل شيفتك</div>` : ""}
+    <button type="button" id="shiftModalRetryClose" style="margin-top:8px">حاول تقفل الشيفت تاني</button>
+  `;
+  const body = document.getElementById("shiftModalBody");
+  const existing = body.querySelector("[data-open-orders-block]");
+  if (existing) existing.remove();
+  wrap.setAttribute("data-open-orders-block", "1");
+  body.appendChild(wrap);
+
+  wrap.querySelectorAll(".handoffBtn").forEach((btn) => {
+    btn.onclick = async () => {
+      const orderId = btn.dataset.order;
+      const shiftId = wrap.querySelector(`.handoffTarget[data-order="${orderId}"]`).value;
+      btn.disabled = true;
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/orders/${orderId}/shift`, {
+          method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+          body: JSON.stringify({ shiftId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "تعذر تسليم الطلب");
+        wrap.querySelector(`[data-open-order="${orderId}"]`).remove();
+      } catch (e) {
+        document.getElementById("shiftModalErr").textContent = e.message;
+        btn.disabled = false;
+      }
+    };
+  });
+  document.getElementById("shiftModalRetryClose").onclick = () => document.getElementById("shiftModalSubmit").click();
 }
 
 // ============================================================
@@ -2056,13 +2125,15 @@ async function loadActiveOrders() {
     if (ordersState.orderType) qs.set("orderType", ordersState.orderType);
     if (state.selectedBranchId) qs.set("branchId", state.selectedBranchId);
     if (ordersState.mode === "search") {
-      // بحث عن أوردر قديم - خارج نطاق الشيفت/اليوم الحالي، بس لسه مقفول على فرع الكاشير سيرفر-سايد
+      // بحث عن أوردر قديم - خارج نطاق اليوم الحالي، بس لسه مقفول على فرع الكاشير سيرفر-سايد
       if (ordersState.searchDate) qs.set("date", ordersState.searchDate);
       if (ordersState.searchOrderId) qs.set("orderId", ordersState.searchOrderId);
       if (ordersState.searchPhone) qs.set("phone", ordersState.searchPhone);
-    } else if (state.shift) {
-      qs.set("shiftId", state.shift.id);
     } else {
+      // المرحلة 8.44: كان الافتراضي بيفلتر بـshiftId (شيفت الكاشير الحالي بس) - ده كان بيخفي أي أوردر
+      // اتسجل من الكول سنتر أو الموقع (source != 'pos') تمامًا، لأن shift_id بتاعه NULL دايمًا (بيتحدد
+      // بس لطلبات POS وقت الإنشاء - راجع routes/orders.js). "الطلبات الجارية" المفروض تعرض كل أوردرات
+      // الفرع النهاردة أيًا كان مصدرها، مش أوردرات الكاشير نفسه بس - زي شاشتي الدليفري والكول سنتر بالظبط
       qs.set("date", new Date().toISOString().slice(0, 10));
     }
     const orders = await ordersApi(`/api/orders?${qs.toString()}`);

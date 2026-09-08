@@ -124,6 +124,29 @@ router.get("/", requireAuth, requirePermission("shifts.view_branch"), async (req
   }
 });
 
+// GET /api/shifts/active-others - المرحلة 8.44: باقي الشيفتات الشغالة دلوقتي في نفس الفرع (غير شيفت
+// اللي طالب هو) - اسم الكاشير بس، مفيش أرقام مالية خالص (متاحة لأي كاشير عادي - shifts.close_own -
+// عكس GET / اللي مقصورة على shifts.view_branch عمدًا لأنها بترجّع فرق كاش وسلف حساسة). الهدف الوحيد:
+// اختيار شيفت يستلّم طلب مفتوح قبل ما الكاشير الحالي يقفل شيفته (راجع PATCH /api/orders/:id/shift)
+router.get("/active-others", requireAuth, requirePermission("shifts.close_own"), async (req, res) => {
+  const branchId = req.query.branchId || req.user.branchId;
+  if (!branchId) return res.status(400).json({ error: "لازم تحدد الفرع" });
+  if (!assertOwnBranch(req.user, branchId)) {
+    return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT ps.id, u.name AS cashier_name FROM pos_shifts ps JOIN users u ON u.id = ps.user_id
+       WHERE ps.branch_id = $1 AND ps.status = 'ACTIVE' AND ps.user_id <> $2
+       ORDER BY ps.opened_at`,
+      [branchId, req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/shifts/open-all - كل الشيفتات المفتوحة (ACTIVE) دلوقتي عبر كل الفروع مع بعض - أدمن/المالك
 // بس (requireRole مباشرة زي غيرها من نقاط النهاية القاصرة على الأدمن في المشروع، مش permission string
 // جديد - شيفت مفتوح لموظف في أي فرع معلومة حساسة عبر كل الفروع، فمقصورة على الأدمن عمدًا وليست
@@ -210,6 +233,22 @@ router.post("/:id/close", requireAuth, requirePermission("shifts.close_own"), as
     if (shift.status !== "ACTIVE") {
       await client.query("ROLLBACK");
       return res.status(400).json({ error: "الشيفت ده مقفول بالفعل" });
+    }
+    // المرحلة 8.44: مينفعش الكاشير يقفل شيفته وسايب طلبات لسه مفتوحة (تحت التحضير/في الطريق) اترّبطت
+    // بيه - نفس معيار "OPEN_ORDERS" اللي تقفيل يوم الفرع بيستخدمه بالظبط (routes/branch-days.js)، بس
+    // هنا مقصور على طلبات الشيفت ده نفسه. الحل: يقفل الطلب فعليًا، أو يسلّمه لشيفت تاني شغال دلوقتي
+    // (PATCH /api/orders/:id/shift) قبل ما يقدر يقفل - مش عدد الطلبات اللي بيحدد، دي اللي بتفضل قايمة
+    const openOrders = await client.query(
+      `SELECT id, status, order_type FROM orders WHERE shift_id = $1 AND status IN ('preparing', 'out_for_delivery')`,
+      [shift.id]
+    );
+    if (openOrders.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: `فيه ${openOrders.rows.length} طلب لسه مفتوح مرتبط بالشيفت ده - لازم تقفله أو تسلّمه لشيفت تاني قبل ما تقدر تقفل شيفتك`,
+        code: "OPEN_ORDERS_ON_SHIFT",
+        openOrders: openOrders.rows,
+      });
     }
     const thresholds = await getThresholds(client);
     const closed = await closeShift(client, {

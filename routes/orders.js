@@ -1040,6 +1040,66 @@ router.patch(
   }
 );
 
+// المرحلة 8.44: تسليم طلب مفتوح من شيفت لشيفت تاني شغال - راجع routes/shifts.js (POST /:id/close) اللي
+// بيرفض قفل الشيفت لو لسه معلّق عليه طلبات مفتوحة (تحت التحضير/في الطريق). shift_id تاريخي بحت أصلًا
+// (بيتحدد وقت إنشاء الطلب بس، ومفيش أي كود تاني بيقرأه غير حساب أرقام الشيفت المالية) - فتغييره هنا آمن
+// 100%، مفيش أي أثر جانبي على منطق تاني في النظام
+router.patch(
+  "/:id/shift",
+  requireAuth,
+  requirePermission("shifts.close_own", "shifts.review"),
+  async (req, res) => {
+    const { shiftId } = req.body;
+    if (!shiftId) return res.status(400).json({ error: "لازم تحدد الشيفت اللي هيستلم الطلب" });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const orderRes = await client.query(
+        "SELECT id, branch_id, shift_id, status FROM orders WHERE id = $1 FOR UPDATE", [req.params.id]
+      );
+      if (orderRes.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلب مش موجود" }); }
+      const order = orderRes.rows[0];
+      if (!assertOwnBranch(req.user, order.branch_id)) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "معندكش صلاحية على طلب فرع تاني" });
+      }
+      const currentShiftRes = await client.query("SELECT user_id FROM pos_shifts WHERE id = $1", [order.shift_id]);
+      const isOwnShift = currentShiftRes.rows.length > 0 && currentShiftRes.rows[0].user_id === req.user.id;
+      // كاشير يقدر يسلّم طلبات شيفته هو بس - مدير الفرع/المحاسب (shifts.review) يقدر لأي شيفت في فرعهم
+      if (!isOwnShift && !["branch_manager", "accountant", "admin"].includes(req.user.role)) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "معندكش صلاحية تسلّم الطلب ده" });
+      }
+
+      const targetShiftRes = await client.query("SELECT id, branch_id, status FROM pos_shifts WHERE id = $1", [shiftId]);
+      if (targetShiftRes.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الشيفت المُستلِم مش موجود" }); }
+      const targetShift = targetShiftRes.rows[0];
+      if (targetShift.branch_id !== order.branch_id) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "الشيفت المُستلِم لازم يكون في نفس فرع الطلب" });
+      }
+      if (targetShift.status !== "ACTIVE") {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "الشيفت المُستلِم لازم يكون شغال دلوقتي" });
+      }
+
+      const result = await client.query("UPDATE orders SET shift_id = $1 WHERE id = $2 RETURNING *", [shiftId, order.id]);
+      await logAudit(client, {
+        branchId: order.branch_id, userId: req.user.id, action: "ORDER_SHIFT_REASSIGNED",
+        entityType: "order", entityId: order.id,
+        oldValues: { shiftId: order.shift_id }, newValues: { shiftId: Number(shiftId) },
+      });
+      await client.query("COMMIT");
+      res.json(result.rows[0]);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 // POST /api/orders/:id/print-bill - فاتورة صالة بطلب الجرسون (نظام الطباعة) - أي وقت قبل ما الطلب يتلغي.
 // idempotency_key ثابت لكل طلب في db/print-queue.js - ضغطة تانية على الزرار بترجع نفس صف print_jobs
 // الموجود بدل ما تنشئ واحد جديد ("مفيش فاتورة مكررة" حرفيًا زي ما اتطلب في المواصفة)

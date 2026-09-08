@@ -422,6 +422,16 @@ describe("6. مشترى الكاشير أثناء اليوم - فاتورة مو
 // تقفيل الشيفت - عدّ فئات، من غير رؤية عجز/زيادة، ثم مراجعة المدير
 // ============================================================
 describe("7. تقفيل الشيفت (عدّ فئات، الكاشير أعمى عن الفرق) + مراجعة المدير", () => {
+  // المرحلة 8.44: مينفعش تقفل شيفت وعليه طلبات لسه مفتوحة (preparing/out_for_delivery) - طلب الدليفري
+  // اللي القسم 5 فوق سابه preparing عمدًا (كان بيختبر إمكانية التعديل بس، مش دورة حياة التوصيل الكاملة)
+  // لازم يتقفل هنا الأول قبل أي محاولة تقفيل شيفت في القسم ده، وإلا القفل هيترفض بـ409 دايمًا
+  beforeAll(async () => {
+    await pool.query(
+      `UPDATE orders SET status = 'completed' WHERE shift_id = $1 AND status IN ('preparing', 'out_for_delivery')`,
+      [shiftId]
+    );
+  });
+
   test("preview الكاش المتوقع متاح للمدير بس، مش للكاشير", async () => {
     expect((await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(cashierToken))).status).toBe(403);
     const managerPreview = await request(app).get(`/api/shifts/${shiftId}/preview`).set(authed(managerToken));
