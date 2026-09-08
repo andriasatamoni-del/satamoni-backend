@@ -284,6 +284,25 @@ async function resolveCashDestinationAccount(client, { branchId, shiftId }) {
   return getOrCreateBranchCashAccount(client, branchId);
 }
 
+// المرحلة 8.45: مصروف أو مشترى نقدي سجّله كاشير (routes/expenses.js، routes/purchases.js) بيمثّل كاش
+// خرج فعليًا من درجه هو وقت التسجيل - نفس افتراض حساب كاش الشيفت (computeShiftFinancials في
+// db/shift-engine.js) اللي دايمًا بيخصم المصروفات/المشتريات النقدية من نفس الدرج اللي المبيعات بتدخله.
+// قبل المرحلة دي كانت القيود دي بترحّل على خزينة الفرع الرئيسية مباشرة بغض النظر عن مين سجّلها، فكان
+// بيفضل رصيد معلّق في درج الكاشير (المبيعات بس بتدخل، والمصروفات/المشتريات بتخرج من حساب تاني) - لحد ما
+// يتصفّى صدفة وقت مراجعة عجز/زيادة الشيفت (postVarianceWriteoffEntry في shift-engine.js). دلوقتي: لو
+// اللي سجّل القيد "كاشير" (مش مدير/محاسب بيسجّل مباشرة من حساب الفرع/الخزنة)، القيد بيروح لدرجه هو -
+// بغض النظر لو شيفته لسه شغال أو اتقفل بالفعل (المصروفات/المشتريات بتترحّل محاسبيًا بعد التسجيل بفترة -
+// resolveCashDestinationAccount مش مناسبة هنا لأنها بتفترض الترحيل بيحصل لحظيًا زي المبيعات)
+async function resolveCashCreditAccount(client, { branchId, createdByUserId }) {
+  if (createdByUserId) {
+    const creator = await client.query("SELECT role FROM users WHERE id = $1", [createdByUserId]);
+    if (creator.rows[0]?.role === "cashier") {
+      return getOrCreateCashierTreasuryAccount(client, { branchId, userId: createdByUserId });
+    }
+  }
+  return getOrCreateBranchCashAccount(client, branchId);
+}
+
 // المرحلة 8.42: حساب بنكي حقيقي جديد - يتنشئ صراحة (مش lazy زي الكاش/الدرج) لأنه مالوش هوية خارجية
 // جاهزة (زي branchId/driverId) يتحسب منها كود ثابت مقدّمًا. بنحجز id الحساب الأول (nextval) عشان نقدر
 // نبني كود فريد منه (1200-<accountId>) في نفس الإدخال - نفس فكرة الأكواد الديناميكية التانية فوق، بس
@@ -308,5 +327,5 @@ module.exports = {
   getOrCreateBranchCashAccount, getOrCreateDriverCustodyAccount, getOrCreateEmployeeReceivableAccount,
   getAccountByCode,
   ensureTreasuryRow, getOrCreateMainTreasury, getOrCreateCashierTreasuryAccount, getOrCreateCashierTreasury,
-  resolveCashDestinationAccount, createBankAccountTreasury,
+  resolveCashDestinationAccount, resolveCashCreditAccount, createBankAccountTreasury,
 };

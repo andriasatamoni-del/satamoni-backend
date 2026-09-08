@@ -10,7 +10,7 @@ const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/aut
 const { requirePermission, hasPermission } = require("../middleware/permissions");
 const {
   openShift, previewExpectedCash, closeShift, reviewShiftVariance, forceCloseShift,
-  sanitizeShiftForCashier,
+  sanitizeShiftForCashier, computeShiftFinancials, calcExpectedCash, addMissedCashEntryAndRecalculate,
 } = require("../db/shift-engine");
 const { validateIdParam } = require("../middleware/validate-id-param");
 
@@ -204,6 +204,98 @@ router.get("/:id/preview", requireAuth, requirePermission("shifts.review"), asyn
     res.json(preview);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// المرحلة 8.45: GET /api/shifts/:id/review-detail - تفاصيل كاملة لمراجعة شيفت (مدير فرع/محاسب/أدمن -
+// shifts.review) بدل الـprompt() الخام القديم: الشيفت المجمّد + تفصيل الطلبات المرتبطة به + المصروفات/
+// المشتريات النقدية اللي وقعت جوه نافذة الشيفت [opened_at, closed_at] بالظبط (نفس نافذة
+// computeShiftFinancials تمامًا) - عشان المدير يقدر يراجع كل حاجة ويكتشف لو الكاشير نسي يسجل بند
+router.get("/:id/review-detail", requireAuth, requirePermission("shifts.review"), async (req, res) => {
+  try {
+    const shiftRes = await pool.query(
+      `SELECT ps.*, u.name AS cashier_name FROM pos_shifts ps JOIN users u ON u.id = ps.user_id WHERE ps.id = $1`,
+      [req.params.id]
+    );
+    if (shiftRes.rows.length === 0) return res.status(404).json({ error: "الشيفت مش موجود" });
+    const shift = shiftRes.rows[0];
+    if (!assertOwnBranch(req.user, shift.branch_id)) {
+      return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+    }
+    const toTs = shift.closed_at || new Date();
+    const [financials, ordersRes, expensesRes, purchasesRes] = await Promise.all([
+      computeShiftFinancials(pool, { shiftId: shift.id, branchId: shift.branch_id, openedAt: shift.opened_at, toTs }),
+      pool.query(
+        `SELECT o.id, o.status, o.order_type, o.source, o.total, o.payment_status, o.voided, o.created_at,
+                pm.name AS payment_method_name
+         FROM orders o LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+         WHERE o.shift_id = $1 ORDER BY o.created_at`,
+        [shift.id]
+      ),
+      pool.query(
+        `SELECT e.*, ec.name AS category_name FROM expenses e
+         JOIN expense_categories ec ON ec.id = e.category_id
+         JOIN payment_methods pm ON pm.id = e.payment_method_id
+         WHERE e.branch_id = $1 AND e.status IN ('SUBMITTED', 'APPROVED', 'POSTED') AND pm.kind = 'cash'
+           AND COALESCE(e.posted_at, e.created_at) >= $2 AND COALESCE(e.posted_at, e.created_at) <= $3
+         ORDER BY COALESCE(e.posted_at, e.created_at)`,
+        [shift.branch_id, shift.opened_at, toTs]
+      ),
+      pool.query(
+        `SELECT * FROM purchases WHERE branch_id = $1 AND status <> 'REJECTED'
+           AND created_at >= $2 AND created_at <= $3 ORDER BY created_at`,
+        [shift.branch_id, shift.opened_at, toTs]
+      ),
+    ]);
+    const expectedCash = calcExpectedCash({
+      openingCash: shift.opening_cash, cashSales: financials.cashSales,
+      cashRefunds: financials.cashRefunds, cashExpensesTotal: financials.cashExpensesTotal,
+      cashPurchasesTotal: financials.cashPurchasesTotal,
+    });
+    const liveCashVariance = shift.actual_cash === null ? null : Number(shift.actual_cash) - expectedCash;
+    res.json({
+      shift, financialsLive: { ...financials, expectedCash, cashVariance: liveCashVariance },
+      orders: ordersRes.rows, expenses: expensesRes.rows, purchases: purchasesRes.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// المرحلة 8.45: POST /api/shifts/:id/missed-entry - تسجيل مصروف/مشترى منسي بأثر رجعي أثناء مراجعة شيفت
+// PENDING_REVIEW وإعادة حساب الفرق فورًا - {entryType: "expense"|"purchase", amount, categoryId?, notes?}
+// (categoryId مطلوب للمصروف بس). لو الفرق الجديد بقى جوه حد الاعتماد، الشيفت بيتقفل تلقائيًا؛ غير كده
+// بيفضل PENDING_REVIEW بالأرقام المحدّثة لحد ما المدير يستخدم /:id/review زي أي مراجعة عادية
+router.post("/:id/missed-entry", requireAuth, requirePermission("shifts.review"), async (req, res) => {
+  const { entryType, amount, categoryId, notes } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const shiftRes = await client.query("SELECT * FROM pos_shifts WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (shiftRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "الشيفت مش موجود" });
+    }
+    const shift = shiftRes.rows[0];
+    if (!assertOwnBranch(req.user, shift.branch_id)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+    }
+    const thresholds = await getThresholds(client);
+    const result = await addMissedCashEntryAndRecalculate(client, {
+      shift, entryType, amount, categoryId, notes, actorId: req.user.id, thresholds,
+    });
+    await client.query("COMMIT");
+    res.json(result);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (["SHIFT_NOT_PENDING_REVIEW", "INVALID_ENTRY_TYPE", "INVALID_AMOUNT", "CATEGORY_REQUIRED",
+         "CATEGORY_NOT_FOUND", "NO_CASH_PAYMENT_METHOD"].includes(err.code)) {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
