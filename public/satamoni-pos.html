@@ -320,6 +320,33 @@
   #cashEntryTodayList .badge.pending { background: rgba(240,138,131,.15); color: var(--err); }
   #cashEntryTodayList .badge.done { background: rgba(0,200,120,.15); color: var(--green); }
   #cashEntryTodayList .row-edit-btn { flex-shrink: 0; border: none; background: transparent; color: var(--gold-bright); cursor: pointer; font-size: 13px; padding: 2px 4px; }
+
+  /* المرحلة 8.46: تحصيل مجمّع من الطيار - نفس أسلوب مودال المصروف/المشترى بالظبط، بس أعرض شوية عشان جدول الطلبات */
+  #driverSettleBtn { border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-weight: 700; border: 1px solid var(--line); background: transparent; color: var(--ink); }
+  #driverSettleModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 60; }
+  #driverSettleModalOverlay.show { display: flex; }
+  #driverSettleModalBox { background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 20px; width: 440px; max-height: 86vh; overflow-y: auto; }
+  #driverSettleModalBox h3 { color: var(--gold-bright); margin: 0 0 12px; font-size: 16px; }
+  #driverSettleModalBody { font-size: 13px; }
+  #driverSettleModalBody .driverPick { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
+  #driverSettleModalBody .driverPick:hover { border-color: var(--gold); }
+  #driverSettleModalBody .driverPick .name { font-weight: 700; }
+  #driverSettleModalBody .driverPick .meta { font-size: 11px; color: var(--faint); }
+  #driverSettleModalBody table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+  #driverSettleModalBody th, #driverSettleModalBody td { padding: 5px 6px; text-align: right; border-bottom: 1px solid var(--line); }
+  #driverSettleModalBody th { color: var(--faint); font-weight: 700; }
+  #driverSettleModalBody .totalsRow td { font-weight: 800; border-top: 2px solid var(--line); border-bottom: none; }
+  #driverSettleModalBody label { font-size: 12px; color: var(--faint); margin-top: 8px; display: block; }
+  #driverSettleModalBody input {
+    background: var(--bg); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%; margin: 4px 0 8px;
+  }
+  #driverSettleModalErr { color: var(--err); font-size: 12px; margin-bottom: 8px; min-height: 16px; }
+  #driverSettleModalOk { color: var(--green); font-size: 12px; margin-bottom: 8px; }
+  #driverSettleModalSubmit { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; margin-top: 6px; }
+  #driverSettlePrintBtn { width: 100%; padding: 10px; border: 1px solid var(--gold); border-radius: 8px; background: transparent; color: var(--gold-bright); cursor: pointer; font-size: 13px; font-weight: 700; margin-top: 6px; display: none; }
+  #driverSettleBackBtn { width: 100%; padding: 8px; border: 1px dashed var(--faint); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 12px; margin-top: 6px; display: none; }
+  #driverSettleModalCancel { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 13px; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -331,6 +358,7 @@
   <button id="shiftStatusBtn" class="no-shift">🔓 افتح شيفت</button>
   <button id="myShiftsBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">📋 شيفتاتي</button>
   <button id="cashEntryBtn">🧾 مصروف/مشترى</button>
+  <button id="driverSettleBtn">🛵💰 تحصيل مجمّع</button>
   <button id="ordersOpenBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🛵 الطلبات الجارية</button>
   <button id="newOrderBannerBtn">🔴 <span id="newOrderBannerCount"></span> طلب جديد - اضغط للقبول</button>
   <div id="userInfo">
@@ -542,6 +570,22 @@
     <button id="cashEntryEditCancelBtn" style="display:none">إلغاء التعديل والرجوع لتسجيل جديد ↩️</button>
     <button id="cashEntryModalCancel">إغلاق</button>
     <div id="cashEntryTodayList"></div>
+  </div>
+</div>
+
+<!-- المرحلة 8.46: تحصيل مجمّع من الطيار - السائق ممكن يكون معاه أكتر من طلب كاش لسه متحصلش، فبدل ما
+     الكاشير يستنى كل طلب لوحده، الشاشة دي بتعرض كل طلباته المعلّقة دفعة واحدة (خدمة توصيل + بونص كل
+     طلب) وبتاخد الكاش المُسلَّم فعليًا في تسوية واحدة -->
+<div id="driverSettleModalOverlay">
+  <div id="driverSettleModalBox">
+    <h3>تحصيل مجمّع من طيار</h3>
+    <div id="driverSettleModalBody"></div>
+    <div id="driverSettleModalErr"></div>
+    <div id="driverSettleModalOk"></div>
+    <button id="driverSettleModalSubmit" style="display:none">تسجيل التحصيل</button>
+    <button id="driverSettlePrintBtn">🖨️ طباعة إيصال التحصيل</button>
+    <button id="driverSettleBackBtn">↩️ رجوع لاختيار سائق تاني</button>
+    <button id="driverSettleModalCancel">إغلاق</button>
   </div>
 </div>
 
@@ -1670,6 +1714,120 @@ document.getElementById("cashEntryBtn").onclick = () => {
   document.getElementById("cashEntryEditCancelBtn").style.display = "none";
   switchCashEntryTab("expense");
   loadCashEntryTodayList();
+};
+
+// ---------------- المرحلة 8.46: تحصيل مجمّع من الطيار ----------------
+let driverSettleSelectedDriverId = null;
+let driverSettleLastSettlementId = null;
+
+function closeDriverSettleModal() {
+  document.getElementById("driverSettleModalOverlay").classList.remove("show");
+}
+document.getElementById("driverSettleModalCancel").onclick = closeDriverSettleModal;
+
+async function loadDriverSettlePendingDrivers() {
+  const body = document.getElementById("driverSettleModalBody");
+  const errBox = document.getElementById("driverSettleModalErr");
+  document.getElementById("driverSettleModalOk").textContent = "";
+  document.getElementById("driverSettleModalSubmit").style.display = "none";
+  document.getElementById("driverSettlePrintBtn").style.display = "none";
+  document.getElementById("driverSettleBackBtn").style.display = "none";
+  errBox.textContent = "";
+  driverSettleSelectedDriverId = null;
+  body.innerHTML = `<div style="text-align:center;color:var(--faint)">جاري التحميل...</div>`;
+  try {
+    const drivers = await ordersApi("/api/driver-settlements/pending-drivers");
+    if (drivers.length === 0) {
+      body.innerHTML = `<div style="text-align:center;color:var(--faint);padding:20px 0">مفيش سائقين عندهم كاش معلّق تحصيل دلوقتي</div>`;
+      return;
+    }
+    body.innerHTML = drivers.map(d => `
+      <div class="driverPick" data-driver="${d.id}">
+        <div><div class="name">${d.name}${d.driver_code ? ` (${d.driver_code})` : ""}</div>
+          <div class="meta">${d.pending_order_count} طلب معلّق</div></div>
+        <div class="meta">${money(d.pending_cash)}</div>
+      </div>
+    `).join("");
+    body.querySelectorAll("[data-driver]").forEach(el => {
+      el.onclick = () => selectDriverForSettle(Number(el.dataset.driver));
+    });
+  } catch (e) {
+    errBox.textContent = e.message;
+    body.innerHTML = "";
+  }
+}
+
+async function selectDriverForSettle(driverId) {
+  driverSettleSelectedDriverId = driverId;
+  const body = document.getElementById("driverSettleModalBody");
+  const errBox = document.getElementById("driverSettleModalErr");
+  errBox.textContent = "";
+  body.innerHTML = `<div style="text-align:center;color:var(--faint)">جاري التحميل...</div>`;
+  try {
+    const preview = await ordersApi(`/api/driver-settlements/preview?driverId=${driverId}`);
+    if (preview.orderCount === 0) {
+      body.innerHTML = `<div style="text-align:center;color:var(--faint);padding:20px 0">مفيش طلبات معلّقة لهذا السائق دلوقتي</div>`;
+      document.getElementById("driverSettleBackBtn").style.display = "block";
+      return;
+    }
+    const rows = preview.orders.map(o => `
+      <tr><td>#${o.id}</td><td>${money(o.deliveryFee)}</td><td>${money(o.bonus)}</td></tr>
+    `).join("");
+    body.innerHTML = `
+      <table>
+        <thead><tr><th>الطلب</th><th>خدمة التوصيل</th><th>بونص السائق</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr class="totalsRow"><td>${preview.orderCount} طلب</td><td>${money(preview.deliveryFeesTotal)}</td><td>${money(preview.bonusTotal)}</td></tr>
+        </tfoot>
+      </table>
+      <div class="meta" style="margin-bottom:8px">إجمالي المفروض السائق يسلّمه: <b>${money(preview.expectedHandover)}</b></div>
+      <label>الكاش اللي استلمته فعليًا من السائق دلوقتي</label>
+      <input id="driverSettleHandoverInput" type="number" step="0.01" min="0" value="${preview.expectedHandover}" />
+    `;
+    document.getElementById("driverSettleModalSubmit").style.display = "block";
+    document.getElementById("driverSettleBackBtn").style.display = "block";
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+}
+document.getElementById("driverSettleBackBtn").onclick = loadDriverSettlePendingDrivers;
+
+document.getElementById("driverSettleBtn").onclick = () => {
+  document.getElementById("driverSettleModalOverlay").classList.add("show");
+  loadDriverSettlePendingDrivers();
+};
+
+document.getElementById("driverSettleModalSubmit").onclick = async () => {
+  const errBox = document.getElementById("driverSettleModalErr");
+  const okBox = document.getElementById("driverSettleModalOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const submitBtn = document.getElementById("driverSettleModalSubmit");
+  const input = document.getElementById("driverSettleHandoverInput");
+  const actualHandover = Number(input.value);
+  if (!(actualHandover >= 0) || Number.isNaN(actualHandover)) { errBox.textContent = "لازم تدخل قيمة صحيحة للكاش المُسلَّم"; return; }
+  submitBtn.disabled = true;
+  try {
+    const settlement = await ordersApi("/api/driver-settlements", {
+      method: "POST", body: JSON.stringify({ driverId: driverSettleSelectedDriverId, actualHandover }),
+    });
+    driverSettleLastSettlementId = settlement.id;
+    okBox.textContent = `تم تسجيل التحصيل بنجاح - إجمالي بونص السائق: ${money(settlement.bonus_total)}${settlement.variance_status === "PENDING_REVIEW" ? " (فيه فرق في التسليم - هيحتاج مراجعة مدير الفرع)" : ""}`;
+    document.getElementById("driverSettleModalBody").innerHTML = "";
+    submitBtn.style.display = "none";
+    document.getElementById("driverSettlePrintBtn").style.display = "block";
+    document.getElementById("driverSettleBackBtn").style.display = "block";
+    document.getElementById("driverSettleBackBtn").textContent = "↩️ تحصيل من سائق تاني";
+  } catch (e) {
+    errBox.textContent = e.message;
+  } finally {
+    submitBtn.disabled = false;
+  }
+};
+
+document.getElementById("driverSettlePrintBtn").onclick = () => {
+  if (!driverSettleLastSettlementId) return;
+  SatamoniPrint.printDriverSettlement({ id: driverSettleLastSettlementId }, ordersApi, {});
 };
 
 document.getElementById("cashEntryModalSubmit").onclick = async () => {

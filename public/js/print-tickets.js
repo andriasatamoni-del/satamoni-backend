@@ -151,7 +151,44 @@
     }
   }
 
+  // المرحلة 8.46: إيصال تحصيل مجمّع من طيار - نسخة الكاشير/السائق بعد التسوية مباشرة. settlement هنا
+  // بس {id} على الأقل (نفس نمط printKitchenTicket/printCashierReceipt: التفاصيل الكاملة بتتجاب من
+  // GET /api/driver-settlements/:id لحظة الطباعة نفسها، مش من رد POST الأصلي)
+  async function printDriverSettlement(settlement, apiFetch, labels = {}) {
+    const win = openPrintWindow(`تسوية سائق #${settlement.id}`);
+    if (!win) return;
+    try {
+      const full = await apiFetch(`/api/driver-settlements/${settlement.id}`);
+      const body = win.document.getElementById("body");
+      const rows = (full.orders || []).map((o) => `
+        <tr><td>#${o.id}</td><td>${money(o.delivery_fee)}</td><td>${money(o.bonus)}</td></tr>
+      `).join("");
+      const varianceRow = Number(full.handover_variance) !== 0
+        ? `<div class="meta">فرق التسليم: ${money(full.handover_variance)}${full.variance_status === "PENDING_REVIEW" ? " (محتاج مراجعة مدير الفرع)" : ""}</div>`
+        : "";
+      body.innerHTML = `
+        <h2>ستاموني — تحصيل مجمّع من سائق</h2>
+        <div class="meta">${labels.branchLabel ? esc(labels.branchLabel) + " — " : ""}${new Date(full.settled_at).toLocaleString("ar-EG")}</div>
+        <div class="meta">السائق: ${esc(full.driver_name)}${full.driver_code ? ` (${esc(full.driver_code)})` : ""}</div>
+        <table>
+          <tr><td>الطلب</td><td>خدمة التوصيل</td><td>بونص السائق</td></tr>
+          ${rows}
+        </table>
+        <table class="totals">
+          <tr><td>عدد الطلبات</td><td>${full.order_count}</td></tr>
+          <tr><td>إجمالي رسوم التوصيل</td><td>${money(full.delivery_fees_total)}</td></tr>
+          <tr><td>إجمالي بونص السائق</td><td>${money(full.bonus_total)}</td></tr>
+          <tr><td>المُسلَّم فعليًا للفرع</td><td>${money(full.actual_handover)}</td></tr>
+        </table>
+        ${varianceRow}
+      `;
+      win.print();
+    } catch (e) {
+      win.document.getElementById("body").innerHTML = `<div class="loading">تعذر تحميل التسوية: ${esc(e.message)}</div>`;
+    }
+  }
+
   // Object.assign بدل استبدال مباشر - عشان لو صفحة حمّلت print-reports.js (المرحلة 7I) كمان
   // مع الملف ده، الاتنين يتجمّعوا في نفس الكائن مهما كان ترتيب التحميل، مش يمسح واحد التاني
-  window.SatamoniPrint = Object.assign(window.SatamoniPrint || {}, { printKitchenTicket, printCashierReceipt });
+  window.SatamoniPrint = Object.assign(window.SatamoniPrint || {}, { printKitchenTicket, printCashierReceipt, printDriverSettlement });
 })();
