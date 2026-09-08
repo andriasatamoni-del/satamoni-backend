@@ -47,7 +47,10 @@ app.use(requestLogger);
 // الثابتة في public/ بتتقدّم من نفس الـorigin أصلًا فمش متأثرة - المنع بس لأي استدعاء API من origin
 // خارجي)؛ في التطوير (مفيش NODE_ENV=production) بنسمح بالكل زي قبل كده عشان الراحة أثناء التطوير.
 app.use(cors(getCorsOptions()));
-app.use(express.json());
+// المرحلة 8.43: بيحتفظ بالجسم الخام (rawBody) لكل طلب - محتاجه POST /api/whatsapp/webhook بس عشان
+// يتحقق من توقيع Meta (X-Hub-Signature-256، محسوب على البايتات الخام قبل أي parsing) - أي إعادة
+// تسلسل JSON بعد الـparsing ممكن تغيّر البايتات وتخلي التوقيع يفشل حتى لو المحتوى "نفس الحاجة" منطقيًا
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/api/auth", require("./routes/auth"));
@@ -99,6 +102,8 @@ app.use("/api/order-ratings", require("./routes/order-ratings"));
 // المرحلة 8.42: الخزائن (خزينة رئيسية لكل فرع + دروج الكاشيرية) والبنوك/حساباتها
 app.use("/api/treasuries", require("./routes/treasuries"));
 app.use("/api/banks", require("./routes/banks"));
+// المرحلة 8.43: أتمتة واتساب - رد آلي بذكاء اصطناعي على استفسارات العملاء، وتسجيل طلبات/شكاوى معلّقة
+app.use("/api/whatsapp", require("./routes/whatsapp"));
 
 // المرحلة 6 (6F): /health كان بيرجّع "ok" ثابتة دايمًا حتى لو قاعدة البيانات مش شغالة خالص - ده بيخلي
 // أي مراقبة/health-check بتعتمد عليه (لوحة تحكم استضافة، uptime monitor) تعتقد السيرفر تمام رغم إن
