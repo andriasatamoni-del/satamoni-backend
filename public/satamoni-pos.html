@@ -347,6 +347,37 @@
   #driverSettlePrintBtn { width: 100%; padding: 10px; border: 1px solid var(--gold); border-radius: 8px; background: transparent; color: var(--gold-bright); cursor: pointer; font-size: 13px; font-weight: 700; margin-top: 6px; display: none; }
   #driverSettleBackBtn { width: 100%; padding: 8px; border: 1px dashed var(--faint); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 12px; margin-top: 6px; display: none; }
   #driverSettleModalCancel { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 13px; margin-top: 6px; }
+
+  /* المرحلة 8.48: حضور وأجر السائقين بالساعة - تسجيل دخول/خروج مانيوال، نفس أسلوب مودال تحصيل المجمّع بالظبط */
+  #driverShiftBtn { border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-weight: 700; border: 1px solid var(--line); background: transparent; color: var(--ink); }
+  #driverShiftModalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 60; }
+  #driverShiftModalOverlay.show { display: flex; }
+  #driverShiftModalBox { background: var(--card); border: 1px solid var(--gold); border-radius: 12px; padding: 20px; width: 440px; max-height: 86vh; overflow-y: auto; }
+  #driverShiftModalBox h3 { color: var(--gold-bright); margin: 0 0 12px; font-size: 16px; }
+  #driverShiftModalBody { font-size: 13px; }
+  #driverShiftModalBody .driverPick { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
+  #driverShiftModalBody .driverPick:hover { border-color: var(--gold); }
+  #driverShiftModalBody .driverPick .name { font-weight: 700; }
+  #driverShiftModalBody .driverPick .meta { font-size: 11px; color: var(--faint); }
+  #driverShiftModalBody .activeRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; }
+  #driverShiftModalBody .activeRow .name { font-weight: 700; }
+  #driverShiftModalBody .activeRow .meta { font-size: 11px; color: var(--faint); }
+  #driverShiftModalBody .activeRow button { border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 12px; font-weight: 700; border: 1px solid var(--red); background: transparent; color: var(--red); }
+  #driverShiftModalBody table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+  #driverShiftModalBody th, #driverShiftModalBody td { padding: 5px 6px; text-align: right; border-bottom: 1px solid var(--line); }
+  #driverShiftModalBody th { color: var(--faint); font-weight: 700; }
+  #driverShiftModalBody .totalsRow td { font-weight: 800; border-top: 2px solid var(--line); border-bottom: none; }
+  #driverShiftModalBody label { font-size: 12px; color: var(--faint); margin-top: 8px; display: block; }
+  #driverShiftModalBody input, #driverShiftModalBody select {
+    background: var(--bg); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%; margin: 4px 0 8px;
+  }
+  #driverShiftModalErr { color: var(--err); font-size: 12px; margin-bottom: 8px; min-height: 16px; }
+  #driverShiftModalOk { color: var(--green); font-size: 12px; margin-bottom: 8px; }
+  #driverShiftCheckInBtn { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--gold-bright); color: #221E17; font-weight: 800; font-size: 14px; cursor: pointer; margin-top: 6px; }
+  #driverShiftPrintBtn { width: 100%; padding: 10px; border: 1px solid var(--gold); border-radius: 8px; background: transparent; color: var(--gold-bright); cursor: pointer; font-size: 13px; font-weight: 700; margin-top: 6px; display: none; }
+  #driverShiftBackBtn { width: 100%; padding: 8px; border: 1px dashed var(--faint); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 12px; margin-top: 6px; display: none; }
+  #driverShiftModalCancel { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; font-size: 13px; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -359,6 +390,7 @@
   <button id="myShiftsBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">📋 شيفتاتي</button>
   <button id="cashEntryBtn">🧾 مصروف/مشترى</button>
   <button id="driverSettleBtn">🛵💰 تحصيل مجمّع</button>
+  <button id="driverShiftBtn">🕐 حضور وأجر السائقين</button>
   <button id="ordersOpenBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🛵 الطلبات الجارية</button>
   <button id="newOrderBannerBtn">🔴 <span id="newOrderBannerCount"></span> طلب جديد - اضغط للقبول</button>
   <div id="userInfo">
@@ -586,6 +618,21 @@
     <button id="driverSettlePrintBtn">🖨️ طباعة إيصال التحصيل</button>
     <button id="driverSettleBackBtn">↩️ رجوع لاختيار سائق تاني</button>
     <button id="driverSettleModalCancel">إغلاق</button>
+  </div>
+</div>
+
+<!-- المرحلة 8.48: حضور وأجر السائقين بالساعة - تسجيل دخول/خروج مانيوال من الكاشير، الأجر بيتحسب
+     أوتوماتيك وقت الخروج (ساعات العمل × السعر بالساعة + بونص أوردرات الشيفت) وبيتسجل كمصروف يومي
+     تلقائيًا بدل ما الكاشير يحسبه بنفسه -->
+<div id="driverShiftModalOverlay">
+  <div id="driverShiftModalBox">
+    <h3>حضور وأجر السائقين</h3>
+    <div id="driverShiftModalBody"></div>
+    <div id="driverShiftModalErr"></div>
+    <div id="driverShiftModalOk"></div>
+    <button id="driverShiftPrintBtn">🖨️ طباعة إيصال الأجر</button>
+    <button id="driverShiftBackBtn">↩️ رجوع لقايمة السائقين</button>
+    <button id="driverShiftModalCancel">إغلاق</button>
   </div>
 </div>
 
@@ -1754,6 +1801,84 @@ async function loadDriverSettlePendingDrivers() {
   } catch (e) {
     errBox.textContent = e.message;
     body.innerHTML = "";
+  } finally {
+    // المرحلة 8.47: رابط تقرير كل أوردرات سائق (تحصيل شيفت كامل) - متاح دايمًا زي ما هي القايمة، حتى
+    // لو مفيش أي سائق عنده كاش معلّق دلوقتي (السائق ممكن يكون خلّص كل تحصيله بالفعل بس لسه محتاج مراجعة
+    // شيفته كله آخر اليوم - عشان كده الرابط ده منفصل تمامًا عن قايمة pending-drivers فوق)
+    const link = document.createElement("div");
+    link.style.cssText = "text-align:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)";
+    link.innerHTML = `<button id="driverDayReportLinkBtn" style="background:none;border:none;color:var(--gold-bright);cursor:pointer;font-size:12px;text-decoration:underline">📋 تقرير كل أوردرات سائق (شيفت كامل)</button>`;
+    document.getElementById("driverSettleModalBody").appendChild(link);
+    document.getElementById("driverDayReportLinkBtn").onclick = showDriverDayReportPicker;
+  }
+}
+
+// المرحلة 8.47: فورم اختيار سائق + تاريخ لتقرير "كل الأوردرات" - منفصل عن قايمة تحصيل الكاش (pending-
+// drivers) لأنه لازم يشتغل مع أي سائق في الفرع، حتى لو خلّص كل تحصيله بالفعل النهاردة
+async function showDriverDayReportPicker() {
+  const body = document.getElementById("driverSettleModalBody");
+  const errBox = document.getElementById("driverSettleModalErr");
+  errBox.textContent = "";
+  document.getElementById("driverSettleModalSubmit").style.display = "none";
+  document.getElementById("driverSettlePrintBtn").style.display = "none";
+  body.innerHTML = `<div style="text-align:center;color:var(--faint)">جاري التحميل...</div>`;
+  try {
+    const drivers = await ordersApi("/api/driver-settlements/branch-drivers");
+    const today = new Date().toISOString().slice(0, 10);
+    body.innerHTML = `
+      <label>السائق</label>
+      <select id="driverDayReportDriverSelect">${drivers.map(d => `<option value="${d.id}">${d.name}${d.driver_code ? ` (${d.driver_code})` : ""}</option>`).join("")}</select>
+      <label>اليوم</label>
+      <input id="driverDayReportDateInput" type="date" value="${today}" />
+      <button id="driverDayReportShowBtn" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--gold-bright);color:#221E17;font-weight:800;cursor:pointer;margin-top:6px">عرض التقرير</button>
+    `;
+    document.getElementById("driverSettleBackBtn").style.display = "block";
+    document.getElementById("driverSettleBackBtn").textContent = "↩️ رجوع لتحصيل الكاش";
+    document.getElementById("driverDayReportShowBtn").onclick = () => {
+      const driverId = Number(document.getElementById("driverDayReportDriverSelect").value);
+      const date = document.getElementById("driverDayReportDateInput").value;
+      showDriverDayReport(driverId, date);
+    };
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+}
+
+let driverDayReportLastData = null;
+
+async function showDriverDayReport(driverId, date) {
+  const body = document.getElementById("driverSettleModalBody");
+  const errBox = document.getElementById("driverSettleModalErr");
+  errBox.textContent = "";
+  body.innerHTML = `<div style="text-align:center;color:var(--faint)">جاري التحميل...</div>`;
+  try {
+    const data = await ordersApi(`/api/driver-settlements/driver-orders?driverId=${driverId}&date=${date}`);
+    driverDayReportLastData = data;
+    const statusLabel = (o) => o.payment_kind === "cash" ? (o.collected ? "متحصّل" : "معلّق") : "غير نقدي";
+    const rows = data.orders.map(o => `
+      <tr><td>#${o.id}</td><td>${money(o.total)}</td><td>${money(o.delivery_fee)}</td><td>${money(o.bonus)}</td><td>${statusLabel(o)}</td></tr>
+    `).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--faint)">مفيش طلبات مُسلَّمة لهذا السائق في اليوم ده</td></tr>`;
+    body.innerHTML = `
+      <div class="meta" style="margin-bottom:8px">${data.driverName}${data.driverCode ? ` (${data.driverCode})` : ""} — ${data.date}</div>
+      <table>
+        <thead><tr><th>الطلب</th><th>الإجمالي</th><th>خدمة التوصيل</th><th>بونص</th><th>الحالة</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr class="totalsRow"><td>${data.orderCount} طلب</td><td></td><td>${money(data.deliveryFeesTotal)}</td><td>${money(data.bonusTotal)}</td><td></td></tr>
+        </tfoot>
+      </table>
+      <div class="meta">منه بونص متحصّل بالفعل: <b>${money(data.collectedBonusTotal)}</b> — بونص لسه معلّق: <b>${money(data.pendingBonusTotal)}</b></div>
+    `;
+    document.getElementById("driverSettlePrintBtn").style.display = "block";
+    document.getElementById("driverSettlePrintBtn").textContent = "🖨️ طباعة تقرير الأوردرات";
+    document.getElementById("driverSettlePrintBtn").onclick = () => {
+      SatamoniPrint.printDriverDayReport(driverDayReportLastData, {});
+    };
+    document.getElementById("driverSettleBackBtn").style.display = "block";
+    document.getElementById("driverSettleBackBtn").textContent = "↩️ رجوع لاختيار سائق/تاريخ تاني";
+    document.getElementById("driverSettleBackBtn").onclick = showDriverDayReportPicker;
+  } catch (e) {
+    errBox.textContent = e.message;
   }
 }
 
@@ -1816,8 +1941,13 @@ document.getElementById("driverSettleModalSubmit").onclick = async () => {
     document.getElementById("driverSettleModalBody").innerHTML = "";
     submitBtn.style.display = "none";
     document.getElementById("driverSettlePrintBtn").style.display = "block";
+    document.getElementById("driverSettlePrintBtn").textContent = "🖨️ طباعة إيصال التحصيل";
+    document.getElementById("driverSettlePrintBtn").onclick = () => {
+      SatamoniPrint.printDriverSettlement({ id: driverSettleLastSettlementId }, ordersApi, {});
+    };
     document.getElementById("driverSettleBackBtn").style.display = "block";
     document.getElementById("driverSettleBackBtn").textContent = "↩️ تحصيل من سائق تاني";
+    document.getElementById("driverSettleBackBtn").onclick = loadDriverSettlePendingDrivers;
   } catch (e) {
     errBox.textContent = e.message;
   } finally {
@@ -1825,9 +1955,130 @@ document.getElementById("driverSettleModalSubmit").onclick = async () => {
   }
 };
 
-document.getElementById("driverSettlePrintBtn").onclick = () => {
-  if (!driverSettleLastSettlementId) return;
-  SatamoniPrint.printDriverSettlement({ id: driverSettleLastSettlementId }, ordersApi, {});
+// ---------------- المرحلة 8.48: حضور وأجر السائقين بالساعة ----------------
+let driverShiftRefreshTimer = null;
+let driverShiftLastCheckout = null;
+
+function closeDriverShiftModal() {
+  document.getElementById("driverShiftModalOverlay").classList.remove("show");
+  if (driverShiftRefreshTimer) { clearInterval(driverShiftRefreshTimer); driverShiftRefreshTimer = null; }
+}
+document.getElementById("driverShiftModalCancel").onclick = closeDriverShiftModal;
+
+function formatElapsedHours(checkedInAt) {
+  const hours = (Date.now() - new Date(checkedInAt).getTime()) / 3600000;
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  return `${h} س ${m} د`;
+}
+
+async function loadDriverShiftMain() {
+  const body = document.getElementById("driverShiftModalBody");
+  const errBox = document.getElementById("driverShiftModalErr");
+  document.getElementById("driverShiftModalOk").textContent = "";
+  document.getElementById("driverShiftPrintBtn").style.display = "none";
+  document.getElementById("driverShiftBackBtn").style.display = "none";
+  errBox.textContent = "";
+  body.innerHTML = `<div style="text-align:center;color:var(--faint)">جاري التحميل...</div>`;
+  try {
+    const [active, drivers] = await Promise.all([
+      ordersApi("/api/driver-shifts/active"),
+      ordersApi("/api/driver-settlements/branch-drivers"),
+    ]);
+    const activeDriverIds = new Set(active.map(s => s.driver_id));
+    const availableDrivers = drivers.filter(d => !activeDriverIds.has(d.id));
+    const activeRows = active.map(s => `
+      <div class="activeRow" data-shift="${s.id}">
+        <div><div class="name">${s.driver_name}${s.driver_code ? ` (${s.driver_code})` : ""}</div>
+          <div class="meta">من الساعة ${new Date(s.checked_in_at).toLocaleTimeString("ar-EG")} — شغال من <span data-elapsed="${s.checked_in_at}">${formatElapsedHours(s.checked_in_at)}</span></div></div>
+        <button data-checkout="${s.id}">تسجيل خروج</button>
+      </div>
+    `).join("") || `<div style="text-align:center;color:var(--faint);padding:10px 0">مفيش سائقين مسجّلين حضور دلوقتي</div>`;
+    body.innerHTML = `
+      <div style="margin-bottom:6px;font-weight:700;color:var(--faint);font-size:12px">السائقين الشغالين دلوقتي</div>
+      ${activeRows}
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
+        <label>تسجيل دخول سائق جديد</label>
+        <select id="driverShiftCheckInSelect">
+          ${availableDrivers.length === 0
+            ? `<option value="">مفيش سائقين تانيين متاحين</option>`
+            : availableDrivers.map(d => `<option value="${d.id}">${d.name}${d.driver_code ? ` (${d.driver_code})` : ""}</option>`).join("")}
+        </select>
+        <button id="driverShiftCheckInBtn" ${availableDrivers.length === 0 ? "disabled" : ""}>تسجيل دخول</button>
+      </div>
+    `;
+    body.querySelectorAll("[data-checkout]").forEach(btn => {
+      btn.onclick = () => checkOutDriverShiftUI(Number(btn.dataset.checkout));
+    });
+    document.getElementById("driverShiftCheckInBtn").onclick = checkInDriverShiftUI;
+
+    if (driverShiftRefreshTimer) clearInterval(driverShiftRefreshTimer);
+    driverShiftRefreshTimer = setInterval(() => {
+      body.querySelectorAll("[data-elapsed]").forEach(el => {
+        el.textContent = formatElapsedHours(el.dataset.elapsed);
+      });
+    }, 30000);
+  } catch (e) {
+    errBox.textContent = e.message;
+    body.innerHTML = "";
+  }
+}
+
+async function checkInDriverShiftUI() {
+  const errBox = document.getElementById("driverShiftModalErr");
+  const select = document.getElementById("driverShiftCheckInSelect");
+  const driverId = Number(select.value);
+  if (!driverId) { errBox.textContent = "لازم تختار سائق"; return; }
+  errBox.textContent = "";
+  const btn = document.getElementById("driverShiftCheckInBtn");
+  btn.disabled = true;
+  try {
+    await ordersApi("/api/driver-shifts/check-in", { method: "POST", body: JSON.stringify({ driverId }) });
+    await loadDriverShiftMain();
+  } catch (e) {
+    errBox.textContent = e.message;
+    btn.disabled = false;
+  }
+}
+
+async function checkOutDriverShiftUI(shiftId) {
+  const errBox = document.getElementById("driverShiftModalErr");
+  const okBox = document.getElementById("driverShiftModalOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  if (!confirm("تسجيل خروج السائق ده دلوقتي؟ هيتحسب أجره تلقائيًا ويتسجل كمصروف يومي.")) return;
+  try {
+    const shift = await ordersApi(`/api/driver-shifts/${shiftId}/check-out`, { method: "POST", body: JSON.stringify({}) });
+    driverShiftLastCheckout = shift;
+    const body = document.getElementById("driverShiftModalBody");
+    body.innerHTML = `
+      <div class="meta" style="margin-bottom:8px">${shift.driver_name || ""}</div>
+      <table>
+        <tbody>
+          <tr><td>ساعات العمل</td><td>${shift.hours_worked}</td></tr>
+          <tr><td>الأجر بالساعة</td><td>${money(shift.hourly_rate)}</td></tr>
+          <tr><td>إجمالي الأجر</td><td>${money(shift.wage_amount)}</td></tr>
+          <tr><td>بونص الأوردرات</td><td>${money(shift.bonus_total)}</td></tr>
+          <tr class="totalsRow"><td>الإجمالي</td><td>${money(shift.total_pay)}</td></tr>
+        </tbody>
+      </table>
+      <div class="meta">اتسجل مصروف يومي تلقائي بالإجمالي ده - محتاج مراجعة مدير الفرع/المحاسب زي أي مصروف كاشير عادي</div>
+    `;
+    okBox.textContent = "تم تسجيل الخروج وحساب الأجر بنجاح";
+    document.getElementById("driverShiftPrintBtn").style.display = "block";
+    document.getElementById("driverShiftPrintBtn").onclick = () => {
+      SatamoniPrint.printDriverShiftCheckout(driverShiftLastCheckout, {});
+    };
+    document.getElementById("driverShiftBackBtn").style.display = "block";
+    document.getElementById("driverShiftBackBtn").textContent = "↩️ رجوع لقايمة السائقين";
+    document.getElementById("driverShiftBackBtn").onclick = loadDriverShiftMain;
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+}
+
+document.getElementById("driverShiftBtn").onclick = () => {
+  document.getElementById("driverShiftModalOverlay").classList.add("show");
+  loadDriverShiftMain();
 };
 
 document.getElementById("cashEntryModalSubmit").onclick = async () => {

@@ -88,7 +88,10 @@ CREATE TABLE pos_settings (
   -- المرحلة 8.43: بوت واتساب أوتوميشن خدمة العملاء - افتراضيًا معطّل لحد ما بيانات اعتماد Meta Cloud
   -- API + مفتاح Anthropic تتظبط فعليًا في متغيرات البيئة (راجع db/whatsapp-client.js وdb/ai-client.js) -
   -- نفس فلسفة sms_confirmations_enabled بالظبط (مفتاح تشغيل/إيقاف مستقل عن وجود بيانات الاعتماد نفسها)
-  whatsapp_bot_enabled BOOLEAN NOT NULL DEFAULT FALSE
+  whatsapp_bot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  -- المرحلة 8.48: أجر ساعة السائق (عمالة خارجية) - بيتجمّد في driver_shifts.hourly_rate وقت تسجيل
+  -- الدخول، فتغيير الرقم هنا بعد كده ميأثرش على شيفتات شغالة/مقفولة بالفعل - راجع db/driver-shift-engine.js
+  driver_hourly_rate_egp NUMERIC NOT NULL DEFAULT 33
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -616,6 +619,36 @@ CREATE INDEX idx_driver_settlements_variance_status ON driver_settlements(branch
 ALTER TABLE orders ADD CONSTRAINT fk_orders_driver_settlement FOREIGN KEY (driver_settlement_id) REFERENCES driver_settlements(id);
 CREATE INDEX idx_orders_driver_settlement_id ON orders(driver_settlement_id) WHERE driver_settlement_id IS NOT NULL;
 
+-- المرحلة 8.48: حضور وأجر السائقين بالساعة (عمالة خارجية - مش موظفين رسميين بالضرورة، عكس تسوية كاش
+-- السائق فوق اللي بتحصل أكتر من مرة في الشيفت). تسجيل دخول/خروج يدوي من الكاشير - الأجر بيتحسب تلقائي
+-- (ساعات العمل × hourly_rate المجمّد وقت الدخول) + بونص كل الأوردرات اللي السائق سلّمها أثناء الشيفت
+-- ده بالظبط [checked_in_at, checked_out_at] (calcDriverOrderBonus في db/delivery-engine.js، بغض النظر
+-- عن حالة تحصيل كل أوردر - البونص مقابل التسليم نفسه، مش تحصيل الكاش) - المجموع بيتسجل تلقائي كمصروف
+-- يومي (expense_id) بدل ما الكاشير يحسبه ويكتبه يدوي. راجع db/driver-shift-engine.js للمنطق الكامل
+CREATE TABLE driver_shifts (
+  id             SERIAL PRIMARY KEY,
+  driver_id      INTEGER NOT NULL REFERENCES drivers(id),
+  branch_id      INTEGER NOT NULL REFERENCES branches(id),
+  status         TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'CLOSED')),
+  checked_in_by  INTEGER REFERENCES users(id),
+  checked_in_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  checked_out_by INTEGER REFERENCES users(id),
+  checked_out_at TIMESTAMPTZ,
+  hourly_rate    NUMERIC NOT NULL,  -- نسخة من pos_settings.driver_hourly_rate_egp وقت الدخول بالظبط - ثابتة بعد كده
+  hours_worked   NUMERIC,           -- بيتحسب وقت تسجيل الخروج بس (checked_out_at - checked_in_at)
+  wage_amount    NUMERIC,           -- hours_worked × hourly_rate
+  bonus_total    NUMERIC,           -- مجموع بونص كل الأوردرات المُسلَّمة أثناء الشيفت
+  total_pay      NUMERIC,           -- wage_amount + bonus_total = مبلغ المصروف اللي اتسجل
+  -- expense_id: expenses معرّف فوق في الملف فعلًا، بس الـFK بيتضاف بـALTER TABLE بعد جدول expenses
+  -- مباشرة (نفس نمط bonus_payroll_adjustment_id فوق) - مش قبله، عشان يفضل الترتيب المنطقي في الملف
+  expense_id     INTEGER,
+  notes          TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_driver_shifts_one_active ON driver_shifts(driver_id) WHERE status = 'ACTIVE';
+CREATE INDEX idx_driver_shifts_branch ON driver_shifts(branch_id, checked_in_at);
+
 -- ---------------- المصروفات ----------------
 -- بنود مصروفات ثابتة (تكويد) - الأدمن بس بيضيف/يعطّل بند، وأي حد بيسجل مصروف لازم يختار من الليستة
 -- دي بدل ما يكتب نص حر (عشان التقارير تتجمع صح ومحدش يكتب نفس البند بصياغات مختلفة)
@@ -631,7 +664,10 @@ CREATE TABLE expense_categories (
 
 INSERT INTO expense_categories (name) VALUES
   ('إيجار'), ('مرافق (كهرباء/مياه/غاز)'), ('صيانة'), ('نقل ومواصلات'),
-  ('تسويق وإعلانات'), ('أدوات ومستلزمات'), ('رسوم وضرائب'), ('أخرى');
+  ('تسويق وإعلانات'), ('أدوات ومستلزمات'), ('رسوم وضرائب'), ('أخرى'),
+  -- المرحلة 8.48: البند اللي مصروف أجر يومية السائقين (تسجيل دخول/خروج بالساعة + بونص) بيترحّل عليه
+  -- تلقائيًا - راجع db/driver-shift-engine.js. الاسم ثابت ومتحقّق منه بالكود (getDriverWageExpenseCategory)
+  ('أجور عمالة خارجية (سائقين)');
 
 -- المرحلة 4B: بقت مربوطة اختياريًا بمورد/طريقة دفع وبدورة حياة محاسبية (DRAFT→SUBMITTED→APPROVED→
 -- POSTED→CANCELLED) - المسار القديم (POST /api/expenses من غير أي حقل جديد) لسه شغال زي ما هو بالظبط
@@ -666,6 +702,9 @@ CREATE TABLE expenses (
 CREATE UNIQUE INDEX idx_expenses_idempotency_key ON expenses(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX idx_expenses_status ON expenses(status);
 CREATE INDEX idx_expenses_supplier ON expenses(supplier_id);
+
+-- المرحلة 8.48: ربط شيفت السائق بمصروف أجره اليومي اللي اتسجل تلقائيًا وقت تسجيل الخروج
+ALTER TABLE driver_shifts ADD CONSTRAINT fk_driver_shifts_expense FOREIGN KEY (expense_id) REFERENCES expenses(id);
 
 -- ---------------- المشتريات والتحويلات ----------------
 CREATE TABLE purchases (

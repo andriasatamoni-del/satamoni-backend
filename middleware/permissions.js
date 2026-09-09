@@ -37,6 +37,9 @@ const ROLE_PERMISSIONS = {
     // (نفس نمط إدارة الموظفين HR في المرحلة 4D)، وهو صاحب صلاحية تسوية كاش السائقين ومراجعة فروقها
     "deliveries.view_branch", "deliveries.assign", "drivers.manage",
     "driver_settlements.create", "driver_settlements.review",
+    // المرحلة 8.48: حضور وأجر السائقين بالساعة - نفس فلسفة driver_settlements.create (مدير الفرع أو
+    // الكاشير أي منهم يقدر يسجّل دخول/خروج سائق فعليًا واقف قدامه)
+    "driver_shifts.manage",
     // المرحلة 7G: مدير الفرع يشوف شاشة المطبخ (KDS) بتاعة فرعه ويقدر يقدّم حالة أي طلب فيها -
     // مش مقصور على الكاشير بس، لأن مدير الفرع كتير بيغطي المطبخ برضو في فروع صغيرة
     "kitchen.view", "kitchen.advance",
@@ -97,6 +100,11 @@ const ROLE_PERMISSIONS = {
     // جوه الراوت نفسه (assertOwnBranch على فرع السائق)، مش محتاجة صلاحية "own_daily" منفصلة زي المصروفات
     // لأن مفيش هنا مفهوم "تعديل بعد التسجيل" أصلًا يحتاج تمييز
     "driver_settlements.create",
+    // المرحلة 8.48: حضور وأجر السائقين بالساعة - الكاشير هو اللي فعليًا بيسجّل دخول/خروج السائق يدوي
+    // وقت ما بيشوفه واقف قدامه، فمنطقي يبدأها بنفسه زي تحصيل الكاش بالظبط - مفيش صلاحية "مراجعة"
+    // منفصلة هنا أصلًا (عكس driver_settlements) لأن المصروف الناتج بيعدّي على مراجعة expenses.review
+    // العادية (مدير الفرع/المحاسب) قبل ما يترحّل محاسبيًا، مش محتاج مسار مراجعة إضافي مكرر
+    "driver_shifts.manage",
   ],
   callcenter: [
     "orders.create", "orders.discount.request", "orders.void.request",
