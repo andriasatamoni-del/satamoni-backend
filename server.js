@@ -78,6 +78,7 @@ app.use("/api/branch-days", require("./routes/branch-days"));
 app.use("/api/drivers", require("./routes/drivers"));
 app.use("/api/deliveries", require("./routes/deliveries"));
 app.use("/api/driver-settlements", require("./routes/driver-settlements"));
+app.use("/api/driver-shifts", require("./routes/driver-shifts"));
 app.use("/api/recipes", require("./routes/recipes"));
 app.use("/api/production", require("./routes/production"));
 app.use("/api/packaging", require("./routes/packaging"));

@@ -222,9 +222,32 @@
     win.print();
   }
 
+  // المرحلة 8.48: إيصال أجر شيفت حضور سائق (ساعات + بونص) بعد تسجيل الخروج مباشرة - بيانات الشيفت
+  // جاهزة فعلًا من رد POST /api/driver-shifts/:id/check-out نفسه، فمفيش داعي لـapiFetch هنا زي
+  // printDriverDayReport بالظبط
+  function printDriverShiftCheckout(shift, labels = {}) {
+    const win = openPrintWindow(`إيصال أجر سائق - شيفت #${shift.id}`);
+    if (!win) return;
+    const body = win.document.getElementById("body");
+    body.innerHTML = `
+      <h2>ستاموني — إيصال أجر يومية سائق</h2>
+      <div class="meta">${labels.branchLabel ? esc(labels.branchLabel) + " — " : ""}${new Date(shift.checked_out_at).toLocaleString("ar-EG")}</div>
+      <div class="meta">السائق: ${esc(shift.driver_name)}${shift.driver_code ? ` (${esc(shift.driver_code)})` : ""}</div>
+      <div class="meta">من ${new Date(shift.checked_in_at).toLocaleString("ar-EG")} إلى ${new Date(shift.checked_out_at).toLocaleString("ar-EG")}</div>
+      <table class="totals">
+        <tr><td>ساعات العمل</td><td>${shift.hours_worked}</td></tr>
+        <tr><td>الأجر بالساعة</td><td>${money(shift.hourly_rate)}</td></tr>
+        <tr><td>إجمالي الأجر</td><td>${money(shift.wage_amount)}</td></tr>
+        <tr><td>بونص الأوردرات</td><td>${money(shift.bonus_total)}</td></tr>
+        <tr><td>الإجمالي</td><td>${money(shift.total_pay)}</td></tr>
+      </table>
+    `;
+    win.print();
+  }
+
   // Object.assign بدل استبدال مباشر - عشان لو صفحة حمّلت print-reports.js (المرحلة 7I) كمان
   // مع الملف ده، الاتنين يتجمّعوا في نفس الكائن مهما كان ترتيب التحميل، مش يمسح واحد التاني
   window.SatamoniPrint = Object.assign(window.SatamoniPrint || {}, {
-    printKitchenTicket, printCashierReceipt, printDriverSettlement, printDriverDayReport,
+    printKitchenTicket, printCashierReceipt, printDriverSettlement, printDriverDayReport, printDriverShiftCheckout,
   });
 })();
