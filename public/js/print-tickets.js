@@ -188,7 +188,43 @@
     }
   }
 
+  // المرحلة 8.47: تقرير كل أوردرات سائق في يوم معيّن (متحصّلة ومعلّقة سوا) - بيانات الطلب جاهزة فعلًا
+  // عند الكاشير وقت الطباعة (من GET /api/driver-settlements/driver-orders)، فمفيش داعي لـapiFetch هنا
+  // زي printDriverSettlement/printCashierReceipt - دالة متزامنة بسيطة
+  function printDriverDayReport(data, labels = {}) {
+    const win = openPrintWindow(`تقرير أوردرات السائق - ${data.driverName || ""}`);
+    if (!win) return;
+    const rows = (data.orders || []).map((o) => `
+      <tr>
+        <td>#${o.id}</td>
+        <td>${money(o.total)}</td>
+        <td>${money(o.delivery_fee)}</td>
+        <td>${money(o.bonus)}</td>
+        <td>${o.payment_kind === "cash" ? (o.collected ? "متحصّل" : "معلّق") : "غير نقدي"}</td>
+      </tr>`).join("");
+    const body = win.document.getElementById("body");
+    body.innerHTML = `
+      <h2>ستاموني — تقرير أوردرات سائق</h2>
+      <div class="meta">${labels.branchLabel ? esc(labels.branchLabel) + " — " : ""}${esc(data.date)}</div>
+      <div class="meta">السائق: ${esc(data.driverName)}${data.driverCode ? ` (${esc(data.driverCode)})` : ""}</div>
+      <table>
+        <tr><td>الطلب</td><td>الإجمالي</td><td>خدمة التوصيل</td><td>بونص السائق</td><td>الحالة</td></tr>
+        ${rows}
+      </table>
+      <table class="totals">
+        <tr><td>عدد الطلبات</td><td>${data.orderCount}</td></tr>
+        <tr><td>إجمالي رسوم التوصيل</td><td>${money(data.deliveryFeesTotal)}</td></tr>
+        <tr><td>إجمالي بونص السائق</td><td>${money(data.bonusTotal)}</td></tr>
+        <tr><td>منه بونص متحصّل بالفعل</td><td>${money(data.collectedBonusTotal)}</td></tr>
+        <tr><td>منه بونص لسه معلّق</td><td>${money(data.pendingBonusTotal)}</td></tr>
+      </table>
+    `;
+    win.print();
+  }
+
   // Object.assign بدل استبدال مباشر - عشان لو صفحة حمّلت print-reports.js (المرحلة 7I) كمان
   // مع الملف ده، الاتنين يتجمّعوا في نفس الكائن مهما كان ترتيب التحميل، مش يمسح واحد التاني
-  window.SatamoniPrint = Object.assign(window.SatamoniPrint || {}, { printKitchenTicket, printCashierReceipt, printDriverSettlement });
+  window.SatamoniPrint = Object.assign(window.SatamoniPrint || {}, {
+    printKitchenTicket, printCashierReceipt, printDriverSettlement, printDriverDayReport,
+  });
 })();

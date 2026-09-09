@@ -78,6 +78,85 @@ router.get("/pending-drivers", async (req, res) => {
   }
 });
 
+// المرحلة 8.47: GET /api/driver-settlements/branch-drivers?branchId= - كل سائقي الفرع النشطين (بغض
+// النظر لو عندهم كاش معلّق دلوقتي أو لأ) - عكس /pending-drivers عمدًا. لازمة عشان تقرير "كل أوردرات
+// السائق" (/driver-orders تحت) لازم يشتغل حتى لو الكاشير حصّل كل كاش السائق بالفعل أثناء اليوم - يعني
+// السائق مش هيظهر في /pending-drivers خالص، لكن لسه محتاج تقرير مراجعة شيفته الكامل آخر اليوم
+router.get("/branch-drivers", async (req, res) => {
+  const branchId = req.query.branchId || req.user.branchId;
+  if (!branchId) return res.status(400).json({ error: "لازم تحدد الفرع" });
+  if (!hasPermission(req.user.role, "driver_settlements.create") && !hasPermission(req.user.role, "driver_settlements.review")) {
+    return res.status(403).json({ error: "معندكش صلاحية تشوف السائقين" });
+  }
+  if (!assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+  try {
+    const result = await pool.query(
+      `SELECT id, name, driver_code FROM drivers WHERE branch_id = $1 AND is_active = TRUE ORDER BY name`,
+      [branchId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// المرحلة 8.47: GET /api/driver-settlements/driver-orders?driverId=&date= - كل أوردرات السائق المُسلَّمة
+// في يوم معيّن (النهاردة افتراضيًا) - بغض النظر عن طريقة الدفع أو حالة التحصيل (متحصّلة بالفعل أو لسه
+// معلّقة). عكس /preview و/pending-drivers عمدًا (اللي بيوريوا الأوردرات المعلّقة بس عشان التحصيل
+// نفسه) - الشاشة دي تقرير مراجعة كامل لشيفت السائق كله، لأن قفل شيفت السائق وحساب/دفع بونصه بيحصل
+// مرة واحدة آخر الشيفت مش مع كل تحصيل جزئي حصل أثناء اليوم. delivered_at::date هو مرجع "اليوم" هنا
+// (مش created_at) - وقت التسليم الفعلي هو اللي بيحدد شيفت السائق، مش وقت إنشاء الطلب
+router.get("/driver-orders", async (req, res) => {
+  const { driverId, date } = req.query;
+  if (!driverId) return res.status(400).json({ error: "لازم تحدد السائق" });
+  try {
+    const driverRes = await pool.query("SELECT * FROM drivers WHERE id = $1", [driverId]);
+    if (driverRes.rows.length === 0) return res.status(404).json({ error: "السائق مش موجود" });
+    const driver = driverRes.rows[0];
+
+    if (req.user.role === "driver") {
+      const own = await loadOwnDriver(pool, req.user.id);
+      if (!own || own.id !== driver.id) return res.status(403).json({ error: "معندكش صلاحية تشوف أوردرات سائق تاني" });
+    } else if (!hasPermission(req.user.role, "driver_settlements.create") && !hasPermission(req.user.role, "driver_settlements.review")) {
+      return res.status(403).json({ error: "معندكش صلاحية تشوف أوردرات السائقين" });
+    } else if (!assertOwnBranch(req.user, driver.branch_id)) {
+      return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+    }
+
+    const result = await pool.query(
+      `SELECT o.id, o.total, o.delivery_fee, o.collected_amount, o.collection_variance, o.delivered_at,
+              o.order_type, o.driver_settlement_id, pm.kind AS payment_kind, pm.name AS payment_method_name
+       FROM orders o
+       LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+       WHERE o.driver_id = $1 AND o.dispatch_status = 'DELIVERED'
+         AND o.delivered_at::date = COALESCE($2::date, CURRENT_DATE)
+       ORDER BY o.delivered_at`,
+      [driverId, date || null]
+    );
+    const orders = result.rows.map((o) => ({
+      ...o,
+      bonus: calcDriverOrderBonus(o.delivery_fee || 0),
+      collected: o.payment_kind === "cash" ? o.driver_settlement_id !== null : null,
+    }));
+    const bonusTotal = orders.reduce((s, o) => s + o.bonus, 0);
+    const cashOrders = orders.filter((o) => o.payment_kind === "cash");
+    res.json({
+      driverId: Number(driverId), driverName: driver.name, driverCode: driver.driver_code,
+      date: date || new Date().toISOString().slice(0, 10),
+      orders,
+      orderCount: orders.length,
+      deliveryFeesTotal: orders.reduce((s, o) => s + Number(o.delivery_fee || 0), 0),
+      bonusTotal,
+      collectedBonusTotal: orders.filter((o) => o.collected === true).reduce((s, o) => s + o.bonus, 0),
+      pendingBonusTotal: orders.filter((o) => o.collected === false).reduce((s, o) => s + o.bonus, 0),
+      cashPendingCount: cashOrders.filter((o) => o.collected === false).length,
+      cashCollectedCount: cashOrders.filter((o) => o.collected === true).length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/driver-settlements - {driverId, actualHandover, notes?}
 router.post("/", requirePermission("driver_settlements.create"), async (req, res) => {
   const { driverId, actualHandover, notes } = req.body;

@@ -1754,6 +1754,84 @@ async function loadDriverSettlePendingDrivers() {
   } catch (e) {
     errBox.textContent = e.message;
     body.innerHTML = "";
+  } finally {
+    // المرحلة 8.47: رابط تقرير كل أوردرات سائق (تحصيل شيفت كامل) - متاح دايمًا زي ما هي القايمة، حتى
+    // لو مفيش أي سائق عنده كاش معلّق دلوقتي (السائق ممكن يكون خلّص كل تحصيله بالفعل بس لسه محتاج مراجعة
+    // شيفته كله آخر اليوم - عشان كده الرابط ده منفصل تمامًا عن قايمة pending-drivers فوق)
+    const link = document.createElement("div");
+    link.style.cssText = "text-align:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)";
+    link.innerHTML = `<button id="driverDayReportLinkBtn" style="background:none;border:none;color:var(--gold-bright);cursor:pointer;font-size:12px;text-decoration:underline">📋 تقرير كل أوردرات سائق (شيفت كامل)</button>`;
+    document.getElementById("driverSettleModalBody").appendChild(link);
+    document.getElementById("driverDayReportLinkBtn").onclick = showDriverDayReportPicker;
+  }
+}
+
+// المرحلة 8.47: فورم اختيار سائق + تاريخ لتقرير "كل الأوردرات" - منفصل عن قايمة تحصيل الكاش (pending-
+// drivers) لأنه لازم يشتغل مع أي سائق في الفرع، حتى لو خلّص كل تحصيله بالفعل النهاردة
+async function showDriverDayReportPicker() {
+  const body = document.getElementById("driverSettleModalBody");
+  const errBox = document.getElementById("driverSettleModalErr");
+  errBox.textContent = "";
+  document.getElementById("driverSettleModalSubmit").style.display = "none";
+  document.getElementById("driverSettlePrintBtn").style.display = "none";
+  body.innerHTML = `<div style="text-align:center;color:var(--faint)">جاري التحميل...</div>`;
+  try {
+    const drivers = await ordersApi("/api/driver-settlements/branch-drivers");
+    const today = new Date().toISOString().slice(0, 10);
+    body.innerHTML = `
+      <label>السائق</label>
+      <select id="driverDayReportDriverSelect">${drivers.map(d => `<option value="${d.id}">${d.name}${d.driver_code ? ` (${d.driver_code})` : ""}</option>`).join("")}</select>
+      <label>اليوم</label>
+      <input id="driverDayReportDateInput" type="date" value="${today}" />
+      <button id="driverDayReportShowBtn" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--gold-bright);color:#221E17;font-weight:800;cursor:pointer;margin-top:6px">عرض التقرير</button>
+    `;
+    document.getElementById("driverSettleBackBtn").style.display = "block";
+    document.getElementById("driverSettleBackBtn").textContent = "↩️ رجوع لتحصيل الكاش";
+    document.getElementById("driverDayReportShowBtn").onclick = () => {
+      const driverId = Number(document.getElementById("driverDayReportDriverSelect").value);
+      const date = document.getElementById("driverDayReportDateInput").value;
+      showDriverDayReport(driverId, date);
+    };
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+}
+
+let driverDayReportLastData = null;
+
+async function showDriverDayReport(driverId, date) {
+  const body = document.getElementById("driverSettleModalBody");
+  const errBox = document.getElementById("driverSettleModalErr");
+  errBox.textContent = "";
+  body.innerHTML = `<div style="text-align:center;color:var(--faint)">جاري التحميل...</div>`;
+  try {
+    const data = await ordersApi(`/api/driver-settlements/driver-orders?driverId=${driverId}&date=${date}`);
+    driverDayReportLastData = data;
+    const statusLabel = (o) => o.payment_kind === "cash" ? (o.collected ? "متحصّل" : "معلّق") : "غير نقدي";
+    const rows = data.orders.map(o => `
+      <tr><td>#${o.id}</td><td>${money(o.total)}</td><td>${money(o.delivery_fee)}</td><td>${money(o.bonus)}</td><td>${statusLabel(o)}</td></tr>
+    `).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--faint)">مفيش طلبات مُسلَّمة لهذا السائق في اليوم ده</td></tr>`;
+    body.innerHTML = `
+      <div class="meta" style="margin-bottom:8px">${data.driverName}${data.driverCode ? ` (${data.driverCode})` : ""} — ${data.date}</div>
+      <table>
+        <thead><tr><th>الطلب</th><th>الإجمالي</th><th>خدمة التوصيل</th><th>بونص</th><th>الحالة</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr class="totalsRow"><td>${data.orderCount} طلب</td><td></td><td>${money(data.deliveryFeesTotal)}</td><td>${money(data.bonusTotal)}</td><td></td></tr>
+        </tfoot>
+      </table>
+      <div class="meta">منه بونص متحصّل بالفعل: <b>${money(data.collectedBonusTotal)}</b> — بونص لسه معلّق: <b>${money(data.pendingBonusTotal)}</b></div>
+    `;
+    document.getElementById("driverSettlePrintBtn").style.display = "block";
+    document.getElementById("driverSettlePrintBtn").textContent = "🖨️ طباعة تقرير الأوردرات";
+    document.getElementById("driverSettlePrintBtn").onclick = () => {
+      SatamoniPrint.printDriverDayReport(driverDayReportLastData, {});
+    };
+    document.getElementById("driverSettleBackBtn").style.display = "block";
+    document.getElementById("driverSettleBackBtn").textContent = "↩️ رجوع لاختيار سائق/تاريخ تاني";
+    document.getElementById("driverSettleBackBtn").onclick = showDriverDayReportPicker;
+  } catch (e) {
+    errBox.textContent = e.message;
   }
 }
 
@@ -1816,18 +1894,18 @@ document.getElementById("driverSettleModalSubmit").onclick = async () => {
     document.getElementById("driverSettleModalBody").innerHTML = "";
     submitBtn.style.display = "none";
     document.getElementById("driverSettlePrintBtn").style.display = "block";
+    document.getElementById("driverSettlePrintBtn").textContent = "🖨️ طباعة إيصال التحصيل";
+    document.getElementById("driverSettlePrintBtn").onclick = () => {
+      SatamoniPrint.printDriverSettlement({ id: driverSettleLastSettlementId }, ordersApi, {});
+    };
     document.getElementById("driverSettleBackBtn").style.display = "block";
     document.getElementById("driverSettleBackBtn").textContent = "↩️ تحصيل من سائق تاني";
+    document.getElementById("driverSettleBackBtn").onclick = loadDriverSettlePendingDrivers;
   } catch (e) {
     errBox.textContent = e.message;
   } finally {
     submitBtn.disabled = false;
   }
-};
-
-document.getElementById("driverSettlePrintBtn").onclick = () => {
-  if (!driverSettleLastSettlementId) return;
-  SatamoniPrint.printDriverSettlement({ id: driverSettleLastSettlementId }, ordersApi, {});
 };
 
 document.getElementById("cashEntryModalSubmit").onclick = async () => {
