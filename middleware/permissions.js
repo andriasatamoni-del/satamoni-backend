@@ -105,10 +105,19 @@ const ROLE_PERMISSIONS = {
     // منفصلة هنا أصلًا (عكس driver_settlements) لأن المصروف الناتج بيعدّي على مراجعة expenses.review
     // العادية (مدير الفرع/المحاسب) قبل ما يترحّل محاسبيًا، مش محتاج مسار مراجعة إضافي مكرر
     "driver_shifts.manage",
+    // المرحلة 8.49: "خروج مع الطيار" في شاشة الكاشير كان بيطلب اسم طيار حر بـprompt (مش مربوط بسجل سائق
+    // حقيقي - الطلب مايظهرش في تحصيل الكاش/البونص/أجر الشيفت بتاعته أبدًا). الإصلاح استخدم نفس منطق
+    // driver-engine الموجود فعلًا في callcenter.html/delivery.html (assign -> out-for-delivery)، لكن ده
+    // كان هيفضل يفشل بـ403 لأن الكاشير معندوش deliveries.assign أصلًا - نفس فلسفة driver_settlements.create
+    // بالظبط: الكاشير هو اللي فعليًا واقف قدام السائق وقت الخروج، فمنطقي يقدر يعيّنه ويسجّل خروجه/تسليمه بنفسه
+    "deliveries.assign",
   ],
   callcenter: [
     "orders.create", "orders.discount.request", "orders.void.request",
     "approvals.create",
+    // المرحلة 8.49: نفس السبب بالظبط بتاع الكاشير فوق - شاشة الكول سنتر هي مين بيستخدم زرار "خروج مع
+    // الطيار" فعليًا يوميًا (مقفولة على دور callcenter/admin بس)، وكانت هتفشل بـ403 من غير الصلاحية دي
+    "deliveries.assign",
   ],
   // المرحلة 7F: السائق أضيق دور في النظام عمدًا - طلباته المُسندة له بس (deliveries.view_own/update_own،
   // مقفولة كمان على مستوى الكود بمطابقة drivers.user_id مع req.user.id، مش الصلاحية دي بس)، وسجل

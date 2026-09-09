@@ -145,13 +145,11 @@ describe("دورة حياة التوصيل: تعيين -> خروج -> تسليم
     expect(res.body.error).toContain("مش تابع لفرع");
   });
 
-  test("كاشير مينفعش يعيّن سائق", async () => {
+  // المرحلة 8.49: كان الكاشير ممنوع من deliveries.assign تمامًا، وده كان بيكسر زرار "خروج مع الطيار" في
+  // شاشة الكاشير نفسها (مفيش وسيلة تانية تعيّن سائق حقيقي هناك) - اتفتحت له نفس صلاحية تعيين السائق اللي
+  // مدير الفرع عنده، بنفس فلسفة driver_settlements.create (هو اللي واقف قدام السائق فعليًا وقت الخروج)
+  test("الكاشير يقدر يعيّن سائق - الطلب يبقى ASSIGNED", async () => {
     const res = await request(app).post(`/api/deliveries/${orderId}/assign`).set(authed(cashierAToken)).send({ driverId: driverA1Id });
-    expect(res.status).toBe(403);
-  });
-
-  test("مدير الفرع يعيّن سائق - الطلب يبقى ASSIGNED", async () => {
-    const res = await request(app).post(`/api/deliveries/${orderId}/assign`).set(authed(managerAToken)).send({ driverId: driverA1Id });
     expect(res.status).toBe(200);
     expect(res.body.dispatch_status).toBe("ASSIGNED");
     expect(res.body.driver_id).toBe(driverA1Id);
