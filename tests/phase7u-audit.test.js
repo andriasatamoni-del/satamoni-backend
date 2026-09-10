@@ -151,7 +151,7 @@ describe("هجوم انتقالات غير شرعية على دورة حياة �
     const orderRow = await pool.query("SELECT status FROM orders WHERE id = $1", [orderId]);
     expect(orderRow.rows[0].status).toBe("preparing");
 
-    const cancel = await request(app).patch(`/api/orders/${orderId}/status`).set(authed(cashierAToken)).send({ status: "cancelled" });
+    const cancel = await request(app).post(`/api/orders/${orderId}/void`).set(authed(managerAToken)).send({ reason: "اختبار" });
     expect(cancel.status).toBe(200);
     const advance = await request(app).patch(`/api/orders/${orderId}/kitchen-status`).set(authed(cashierAToken)).send({ status: "ACCEPTED" });
     expect(advance.status).toBe(400);

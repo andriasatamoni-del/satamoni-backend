@@ -129,10 +129,11 @@ describe("تتابع حالة المطبخ - صارم بس (مفيش تخطي أ
 
   test("طلب ملغي مينفعش تتغير حالة تحضيره", async () => {
     // طلبات التيك أواي/الصالة بتتسجل status='completed' من لحظة الإنشاء (مدفوعة على طول في الكاشير) -
-    // ده terminal بالفعل فمينفعش تتحول لـ'cancelled' عن طريق /status العادي. طلب الدليفري بس بيتسجل
-    // 'preparing' الأول (لسه معلّق لحد ما يتسلّم)، فده اللي يقدر يتلغي مباشرة ونختبر بيه الحماية دي
+    // ده terminal بالفعل فمينفعش تتحول لـ'cancelled'. طلب الدليفري بس بيتسجل 'preparing' الأول (لسه
+    // معلّق لحد ما يتسلّم)، فده اللي يقدر يتلغي مباشرة ونختبر بيه الحماية دي. المرحلة 8.57: الإلغاء بقى
+    // POST /:id/void بس - مدير الفرع بيوافق بحسابه على طول (مفيش PIN)
     const orderId = await makeOrder(cashierAToken, branchA, "delivery");
-    const cancelRes = await request(app).patch(`/api/orders/${orderId}/status`).set(authed(cashierAToken)).send({ status: "cancelled" });
+    const cancelRes = await request(app).post(`/api/orders/${orderId}/void`).set(authed(managerAToken)).send({ reason: "اختبار" });
     expect(cancelRes.status).toBe(200);
     const res = await request(app).patch(`/api/orders/${orderId}/kitchen-status`).set(authed(cashierAToken)).send({ status: "ACCEPTED" });
     expect(res.status).toBe(400);
@@ -241,7 +242,7 @@ describe("استعلام لوحة المطبخ (GET /api/kds/orders)", () => {
   test("الطلب الملغي مش ظاهر في اللوحة", async () => {
     // طلب دليفري عشان يبدأ status='preparing' (قابل للإلغاء المباشر) - راجع تعليق الاختبار المماثل فوق
     const orderId = await makeOrder(cashierAToken, branchA, "delivery");
-    const cancelRes = await request(app).patch(`/api/orders/${orderId}/status`).set(authed(cashierAToken)).send({ status: "cancelled" });
+    const cancelRes = await request(app).post(`/api/orders/${orderId}/void`).set(authed(managerAToken)).send({ reason: "اختبار" });
     expect(cancelRes.status).toBe(200);
     const res = await request(app).get(`/api/kds/orders?branchId=${branchA}`).set(authed(cashierAToken));
     expect(res.body.find(o => o.id === orderId)).toBeUndefined();

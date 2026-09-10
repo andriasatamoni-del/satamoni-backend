@@ -364,13 +364,25 @@ describe("فشل التسليم وحل الفشل (إعادة جدولة أو ر
     expect(voidRes.body.voided).toBe(true);
   });
 
-  test("مينفعش تسترجع طلب دليفري لسه في الطريق (مش FAILED)", async () => {
+  // المرحلة 8.57: قبل كده الاسترجاع كان مقصور على FAILED بس - أي إلغاء لطلب لسه في الطريق (مش فشل
+  // تسليمه رسميًا) كان مضطر يعدّي من PATCH /:id/status من غير أي موافقة مدير ولا عكس مخزون/قيد، وده
+  // بالظبط الثغرة اللي اتصلحت. دلوقتي void بقى بيغطي الحالة دي مباشرة بنفس الضمانات، وبيشيل الطلب من
+  // لوحة السائق النشطة فورًا (dispatch_status -> RETURNED) عشان مايفضلش شايل طلب ملغي من غير ما يعرف
+  test("ينفع تسترجع طلب دليفري لسه في الطريق (مش FAILED) - بموافقة مدير، وبيتشال من لوحة السائق فورًا", async () => {
     const order = await makeDeliveryOrder(managerAToken, branchA, cashPmId);
     const orderId = order.body.orderId;
     await request(app).post(`/api/deliveries/${orderId}/assign`).set(authed(managerAToken)).send({ driverId: driverA1Id });
     await request(app).post(`/api/deliveries/${orderId}/out-for-delivery`).set(authed(driverA1Token));
+
     const res = await request(app).post(`/api/orders/${orderId}/void`).set(authed(managerAToken)).send({ reason: "تجربة" });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("cancelled");
+    expect(res.body.dispatch_status).toBe("RETURNED");
+    expect(res.body.voided).toBe(true);
+    expect(res.body.driver_id).not.toBeNull(); // السجل التاريخي للسائق يفضل زي ما هو
+
+    const mine = await request(app).get("/api/deliveries/mine").set(authed(driverA1Token));
+    expect(mine.body.some((o) => o.id === orderId)).toBe(false);
   });
 });
 

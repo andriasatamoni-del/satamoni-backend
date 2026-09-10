@@ -334,7 +334,7 @@ describe("6A.4 Concurrency: إلغاء سند استلام (GRN) POSTED - إلغ
   });
 });
 
-describe("6A.4 Concurrency: إلغاء طلب دليفري (PATCH /:id/status → cancelled) - خصم نقاط الولاء مرة واحدة بس", () => {
+describe("6A.4 Concurrency: إلغاء طلب دليفري (POST /:id/void) - خصم نقاط الولاء مرة واحدة بس", () => {
   let branchId, adminToken, orderId;
   const customerPhone = "01099998888";
 
@@ -358,7 +358,7 @@ describe("6A.4 Concurrency: إلغاء طلب دليفري (PATCH /:id/status �
 
   test("3 طلبات إلغاء متزامنة لنفس الطلب - نجاح واحد بس، ونقاط الولاء بتتخصم مرة واحدة بس (30 مش 90)", async () => {
     const results = await Promise.all(
-      Array.from({ length: 3 }, () => request(app).patch(`/api/orders/${orderId}/status`).set(authed(adminToken)).send({ status: "cancelled" }))
+      Array.from({ length: 3 }, () => request(app).post(`/api/orders/${orderId}/void`).set(authed(adminToken)).send({ reason: "اختبار تزامن" }))
     );
     const successCount = results.filter((r) => r.status === 200).length;
     expect(successCount).toBe(1);
