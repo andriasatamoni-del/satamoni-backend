@@ -208,11 +208,15 @@
         <input id="areaFee" type="number" placeholder="رسوم التوصيل" />
         <input id="areaMin" type="number" placeholder="أقل قيمة طلب" />
         <input id="areaEta" type="number" placeholder="مدة التوصيل (دقيقة)" />
+        <select id="areaBranch"></select>
         <button id="areaSubmit">إضافة</button>
       </div>
+      <!-- المرحلة 8.56: منطقة توصيل من غير فرع مربوط كانت بتخلي أي طلب دليفري ليها يتسجل بـbranch_id
+      فاضي - "ينجح" ظاهريًا لكن مبيظهرش في أي شاشة فرع ولا المطبخ أبدًا (راجع routes/orders.js). سلكتور
+      الفرع بقى إجباري هنا عشان منطقة جديدة متتعملش من غيره تاني -->
       <div class="err" id="areaErr"></div>
     </div>
-    <table><thead><tr><th>المنطقة</th><th>الرسوم</th><th>أقل طلب</th><th>المدة</th><th></th></tr></thead><tbody id="areasBody"></tbody></table>
+    <table><thead><tr><th>المنطقة</th><th>الرسوم</th><th>أقل طلب</th><th>المدة</th><th>الفرع</th><th></th></tr></thead><tbody id="areasBody"></tbody></table>
   </div>
 
   <!-- طرق الدفع -->
@@ -440,6 +444,7 @@ let menuItemsCache = [];
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
+  await loadBranchesForAreas();
   await Promise.all([loadCategories(), loadItems(), loadAreas(), loadPayments()]);
   addComboItemRow();
   await loadCombos();
@@ -859,12 +864,29 @@ document.getElementById("itemSubmit").onclick = async () => {
 };
 
 // ---------------- مناطق التوصيل ----------------
+// المرحلة 8.56: منطقة توصيل من غير فرع مربوط بتخلي أي طلب دليفري ليها يتسجل بـbranch_id فاضي - يظهر
+// للعميل إنه نجح لكنه بيفضل مخفي تمامًا عن كل شاشات الفرع والمطبخ (راجع routes/orders.js). لازم نعرض
+// قائمة الفروع هنا عشان سلكتور الإضافة يبقى إجباري، وعمود "الفرع" في الجدول عشان أي منطقة قديمة
+// من غير فرع (زي 11 منطقة اتستوردت كده) تبان واضحة وتتصلح بضغطة
+let branchesForAreas = [];
+async function loadBranchesForAreas() {
+  branchesForAreas = await api("/api/branches");
+  document.getElementById("areaBranch").innerHTML =
+    `<option value="">-- اختر الفرع --</option>` +
+    branchesForAreas.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+}
 async function loadAreas() {
   const areas = await api("/api/config/delivery-areas");
+  const branchOptionsHtml = (currentId) =>
+    `<option value="">⚠️ بدون فرع</option>` +
+    branchesForAreas.map(b => `<option value="${b.id}" ${String(b.id) === String(currentId) ? "selected" : ""}>${b.name}</option>`).join("");
   document.getElementById("areasBody").innerHTML = areas.map(a => `
-    <tr><td>${a.name}</td><td>${money(a.fee)}</td><td>${money(a.min_order)}</td><td>${a.eta_minutes} د</td>
-    <td><button class="linkbtn" data-editfee="${a.id}" data-current="${a.fee}">عدّل الرسوم</button></td></tr>
-  `).join("") || `<tr><td colspan="5">لسه مفيش مناطق توصيل</td></tr>`;
+    <tr ${a.branch_id ? "" : 'style="background:#fee"'}>
+      <td>${a.name}</td><td>${money(a.fee)}</td><td>${money(a.min_order)}</td><td>${a.eta_minutes} د</td>
+      <td><select data-areabranch="${a.id}">${branchOptionsHtml(a.branch_id)}</select></td>
+      <td><button class="linkbtn" data-editfee="${a.id}" data-current="${a.fee}">عدّل الرسوم</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">لسه مفيش مناطق توصيل</td></tr>`;
   document.querySelectorAll("[data-editfee]").forEach(btn => {
     btn.onclick = async () => {
       const newFee = prompt("الرسوم الجديدة:", btn.dataset.current);
@@ -873,10 +895,20 @@ async function loadAreas() {
       loadAreas();
     };
   });
+  document.querySelectorAll("[data-areabranch]").forEach(sel => {
+    sel.onchange = async () => {
+      await api(`/api/config/delivery-areas/${sel.dataset.areabranch}`, {
+        method: "PATCH", body: JSON.stringify({ branchId: sel.value ? Number(sel.value) : null }),
+      });
+      loadAreas();
+    };
+  });
 }
 document.getElementById("areaSubmit").onclick = async () => {
   const errBox = document.getElementById("areaErr");
   errBox.textContent = "";
+  const branchId = document.getElementById("areaBranch").value;
+  if (!branchId) { errBox.textContent = "لازم تختار الفرع"; return; }
   try {
     await api("/api/config/delivery-areas", {
       method: "POST",
@@ -885,12 +917,14 @@ document.getElementById("areaSubmit").onclick = async () => {
         fee: Number(document.getElementById("areaFee").value || 0),
         minOrder: Number(document.getElementById("areaMin").value || 0),
         etaMinutes: Number(document.getElementById("areaEta").value || 30),
+        branchId: Number(branchId),
       }),
     });
     document.getElementById("areaName").value = "";
     document.getElementById("areaFee").value = "";
     document.getElementById("areaMin").value = "";
     document.getElementById("areaEta").value = "";
+    document.getElementById("areaBranch").value = "";
     await loadAreas();
   } catch (e) { errBox.textContent = e.message; }
 };

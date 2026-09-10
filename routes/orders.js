@@ -142,12 +142,13 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
   const client = await pool.connect();
   try {
     const {
-      branchId, source, orderType, tableNumber,
+      source, orderType, tableNumber,
       deliveryAreaId, addressDetails, customerName, customerPhone, customerPhone2,
       distinguishingMark, paymentMethodId, items: rawItems, deliveryFee = 0, discount = 0,
       discountApprovedBy, idempotencyKey, inventoryOverrideApprovedBy,
       loyaltyPointsRedeemed = 0, talabatOrderId, talabatCashCollected = 0,
     } = req.body;
+    let branchId = req.body.branchId;
 
     if ((source === "pos" || source === "talabat") && !assertOwnBranch(req.user, branchId)) {
       return res.status(403).json({ error: "معندكش صلاحية تسجل طلب على فرع تاني" });
@@ -202,6 +203,25 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     }
 
     const subtotal = items.reduce((s, it) => s + it.lineTotal, 0);
+
+    // المرحلة 8.56: طلبات دليفري لمنطقة مش مربوطة بفرع (زي مناطق قديمة اتستوردت من غير فرع محدد، أو
+    // منطقة جديدة اتعملت من الأدمن من غير اختيار فرع) كانت بتتسجل بـ branch_id فاضي - الطلب "ينجح"
+    // ظاهريًا (العميل بياخد تأكيد ورقم أوردر) لكن بيفضل صف مخفي تمامًا: مبيتطبعش، مبيظهرش في أي شاشة
+    // فرع (POS/كول سنتر/كاشير)، ومبيوصلش لشاشة المطبخ خالص - ده أصل شكوى "الأوردر مسمعتش على السيستم".
+    // دلوقتي بنستخرج الفرع من منطقة التوصيل نفسها (مصدر الحقيقة، مش اللي الفرونت إند حسبه أو بعته) ولو
+    // المنطقة مش مربوطة بفرع بنرفض الطلب برسالة واضحة للعميل، بدل ما "ينجح" ويضيع فعليًا من غير ما حد يعرف
+    if (orderType === "delivery" && deliveryAreaId) {
+      const areaRow = await client.query("SELECT branch_id FROM delivery_areas WHERE id = $1", [deliveryAreaId]);
+      if (areaRow.rows.length === 0) {
+        return res.status(400).json({ error: "منطقة التوصيل غير موجودة" });
+      }
+      if (!areaRow.rows[0].branch_id) {
+        return res.status(400).json({
+          error: "عذرًا، التوصيل غير متاح حاليًا لهذه المنطقة - برجاء التواصل مع الفرع مباشرة على التليفون",
+        });
+      }
+      branchId = areaRow.rows[0].branch_id;
+    }
 
     // خصم فوق النسبة المسموحة للكاشير لوحده لازم يبقى معاه موافقة مدير/أدمن اتاكدنا منها بـ PIN
     // (verify-override-pin) - بنتأكد من صحتها تاني هنا من السيرفر، مش بس بنصدّق الفرونت إند.
@@ -756,6 +776,77 @@ router.get(
       res.json(result.rows);
     } catch (err) {
       res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// المرحلة 8.56: طلبات دليفري قديمة اتسجلت (قبل التحقق فوق) لمنطقة مش مربوطة بفرع فضلت branch_id
+// فاضي عندها - صف موجود فعليًا في القاعدة بس مخفي تمامًا عن كل شاشات الفرع وشاشة المطبخ. الاستعلام
+// العادي (GET /) بيفلتر بـbranchId دايمًا فمش هيرجّعها أبدًا، فمحتاجين endpoint مخصص للأدمن يلاقيها
+// ويقدر يربطها بفرع بأثر رجعي (وبعدها تتظهر/تتطبع عادي زي أي طلب تاني)
+router.get(
+  "/unassigned",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT * FROM orders WHERE branch_id IS NULL ORDER BY created_at DESC LIMIT $1`,
+        [ORDERS_LIST_ROW_LIMIT]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// المرحلة 8.56: تعيين فرع بأثر رجعي لطلب اتسجل بـbranch_id فاضي (راجع GET /unassigned فوق) - بيربط
+// الطلب بفرع حقيقي وبعدين يشغّل نفس تريجر الطباعة اللي كان المفروض يشتغل وقت الإنشاء (queueOrderCreationPrintJobs
+// بتقرا branch_id من الطلب نفسه، فبتلقطه صح دلوقتي بعد التحديث) - عشان الفرع يقدر يشوف/يطبع الطلب فعليًا.
+// مقصور على طلب لسه من غير فرع بالفعل عمدًا (منع إساءة استخدام تنقل طلب فرع لفرع تاني من هنا)
+router.patch(
+  "/:id/assign-branch",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    const { branchId } = req.body;
+    if (!branchId) {
+      return res.status(400).json({ error: "لازم تحدد الفرع" });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const orderRes = await client.query("SELECT * FROM orders WHERE id = $1 FOR UPDATE", [req.params.id]);
+      if (orderRes.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "الطلب مش موجود" });
+      }
+      const order = orderRes.rows[0];
+      if (order.branch_id) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "الطلب ده مرتبط بفرع بالفعل" });
+      }
+      const branchRes = await client.query("SELECT id FROM branches WHERE id = $1", [branchId]);
+      if (branchRes.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "الفرع غير موجود" });
+      }
+
+      await client.query("UPDATE orders SET branch_id = $1 WHERE id = $2", [branchId, req.params.id]);
+      await logAudit(client, {
+        branchId, userId: req.user.id, action: "ORDER_BRANCH_ASSIGNED", entityType: "order", entityId: order.id,
+        oldValues: { branchId: null }, newValues: { branchId }, req,
+      });
+      await queueOrderCreationPrintJobs(client, { orderId: order.id, createdBy: req.user.id });
+
+      await client.query("COMMIT");
+      res.json({ success: true });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   }
 );
