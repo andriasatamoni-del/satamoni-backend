@@ -40,7 +40,19 @@ router.get("/full", async (req, res) => {
       pool.query(`
         SELECT mi.id, mi.name, mi.description, mi.image_url AS image, mi.is_best AS best,
                mc.name AS category, mc.display_order AS "categoryOrder", mc.menu_group AS "menuGroup",
-               json_agg(jsonb_build_object('id', v.id, 'label', v.label, 'price', v.price, 'talabatPrice', v.talabat_price) ORDER BY v.id) AS variants,
+               json_agg(jsonb_build_object(
+                 'id', v.id, 'label', v.label, 'price', v.price, 'talabatPrice', v.talabat_price,
+                 -- المرحلة 8.53: مكوّنات الوصفة لكل حجم - عشان الموقع يقدر يعرض اختيار "بدون <مكوّن>"
+                 -- زي شاشة الكاشير بالظبط (نفس مصدر البيانات اللي /api/inventory/recipe/:variantId
+                 -- بيرجّعه للموظفين، بس هنا مكشوف عمومي للأسماء بس - مفيش أرصدة مخزون أو تكاليف)
+                 'ingredients', COALESCE(
+                   (SELECT json_agg(jsonb_build_object('inventoryItemId', mvi.inventory_item_id, 'name', ii.name) ORDER BY ii.name)
+                    FROM menu_item_variant_ingredients mvi
+                    JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+                    WHERE mvi.variant_id = v.id),
+                   '[]'
+                 )
+               ) ORDER BY v.id) AS variants,
                COALESCE(
                  (SELECT json_agg(jsonb_build_object(
                     'id', m.id, 'name', m.name, 'priceDelta', m.price_delta,
