@@ -137,7 +137,6 @@
     <div class="tabbtn" data-tab="orders">طلبياتي</div>
     <div class="tabbtn" data-tab="receiving">التحويلات الواردة</div>
     <div class="tabbtn" data-tab="stock">المخزون</div>
-    <div class="tabbtn" data-tab="reconcile" style="display:none">جرد المخزون</div>
     <div class="tabbtn" data-tab="waste" style="display:none">تسجيل هالك</div>
   </div>
 
@@ -251,19 +250,13 @@
     <table><thead><tr><th>الصنف</th><th>الرصيد</th></tr></thead><tbody id="stockBody"></tbody></table>
   </div>
 
-  <!-- المرحلة 8.19: تابي "جرد المخزون" و"تسجيل هالك" دول منقولين بالظبط من satamoni-kitchen.html
-       (كان جوه شاشة السنتر كيتشن القديمة، من غير أي بديل تاني ليهم) بعد ما بقى باقي وظائف الشاشة
-       دي زيادة عن اللزوم بعد دمج طلبيات الفرع/السنتر كيتشن/المشتريات/التصنيع في procurement-hub.
-       أدمن/مدير فرع بس (زي ما كانوا بالظبط في الشاشة القديمة) - بيستخدموا نفس currentBranchId()
-       المستخدم في باقي تابات الصفحة دي بدل صندوق اختيار فرع منفصل كان في الشاشة القديمة -->
-  <div class="panel" id="panel-reconcile">
-    <h1>جرد المخزون</h1>
-    <div class="formbox">
-      <div style="font-size:12px;color:var(--faint);margin-bottom:8px">دخّل الكمية الفعلية بعد الجرد لكل صنف، والفرق هيتسجل تلقائيًا كحركة تسوية.</div>
-      <table><thead><tr><th>الصنف</th><th>الرصيد الحالي</th><th>الكمية الفعلية</th><th>الفرق</th><th></th></tr></thead><tbody id="reconcileBody"></tbody></table>
-    </div>
-  </div>
-
+  <!-- المرحلة 8.19: تاب "تسجيل هالك" منقول بالظبط من satamoni-kitchen.html (كان جوه شاشة السنتر
+       كيتشن القديمة، من غير أي بديل تاني ليه) بعد ما بقى باقي وظائف الشاشة دي زيادة عن اللزوم بعد
+       دمج طلبيات الفرع/السنتر كيتشن/المشتريات/التصنيع في procurement-hub. أدمن/مدير فرع بس (زي ما
+       كانوا بالظبط في الشاشة القديمة) - بيستخدم نفس currentBranchId() المستخدم في باقي تابات الصفحة
+       دي بدل صندوق اختيار فرع منفصل كان في الشاشة القديمة. ملحوظة 8.58: تاب "جرد المخزون" البسيط اللي
+       كان هنا اتشال - شاشة الجرد الفعلي (spot check + عجز/زيادة + أسباب + تسوية) بقت في شاشة الأصناف
+       (satamoni-items.html) وهي المرجع الوحيد للجرد دلوقتي -->
   <div class="panel" id="panel-waste">
     <h1>تسجيل هالك (تلف / انتهاء صلاحية / كسر)</h1>
     <div class="formbox">
@@ -418,7 +411,6 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
     if (btn.dataset.tab === "receiving") loadReceivingTab();
     if (btn.dataset.tab === "stock") loadStockTab();
     if (btn.dataset.tab === "dashboard") loadDashboardTab();
-    if (btn.dataset.tab === "reconcile") loadReconcileTable();
     if (btn.dataset.tab === "waste") loadWasteEntries();
   };
 });
@@ -454,9 +446,8 @@ async function boot() {
   document.getElementById("suggestDate").value = new Date().toISOString().slice(0, 10);
   addManualRow();
 
-  // جرد المخزون وتسجيل الهالك لأدمن/مدير فرع بس - زي ما كانوا بالظبط في satamoni-kitchen.html القديمة
+  // تسجيل الهالك لأدمن/مدير فرع بس - زي ما كان بالظبط في satamoni-kitchen.html القديمة
   if (auth.user.role === "admin" || auth.user.role === "branch_manager") {
-    document.querySelector('[data-tab="reconcile"]').style.display = "block";
     document.querySelector('[data-tab="waste"]').style.display = "block";
     document.getElementById("wasteItem").innerHTML = itemOptions();
     document.getElementById("wasteDate").value = new Date().toISOString().slice(0, 10);
@@ -476,7 +467,6 @@ async function loadBranchData() {
   const activeTab = document.querySelector(".tabbtn.active");
   if (activeTab && activeTab.dataset.tab === "receiving") await loadReceivingTab();
   if (activeTab && activeTab.dataset.tab === "stock") await loadStockTab();
-  if (activeTab && activeTab.dataset.tab === "reconcile") await loadReconcileTable();
   if (activeTab && activeTab.dataset.tab === "waste") await loadWasteEntries();
 }
 
@@ -956,48 +946,6 @@ async function loadStockTab() {
   document.getElementById("stockBody").innerHTML = stock.map(s => `
     <tr><td data-label="الصنف">${s.name}</td><td data-label="الرصيد">${s.quantity} ${s.unit}</td></tr>
   `).join("") || `<tr><td colspan="2">مفيش رصيد مسجل لسه</td></tr>`;
-}
-
-// ---------------- جرد المخزون (منقول من satamoni-kitchen.html - المرحلة 8.19) ----------------
-async function loadReconcileTable() {
-  const branchId = currentBranchId();
-  if (!branchId) { document.getElementById("reconcileBody").innerHTML = ""; return; }
-  const [items, stock] = await Promise.all([
-    inventoryItems.length ? Promise.resolve(inventoryItems) : api("/api/inventory/items"),
-    api(`/api/inventory/stock?branchId=${branchId}`),
-  ]);
-  document.getElementById("reconcileBody").innerHTML = items.map(i => {
-    const s = stock.find(x => x.name === i.name);
-    const current = s ? Number(s.quantity) : 0;
-    return `
-      <tr data-recrow="${i.id}">
-        <td>${i.name} (${i.unit})</td>
-        <td>${current}</td>
-        <td><input type="number" class="rec-actual" style="width:100px;background:var(--bg-alt);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px" value="${current}" /></td>
-        <td class="rec-variance">—</td>
-        <td><button class="linkbtn" data-reconcile="${i.id}" data-current="${current}">تحديث</button></td>
-      </tr>
-    `;
-  }).join("") || `<tr><td colspan="5">مفيش أصناف</td></tr>`;
-
-  document.querySelectorAll("[data-reconcile]").forEach(btn => {
-    btn.onclick = async () => {
-      const row = btn.closest("tr");
-      const actual = Number(row.querySelector(".rec-actual").value);
-      const varianceCell = row.querySelector(".rec-variance");
-      try {
-        const result = await api("/api/inventory/reconcile", {
-          method: "POST",
-          body: JSON.stringify({ branchId, inventoryItemId: btn.dataset.reconcile, actualQuantity: actual }),
-        });
-        const v = Number(result.variance);
-        varianceCell.textContent = v === 0 ? "بدون فرق" : v.toFixed(3);
-        varianceCell.className = `rec-variance ${v < 0 ? "diffneg" : v > 0 ? "diffpos" : ""}`;
-        row.children[1].textContent = result.actualQuantity;
-        btn.dataset.current = result.actualQuantity;
-      } catch (e) { alert(apiErrorMessage(e)); }
-    };
-  });
 }
 
 // ---------------- تسجيل هالك (منقول من satamoni-kitchen.html - المرحلة 8.19) ----------------

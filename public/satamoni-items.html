@@ -166,6 +166,26 @@
   #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
   #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
 
+  /* ---------------- المرحلة 8.58: جرد المخزون (Spot Check) ---------------- */
+  #stocktakeBtn {
+    background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 8px;
+    padding: 10px 16px; cursor: pointer; font-size: 13px; font-weight: 700; margin-bottom: 14px; width: 100%;
+  }
+  #stocktakeView { display: none; }
+  .stRow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .stRow select, .stRow input { background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
+  #stLoadBtn, #stConfirmBtn { background: var(--red); color: #fff; border: none; border-radius: 8px; padding: 10px 18px; cursor: pointer; font-size: 13px; font-weight: 700; }
+  #stConfirmBtn[disabled] { opacity: .5; cursor: default; }
+  .err { color: var(--err); font-size: 12px; margin: 6px 0; min-height: 14px; }
+  .ok { color: var(--green); font-size: 13px; margin: 10px 0; }
+  .strow-item td { vertical-align: middle; }
+  .strow-item input.actualQty { width: 90px; }
+  .strow-item .varianceCell.neg { color: var(--err); font-weight: 700; }
+  .strow-item .varianceCell.pos { color: var(--green); font-weight: 700; }
+  .strow-item select.reasonSelect, .strow-item select.chargeSelect, .strow-item select.employeeSelect { min-width: 130px; font-size: 12px; }
+  .stHistoryRow { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .stHistoryRow:last-child { border-bottom: none; }
+
   @media (max-width: 820px) {
     #main { max-width: 100%; padding: 16px 12px 50px; }
     .dgrid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
@@ -204,6 +224,9 @@
   <!-- شاشة القائمة -->
   <div id="listView">
     <button id="addItemBtn" style="display:none">+ إضافة صنف جديد</button>
+    <!-- المرحلة 8.58: جرد المخزون الفعلي (Spot Check) - المرجع الوحيد للجرد في السيستم (الشاشة
+    القديمة البسيطة في صفحة الطلبات اتشالت لصالح الشاشة دي) -->
+    <button id="stocktakeBtn" style="display:none">🧮 جرد المخزون (Spot Check)</button>
     <div id="searchBox">
       <input id="itemSearchInput" type="text" placeholder="ابحث باسم الصنف..." autocomplete="off" />
     </div>
@@ -221,6 +244,41 @@
     <button id="backToListBtn">→ رجوع للقائمة</button>
     <div id="detailHeader"></div>
     <div id="detailBody"></div>
+  </div>
+
+  <!-- المرحلة 8.58: جرد المخزون الفعلي - اختار خامة واحدة أو الكل، ادخل الكمية الفعلية، شوف الفرق
+  والقيمة والأسباب المقترحة فورًا، وحدد إزاي يتحمّل أي عجز (حساب محاسبي، أو سلفة على موظف بعينه) -->
+  <div id="stocktakeView">
+    <button id="backFromStocktakeBtn">→ رجوع للأصناف</button>
+    <h1 style="font-size:18px;color:var(--gold-bright);margin:6px 0 14px">🧮 جرد المخزون الفعلي</h1>
+    <div style="font-size:12px;color:var(--faint);margin-bottom:14px">
+      اختار خامة واحدة أو كل الخامات، ادخل الكمية اللي عددتها فعليًا - الفرق وقيمته وأسباب مقترحة هيظهروا
+      فورًا. اسيب خانة "الكمية الفعلية" فاضية لأي خامة ملهاش داعي تتعد دلوقتي.
+    </div>
+    <div class="stRow">
+      <select id="stBranchSelect" style="display:none"></select>
+      <select id="stModeSelect">
+        <option value="all">كل الخامات</option>
+        <option value="single">خامة واحدة</option>
+      </select>
+      <select id="stSingleItemSelect" style="display:none;min-width:200px"></select>
+      <button id="stLoadBtn" type="button">تحميل</button>
+    </div>
+    <div id="stErr" class="err"></div>
+    <div class="tablewrap"><table class="rtable" id="stTable" style="display:none">
+      <thead><tr>
+        <th>الخامة</th><th>الوحدة</th><th>رصيد النظام</th><th>الكمية الفعلية</th>
+        <th>الفرق</th><th>القيمة</th><th>السبب</th><th>يتحمّلها</th>
+      </tr></thead>
+      <tbody id="stTableBody"></tbody>
+    </table></div>
+    <div class="stRow" style="margin-top:14px">
+      <button id="stConfirmBtn" type="button" style="display:none" disabled>✅ تأكيد الجرد</button>
+    </div>
+    <div id="stResultMsg"></div>
+
+    <h1 style="font-size:16px;color:var(--gold-bright);margin:30px 0 10px">سجل جلسات الجرد</h1>
+    <div id="stHistoryWrap"></div>
   </div>
 
 </div>
@@ -898,7 +956,262 @@ async function boot() {
   const addBtn = document.getElementById("addItemBtn");
   addBtn.style.display = canEdit ? "block" : "none";
   if (canEdit) addBtn.onclick = () => openAddItemModal();
+  // المرحلة 8.58: نفس مين عنده inventory.count فعليًا (أدمن/مدير فرع - راجع middleware/permissions.js)
+  const stBtn = document.getElementById("stocktakeBtn");
+  stBtn.style.display = (auth.user.role === "admin" || auth.user.role === "branch_manager") ? "block" : "none";
+  if (stBtn.style.display === "block") stBtn.onclick = openStocktakeView;
   await loadItemList();
+}
+
+// ---------------- المرحلة 8.58: جرد المخزون الفعلي (Spot Check) ----------------
+// أسباب مقترحة - نفس القوائم بالظبط اللي في routes/stocktake.js (SHORTAGE_REASONS/SURPLUS_REASONS)،
+// اتكررت هنا عمدًا عشان تظهر فورًا وإنت بتكتب من غير أي رحلة للسيرفر لكل خامة (الشاشة ممكن يبقى فيها
+// عشرات الصفوف في وضع "كل الخامات") - لو الأدمن عدّل القوائم في الباك إند لازم يعدّلها هنا كمان
+const ST_SHORTAGE_REASONS = [
+  "تلف/كسر أثناء التخزين أو التحضير", "انتهاء الصلاحية", "سرقة أو فقد",
+  "استخدام أكتر من الكمية القياسية في الوصفة", "خطأ في وحدة القياس أو التحويل",
+  "نقل لفرع تاني لسه ما اتسجلش", "خطأ في تسجيل كمية شراء سابقة",
+];
+const ST_SURPLUS_REASONS = [
+  "جرد سابق كان ناقص (كمية مسجّلة أقل من الحقيقي)", "استلام كمية زيادة عن الفاتورة من المورد",
+  "نقل من فرع تاني لسه ما اتسجلش", "خطأ في وحدة القياس أو التحويل",
+];
+
+let stBranchId = null;
+let stBoard = []; // [{id, name, unit, unit_cost, item_type, system_quantity}]
+let stEmployeesCache = null;
+
+function showListView2() { document.getElementById("stocktakeView").style.display = "none"; showListView(); }
+async function openStocktakeView() {
+  document.getElementById("detailView").style.display = "none";
+  document.getElementById("listView").style.display = "none";
+  document.getElementById("stocktakeView").style.display = "block";
+  window.scrollTo(0, 0);
+
+  const branchSel = document.getElementById("stBranchSelect");
+  if (auth.user.role === "admin") {
+    if (!branchSel.dataset.loaded) {
+      const branches = await api("/api/branches/all");
+      branchSel.innerHTML = branches.map((b) => `<option value="${b.id}">${esc(b.name)}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
+      branchSel.dataset.loaded = "1";
+    }
+    branchSel.style.display = "inline-block";
+    stBranchId = Number(branchSel.value);
+  } else {
+    branchSel.style.display = "none";
+    stBranchId = auth.user.branchId;
+  }
+  await loadStocktakeBoard();
+  await loadStocktakeHistory();
+}
+document.getElementById("backFromStocktakeBtn").onclick = showListView2;
+document.getElementById("stBranchSelect").onchange = async () => {
+  stBranchId = Number(document.getElementById("stBranchSelect").value);
+  await loadStocktakeBoard();
+  await loadStocktakeHistory();
+};
+document.getElementById("stModeSelect").onchange = () => {
+  const isSingle = document.getElementById("stModeSelect").value === "single";
+  document.getElementById("stSingleItemSelect").style.display = isSingle ? "inline-block" : "none";
+};
+
+async function loadStocktakeBoard() {
+  const errBox = document.getElementById("stErr");
+  errBox.textContent = "";
+  try {
+    stBoard = await api(`/api/stocktake/board?branchId=${stBranchId}`);
+    const singleSel = document.getElementById("stSingleItemSelect");
+    singleSel.innerHTML = stBoard.map((it) => `<option value="${it.id}">${esc(it.name)}</option>`).join("");
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+}
+
+document.getElementById("stLoadBtn").onclick = () => {
+  const mode = document.getElementById("stModeSelect").value;
+  const items = mode === "single"
+    ? stBoard.filter((it) => String(it.id) === document.getElementById("stSingleItemSelect").value)
+    : stBoard;
+  renderStocktakeTable(items);
+};
+
+async function ensureStEmployees() {
+  if (stEmployeesCache) return stEmployeesCache;
+  stEmployeesCache = await api(`/api/hr/employees?branchId=${stBranchId}`);
+  return stEmployeesCache;
+}
+
+function renderStocktakeTable(items) {
+  const table = document.getElementById("stTable");
+  const body = document.getElementById("stTableBody");
+  document.getElementById("stResultMsg").innerHTML = "";
+  if (items.length === 0) {
+    table.style.display = "none";
+    document.getElementById("stConfirmBtn").style.display = "none";
+    return;
+  }
+  table.style.display = "table";
+  body.innerHTML = items.map((it) => `
+    <tr class="strow-item" data-itemid="${it.id}" data-unitcost="${it.unit_cost == null ? "" : it.unit_cost}" data-sysqty="${it.system_quantity}">
+      <td>${esc(it.name)}</td>
+      <td>${esc(it.unit)}</td>
+      <td>${num(it.system_quantity)}</td>
+      <td><input class="actualQty" type="number" step="0.001" min="0" placeholder="—" /></td>
+      <td class="varianceCell">—</td>
+      <td class="valueCell">—</td>
+      <td><input class="reasonInput" type="text" list="stReasonsList-${it.id}" placeholder="سبب (اختياري)" style="display:none;width:140px" />
+          <datalist id="stReasonsList-${it.id}"></datalist></td>
+      <td>
+        <select class="chargeSelect" style="display:none">
+          <option value="account">حساب محاسبي</option>
+          <option value="employee">سلفة على موظف</option>
+        </select>
+        <select class="employeeSelect" style="display:none"></select>
+        <span class="noChargeNote" style="display:none;font-size:11px;color:var(--faint)">بدون تكلفة مسجّلة</span>
+      </td>
+    </tr>
+  `).join("");
+
+  body.querySelectorAll("tr.strow-item").forEach((tr) => {
+    const systemQuantity = Number(tr.dataset.sysqty);
+    const unitCost = tr.dataset.unitcost === "" ? null : Number(tr.dataset.unitcost);
+    const actualInput = tr.querySelector(".actualQty");
+    const varianceCell = tr.querySelector(".varianceCell");
+    const valueCell = tr.querySelector(".valueCell");
+    const reasonInput = tr.querySelector(".reasonInput");
+    const reasonsList = tr.querySelector("datalist");
+    const chargeSelect = tr.querySelector(".chargeSelect");
+    const employeeSelect = tr.querySelector(".employeeSelect");
+    const noChargeNote = tr.querySelector(".noChargeNote");
+
+    actualInput.oninput = () => {
+      const raw = actualInput.value;
+      if (raw === "") {
+        varianceCell.textContent = "—"; varianceCell.className = "varianceCell";
+        valueCell.textContent = "—";
+        reasonInput.style.display = "none";
+        chargeSelect.style.display = "none"; employeeSelect.style.display = "none"; noChargeNote.style.display = "none";
+        updateStConfirmState();
+        return;
+      }
+      const actual = Number(raw);
+      const variance = Math.round((actual - systemQuantity) * 1000) / 1000;
+      if (variance === 0) {
+        varianceCell.textContent = "مطابق"; varianceCell.className = "varianceCell";
+        valueCell.textContent = "—";
+        reasonInput.style.display = "none";
+        chargeSelect.style.display = "none"; employeeSelect.style.display = "none"; noChargeNote.style.display = "none";
+        updateStConfirmState();
+        return;
+      }
+      varianceCell.textContent = (variance > 0 ? "+" : "") + variance;
+      varianceCell.className = "varianceCell " + (variance < 0 ? "neg" : "pos");
+      reasonInput.style.display = "inline-block";
+      reasonsList.innerHTML = (variance < 0 ? ST_SHORTAGE_REASONS : ST_SURPLUS_REASONS).map((r) => `<option value="${esc(r)}"></option>`).join("");
+
+      if (unitCost == null) {
+        valueCell.textContent = "—";
+        chargeSelect.style.display = "none"; employeeSelect.style.display = "none"; noChargeNote.style.display = "inline";
+      } else {
+        const value = Math.round(variance * unitCost * 100) / 100;
+        valueCell.textContent = money(value);
+        noChargeNote.style.display = "none";
+        if (variance < 0) {
+          chargeSelect.style.display = "inline-block";
+        } else {
+          chargeSelect.style.display = "none"; employeeSelect.style.display = "none";
+        }
+      }
+      updateStConfirmState();
+    };
+
+    chargeSelect.onchange = async () => {
+      if (chargeSelect.value === "employee") {
+        try {
+          const employees = await ensureStEmployees();
+          employeeSelect.innerHTML = `<option value="">-- اختر الموظف --</option>` +
+            employees.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join("");
+          employeeSelect.style.display = "inline-block";
+        } catch (e) {
+          document.getElementById("stErr").textContent = e.message;
+          chargeSelect.value = "account";
+        }
+      } else {
+        employeeSelect.style.display = "none";
+      }
+    };
+  });
+  updateStConfirmState();
+}
+
+function collectStocktakeLines() {
+  const lines = [];
+  document.querySelectorAll("#stTableBody tr.strow-item").forEach((tr) => {
+    const actualInput = tr.querySelector(".actualQty");
+    if (actualInput.value === "") return;
+    const systemQuantity = Number(tr.dataset.sysqty);
+    const actual = Number(actualInput.value);
+    const variance = Math.round((actual - systemQuantity) * 1000) / 1000;
+    if (variance === 0) return;
+    const chargeSelect = tr.querySelector(".chargeSelect");
+    const employeeSelect = tr.querySelector(".employeeSelect");
+    const line = {
+      inventoryItemId: Number(tr.dataset.itemid), actualQuantity: actual,
+      reason: tr.querySelector(".reasonInput").value.trim() || undefined,
+    };
+    if (chargeSelect.style.display !== "none") {
+      line.chargeType = chargeSelect.value;
+      if (chargeSelect.value === "employee") line.chargeEmployeeId = Number(employeeSelect.value) || null;
+    }
+    lines.push(line);
+  });
+  return lines;
+}
+
+function updateStConfirmState() {
+  const btn = document.getElementById("stConfirmBtn");
+  const lines = collectStocktakeLines();
+  btn.style.display = document.getElementById("stTable").style.display === "table" ? "inline-block" : "none";
+  // لازم كل سطر تحميله على موظف يكون فعليًا محدّد موظف قبل ما تقدر تأكّد
+  const invalid = lines.some((l) => l.chargeType === "employee" && !l.chargeEmployeeId);
+  btn.disabled = lines.length === 0 || invalid;
+}
+
+document.getElementById("stConfirmBtn").onclick = async () => {
+  const lines = collectStocktakeLines();
+  if (lines.length === 0) return;
+  const btn = document.getElementById("stConfirmBtn");
+  const errBox = document.getElementById("stErr");
+  errBox.textContent = "";
+  btn.disabled = true;
+  try {
+    const res = await api("/api/stocktake", { method: "POST", body: JSON.stringify({ branchId: stBranchId, lines }) });
+    document.getElementById("stResultMsg").innerHTML =
+      `<div class="ok">✅ اتسجّل الجرد #${res.id} - عدد السطور: ${res.lines.length} - صافي قيمة الفرق: ${money(res.totalVarianceValue)}</div>`;
+    document.getElementById("stTable").style.display = "none";
+    await loadStocktakeBoard();
+    await loadStocktakeHistory();
+  } catch (e) {
+    errBox.textContent = e.message;
+    btn.disabled = false;
+  }
+};
+
+async function loadStocktakeHistory() {
+  const wrap = document.getElementById("stHistoryWrap");
+  wrap.innerHTML = `<div class="statemsg">جاري التحميل...</div>`;
+  try {
+    const list = await api(`/api/stocktake?branchId=${stBranchId}`);
+    if (list.length === 0) { wrap.innerHTML = `<div class="statemsg">مفيش جلسات جرد مسجّلة لسه</div>`; return; }
+    wrap.innerHTML = list.map((s) => `
+      <div class="stHistoryRow">
+        <span>${new Date(s.created_at).toLocaleString("ar-EG")} - ${esc(s.created_by_name || "—")} - ${s.lines_count} صنف</span>
+        <span style="font-weight:700;color:${Number(s.total_variance_value) < 0 ? "var(--err)" : "var(--green)"}">${money(s.total_variance_value)}</span>
+      </div>
+    `).join("");
+  } catch (e) {
+    wrap.innerHTML = `<div class="statemsg errormsg">${esc(e.message)}</div>`;
+  }
 }
 
 if (auth.token && auth.user) {

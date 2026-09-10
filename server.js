@@ -60,6 +60,7 @@ app.use("/api/menu", require("./routes/menu"));
 app.use("/api/combos", require("./routes/combos"));
 app.use("/api/orders", require("./routes/orders"));
 app.use("/api/inventory", require("./routes/inventory"));
+app.use("/api/stocktake", require("./routes/stocktake"));
 app.use("/api/expenses", require("./routes/expenses"));
 app.use("/api/purchases", require("./routes/purchases"));
 app.use("/api/kitchen-transfers", require("./routes/kitchen-transfers"));
