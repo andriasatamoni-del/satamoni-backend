@@ -1678,6 +1678,43 @@ CREATE TABLE central_kitchen_manual_attendance (
 );
 
 -- السلف والجزاءات والمكافآت
+-- المرحلة 8.58: جرد فعلي (Spot Check) - شاشة الأصناف. جلسة جرد واحدة (header) بتشمل سطر لكل خامة اتعدّت
+-- فعليًا (lines) - الخامات اللي الفرق فيها صفر (الرصيد مطابق) مش بتتسجل كسطر خالص، عشان السجل يفضل
+-- يوريك بس الفروق الحقيقية. كل سطر بيحمل لقطة كاملة وقت الجرد (رصيد النظام، الكمية الفعلية، تكلفة
+-- الوحدة، وقيمة الفرق) + إزاي اتحمّلت القيمة دي: حساب محاسبي (زي الهالك بالظبط، 5300/1400) أو سلفة على
+-- موظف بعينه (نفس آلية عجز شيفت الكاشير بالظبط - db/shift-engine.js). راجع routes/stocktake.js
+CREATE TABLE stocktakes (
+  id                    SERIAL PRIMARY KEY,
+  branch_id             INTEGER NOT NULL REFERENCES branches(id),
+  created_by            INTEGER REFERENCES users(id),
+  notes                 TEXT,
+  -- مجموع قيمة كل الفروق (سالب = عجز صافي، موجب = زيادة صافية) - لقطة وقت الجرد، مش محسوبة لحظيًا،
+  -- عشان شاشة السجل تعرضها بسرعة من غير ما تجمّع كل السطور في كل مرة
+  total_variance_value  NUMERIC NOT NULL DEFAULT 0,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_stocktakes_branch ON stocktakes(branch_id, created_at DESC);
+
+CREATE TABLE stocktake_lines (
+  id                     SERIAL PRIMARY KEY,
+  stocktake_id           INTEGER NOT NULL REFERENCES stocktakes(id) ON DELETE CASCADE,
+  inventory_item_id      INTEGER NOT NULL REFERENCES inventory_items(id),
+  system_quantity        NUMERIC NOT NULL,
+  actual_quantity        NUMERIC NOT NULL,
+  variance_quantity      NUMERIC NOT NULL, -- actual_quantity - system_quantity
+  unit_cost              NUMERIC,          -- لقطة inventory_items.unit_cost وقت الجرد
+  variance_value         NUMERIC,          -- variance_quantity * unit_cost (سالب = عجز، موجب = زيادة)
+  reason                 TEXT,
+  -- charge_* بس لو variance_quantity != 0 - إزاي اتحمّلت القيمة: حساب محاسبي عادي، أو سلفة على موظف
+  -- بعينه (مسموح للعجز بس - عجز = فرصة "غلطة حد"، الزيادة مالهاش "مسؤول" يتحمّلها، دايمًا بتترحّل لحساب)
+  charge_type            TEXT CHECK (charge_type IN ('account', 'employee')),
+  charge_account_code    TEXT,
+  charge_employee_id     INTEGER REFERENCES employees(id),
+  inventory_movement_id  INTEGER REFERENCES inventory_movements(id),
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_stocktake_lines_stocktake ON stocktake_lines(stocktake_id);
+
 CREATE TABLE payroll_adjustments (
   id              SERIAL PRIMARY KEY,
   employee_id     INTEGER REFERENCES employees(id) ON DELETE CASCADE,
@@ -1689,7 +1726,10 @@ CREATE TABLE payroll_adjustments (
   created_at      TIMESTAMPTZ DEFAULT now(),
   -- المرحلة 8.6: ربط مباشر بالشيفت اللي سبب السلفة (عجز كاش) - عشان التتبّع الكامل موظف->شيفت->تاريخ->فرع
   -- من غير تكرار أرقام الكاش المتوقع/الفعلي/الفرق (موجودين أصلًا على pos_shifts، بيوصلهم بالـjoin)
-  shift_id        INTEGER REFERENCES pos_shifts(id)
+  shift_id        INTEGER REFERENCES pos_shifts(id),
+  -- المرحلة 8.58: نفس فلسفة shift_id بالظبط - ربط مباشر بجرد المخزون اللي سبب السلفة (عجز جرد اتحمّل
+  -- على موظف بعينه بدل ما يترحّل لحساب محاسبي عادي)
+  stocktake_id    INTEGER REFERENCES stocktakes(id)
 );
 
 -- المرحلة 8.46: ربط تسوية كاش سائق ببونص التوصيل اللي اتسجل فعليًا للسائق (لو كان عنده employee_id مرتبط)
