@@ -69,6 +69,41 @@
   #detailsPane h3 { font-size: 13px; color: var(--gold-bright); margin: 14px 16px 8px; }
   #detailsPane h3:first-child { margin-top: 14px; }
 
+  /* ===== المرحلة 8.54: موبايل/تابلت - لو الكهرباء قطعت والفرع محتاج يسجّل أوردرات من تليفون/تابلت
+     بدل شاشة الكاشير الثابتة. الشاشة الأصلية عمودين تلاتة بعرض ثابت (300+360 بكسل على الأقل) - على
+     شاشة موبايل عادية (~375-430px) ده كان بيطلع سكرول أفقي بين الأعمدة، مش تجربة استخدام حقيقية. الحل:
+     تحت 900px، عمود واحد بيظهر في المرة الواحدة (بيانات الطلب/المنيو/السلة) مع تابات تحت للتنقل بينهم -
+     زي أي تطبيق موبايل عادي، مش سكرول أفقي. فوق 900px (تابلت أفقي فأكبر) الثلاث أعمدة بتفضل زي ما هي
+     بالظبط - التخطيط الأصلي متضايقش خالص */
+  #mobilePaneTabs { display: none; }
+  @media (max-width: 900px) {
+    #main { flex-wrap: wrap; }
+    #cartPane, #menuPane, #detailsPane { display: none; width: 100% !important; min-width: 0 !important; border: none !important; }
+    #cartPane.mp-active { display: flex; }
+    #menuPane.mp-active { display: block; }
+    #detailsPane.mp-active { display: flex; }
+    #cartPane, #menuPane, #detailsPane { height: calc(100vh - 56px - 54px) !important; }
+    #mobilePaneTabs {
+      display: flex; position: fixed; bottom: 0; right: 0; left: 0; z-index: 25; height: 54px;
+      background: var(--bg-alt); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom);
+    }
+    #mobilePaneTabs button {
+      flex: 1; border: none; background: transparent; color: var(--faint); cursor: pointer;
+      font-size: 12px; font-weight: 700; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 2px; position: relative;
+    }
+    #mobilePaneTabs button.active { color: var(--gold-bright); }
+    #mobilePaneTabs button .mp-icon { font-size: 17px; }
+    #mobilePaneTabs button .mp-badge {
+      position: absolute; top: 2px; left: calc(50% + 10px); background: var(--red); color: #fff;
+      font-size: 10px; font-weight: 800; border-radius: 50%; min-width: 16px; height: 16px; padding: 0 3px;
+      display: none; align-items: center; justify-content: center;
+    }
+    #mobilePaneTabs button .mp-badge.show { display: flex; }
+    /* الشاشات الجانبية (بيانات الطلب/السلة) عادة أعمدة عرض ثابت - على العرض الكامل الجديد خليها تتمدد بلمسة أكبر */
+    #detailsPane #extraFields input, #detailsPane #extraFields select { font-size: 15px; padding: 10px; }
+  }
+
   /* ===== Menu group (عادي/صيامي) ===== */
   #menuGroupRow { display: flex; gap: 8px; margin-bottom: 12px; }
   .menugroup-btn { padding: 8px 18px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-size: 13px; font-weight: 800; }
@@ -477,6 +512,12 @@
      بمساحة كبيرة، وتفاصيل الطلب (القناة/نوع الطلب/بيانات العميل) في عمود مستقل شمال زي #customerPane
      في الكول سنتر - بدل ما كانت كلها مزحومة جوه عمود السلة الواحد -->
 <div id="main" style="display:none">
+  <!-- المرحلة 8.54: تابات تنقّل بين الأعمدة على موبايل/تابلت بس (مخفية فوق 900px بالـCSS) -->
+  <div id="mobilePaneTabs">
+    <button data-pane="detailsPane"><span class="mp-icon">📋</span><span>بيانات الطلب</span></button>
+    <button data-pane="menuPane"><span class="mp-icon">🍽️</span><span>المنيو</span></button>
+    <button data-pane="cartPane"><span class="mp-icon">🛒</span><span>السلة</span><span class="mp-badge" id="mpCartBadge"></span></button>
+  </div>
   <div id="cartPane">
     <div id="cartHeader">
       <span>الطلب الحالي</span>
@@ -779,9 +820,27 @@ document.getElementById("logoutBtn").onclick = () => {
   location.reload();
 };
 
+// المرحلة 8.54: على موبايل/تابلت (تحت 900px) عمود واحد بس ظاهر في المرة الواحدة - المنيو هو الافتراضي
+// (أول حاجة الكاشير محتاجها) - راجع الـCSS فوق (#mobilePaneTabs) للتفاصيل. فوق 900px الفانكشن دي
+// من غير أثر عمليًا (كل الأعمدة ظاهرة أصلًا بالـCSS الأساسي، مش متأثرة بـmp-active)
+let mobilePane = "menuPane";
+function setMobilePane(pane) {
+  mobilePane = pane;
+  ["detailsPane", "menuPane", "cartPane"].forEach((id) => {
+    document.getElementById(id).classList.toggle("mp-active", id === pane);
+  });
+  document.querySelectorAll("#mobilePaneTabs button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.pane === pane);
+  });
+}
+document.querySelectorAll("#mobilePaneTabs button").forEach((b) => {
+  b.onclick = () => setMobilePane(b.dataset.pane);
+});
+
 async function loadConfig() {
   document.getElementById("main").style.display = "flex";
   document.getElementById("accessDenied").style.display = "none";
+  setMobilePane(mobilePane);
   try {
     const res = await fetch(`${API_BASE_URL}/api/config/full`);
     if (!res.ok) throw new Error("bad response");
@@ -1128,7 +1187,12 @@ function renderPayments() {
 function renderCart() {
   const rows = Object.entries(state.cart);
   const list = document.getElementById("cartList");
-  document.getElementById("cartCount").textContent = rows.length ? `${rows.reduce((s, [,v]) => s + v.qty, 0)} صنف` : "";
+  const itemCount = rows.reduce((s, [,v]) => s + v.qty, 0);
+  document.getElementById("cartCount").textContent = rows.length ? `${itemCount} صنف` : "";
+  // المرحلة 8.54: عدّاد السلة على تاب الموبايل - نفس شارة السلة في order.html بالظبط
+  const badge = document.getElementById("mpCartBadge");
+  badge.textContent = itemCount || "";
+  badge.classList.toggle("show", itemCount > 0);
 
   if (rows.length === 0) {
     list.innerHTML = '<div class="cart-empty">السلة فاضية — دوس على أي صنف من المنيو</div>';
