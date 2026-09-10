@@ -1715,6 +1715,29 @@ CREATE TABLE stocktake_lines (
 );
 CREATE INDEX idx_stocktake_lines_stocktake ON stocktake_lines(stocktake_id);
 
+-- المرحلة 8.59: تصحيح سطر جرد اتسجّل برقم غلط. زي فلسفة reverseJournalEntry بالظبط - مفيش تعديل مباشر
+-- على stocktake_lines أو القيد المحاسبي المرحّل ليها (القاعدة الثابتة في المشروع: قيد POSTED ميتلمسش)،
+-- بدل كده كل تصحيح سطر جديد هنا بيحمل الفرق (delta) بين آخر كمية فعلية معتمدة والكمية الصح الجديدة،
+-- وبيترحّل بحركة مخزون + قيد محاسبي مستقلين خاصين بيه بس. ممكن يتسجّل أكتر من تصحيح لنفس السطر بمرور
+-- الوقت - الكمية الفعلية "المعتمدة حاليًا" لأي سطر = آخر تصحيح ليه لو موجود، وإلا الكمية الأصلية بالسطر
+CREATE TABLE stocktake_line_corrections (
+  id                        SERIAL PRIMARY KEY,
+  stocktake_line_id         INTEGER NOT NULL REFERENCES stocktake_lines(id) ON DELETE CASCADE,
+  previous_actual_quantity  NUMERIC NOT NULL, -- الكمية المعتمدة قبل التصحيح ده (الأصلية أو آخر تصحيح سابق)
+  corrected_actual_quantity NUMERIC NOT NULL, -- الكمية الصح الجديدة
+  delta_quantity            NUMERIC NOT NULL, -- corrected_actual_quantity - previous_actual_quantity
+  unit_cost                 NUMERIC,
+  delta_value               NUMERIC,          -- delta_quantity * unit_cost
+  reason                    TEXT,
+  charge_type               TEXT CHECK (charge_type IN ('account', 'employee')),
+  charge_account_code       TEXT,
+  charge_employee_id        INTEGER REFERENCES employees(id),
+  inventory_movement_id     INTEGER REFERENCES inventory_movements(id),
+  created_by                INTEGER REFERENCES users(id),
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_stocktake_line_corrections_line ON stocktake_line_corrections(stocktake_line_id);
+
 CREATE TABLE payroll_adjustments (
   id              SERIAL PRIMARY KEY,
   employee_id     INTEGER REFERENCES employees(id) ON DELETE CASCADE,
