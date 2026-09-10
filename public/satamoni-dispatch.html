@@ -109,6 +109,7 @@
   <div id="tabs">
     <div class="tabbtn active" data-tab="board">لوحة التوزيع</div>
     <div class="tabbtn" data-tab="settlement">تسوية السائقين</div>
+    <div class="tabbtn" data-tab="unassigned" id="unassignedTabBtn" style="display:none">⚠️ طلبات محتاجة فرع</div>
   </div>
 
   <!-- لوحة التوزيع -->
@@ -173,6 +174,26 @@
         <th>مُسلَّم فعليًا</th><th>الفرق</th><th>الحالة</th><th></th>
       </tr></thead>
       <tbody id="settleHistoryBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- المرحلة 8.56: طلبات دليفري اتسجلت لمنطقة توصيل مش مربوطة بفرع (زي مناطق قديمة اتستوردت من غير
+  فرع محدد) بتفضل branch_id فاضي - صف موجود فعليًا في القاعدة بس مخفي تمامًا عن كل شاشات الفرع والمطبخ
+  (ده أصل شكوى "طلب الموقع مسمعش على السيستم" - راجع routes/orders.js). الشاشة دي بتلاقي أي طلب زي ده
+  وتقدر تربطه بفرع بأثر رجعي، فيظهر ويتطبع فورًا. أدمن بس - مفيش فرع محدد للطلب أصلًا يتحقق منه -->
+  <div class="panel" id="panel-unassigned">
+    <h1>⚠️ طلبات دليفري من غير فرع محدد</h1>
+    <div style="font-size:13px;color:var(--faint);margin-bottom:10px">
+      الطلبات دي اتسجلت لمنطقة توصيل مش مربوطة بفرع فمكنش يظهرها لأي حد. اختار الفرع الصحيح لكل طلب
+      عشان يظهر ويتطبع فورًا (لازم تتأكد من العميل/العنوان الأول لو الطلب قديم).
+    </div>
+    <div class="err" id="unassignedErr"></div>
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th>#</th><th>التاريخ</th><th>المصدر</th><th>العميل</th><th>التليفون</th><th>العنوان</th>
+        <th>الإجمالي</th><th>الفرع</th><th></th>
+      </tr></thead>
+      <tbody id="unassignedBody"></tbody>
     </table></div>
   </div>
 </div>
@@ -268,6 +289,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
     if (btn.dataset.tab === "board") loadBoard();
     if (btn.dataset.tab === "settlement") loadSettlementHistory();
+    if (btn.dataset.tab === "unassigned") loadUnassigned();
   };
 });
 
@@ -276,17 +298,19 @@ function currentBranchId() {
 }
 
 let driversCache = [];
+let branchesCache = [];
 
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
 
   if (auth.user.role === "admin") {
-    const branches = await api("/api/branches");
+    branchesCache = await api("/api/branches");
     const sel = document.getElementById("branchSelect");
-    sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    sel.innerHTML = branchesCache.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
     sel.style.display = "block";
     sel.onchange = () => { loadDrivers().then(loadBoard); };
+    document.getElementById("unassignedTabBtn").style.display = "block";
   }
   await loadDrivers();
   await loadBoard();
@@ -480,6 +504,47 @@ async function loadSettlementHistory() {
   }
 }
 document.getElementById("settleHistoryRefreshBtn").onclick = loadSettlementHistory;
+
+// المرحلة 8.56: راجع تعليق panel-unassigned فوق - طلبات دليفري بـbranch_id فاضي (منطقة توصيل مش
+// مربوطة بفرع) كانت بتضيع تمامًا. الشاشة دي بتلاقيها وتربطها بفرع بأثر رجعي فتظهر/تتطبع فورًا
+async function loadUnassigned() {
+  const errBox = document.getElementById("unassignedErr");
+  const body = document.getElementById("unassignedBody");
+  errBox.textContent = "";
+  body.innerHTML = `<tr><td colspan="9">...جاري التحميل</td></tr>`;
+  try {
+    const list = await api("/api/orders/unassigned");
+    const branchOptions = `<option value="">-- اختر الفرع --</option>` +
+      branchesCache.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    body.innerHTML = list.map(o => `
+      <tr>
+        <td>${o.id}</td>
+        <td>${new Date(o.created_at).toLocaleString("ar-EG")}</td>
+        <td>${o.source}</td>
+        <td>${o.customer_name || "—"}</td>
+        <td>${o.customer_phone || "—"}</td>
+        <td>${o.address_details || "—"}</td>
+        <td>${money(o.total)}</td>
+        <td><select data-branchpick="${o.id}">${branchOptions}</select></td>
+        <td><button class="smallbtn approve" data-assign="${o.id}">تعيين</button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--faint)">مفيش طلبات محتاجة فرع 🎉</td></tr>`;
+    body.querySelectorAll("[data-assign]").forEach(btn => {
+      btn.onclick = guardedClick(btn, async () => {
+        const orderId = btn.dataset.assign;
+        const sel = body.querySelector(`[data-branchpick="${orderId}"]`);
+        if (!sel.value) { alert("اختار الفرع الأول"); return; }
+        try {
+          await api(`/api/orders/${orderId}/assign-branch`, { method: "PATCH", body: JSON.stringify({ branchId: Number(sel.value) }) });
+          await loadUnassigned();
+        } catch (e) { alert(e.message); }
+      });
+    });
+  } catch (e) {
+    errBox.textContent = e.message;
+    body.innerHTML = "";
+  }
+}
 
 if (auth.token && auth.user) {
   document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
