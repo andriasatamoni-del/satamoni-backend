@@ -65,6 +65,13 @@
   .stat .row { display: flex; align-items: center; gap: 5px; color: var(--gold); }
   .stat .label { font-size: 11px; color: var(--faint); }
 
+  /* المرحلة 8.53: عادي/صيامي - نفس تبديل المنيو في شاشة الكاشير بالظبط (بيظهر بس لو فيه أقسام فعلًا
+     في المجموعتين، مش دايمًا) */
+  #menuGroupRow { display: none; gap: 8px; max-width: 640px; margin: 0 auto; padding: 16px 16px 0; }
+  .menugroup-pill { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); color: var(--faint); cursor: pointer; font-size: 13px; font-weight: 800; text-align: center; }
+  .menugroup-pill.active { background: var(--gold); border-color: var(--gold); color: #1A1508; }
+
   #catNav { position: sticky; top: 0; z-index: 20; background: var(--bg); display: flex; gap: 8px;
     overflow-x: auto; padding: 18px 16px 10px; scrollbar-width: none; }
   #catNav::-webkit-scrollbar { display: none; }
@@ -107,6 +114,16 @@
   .step-btn { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--ink); background: transparent;
     color: var(--ink); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 15px; }
   .step-btn.solid { border: none; background: var(--red); color: #fff; }
+
+  /* المرحلة 8.53: مودال الصنف (حجم + مرفقات + بدون + ملاحظة) - نفس عناصر مودال الكاشير بالظبط */
+  .modal-section-label { font-size: 12px; color: var(--faint); font-weight: 700; margin: 14px 0 8px; }
+  .modal-section-label:first-child { margin-top: 0; }
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; cursor: pointer; font-size: 13px; }
+  .toggle-row.active { border-color: var(--gold); background: #2A2308; }
+  .qty-stepper-row { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 16px 0 4px; }
+  .qty-stepper-row .qty-num { font-size: 17px; min-width: 22px; text-align: center; }
+  .line-detail { font-size: 11px; color: var(--faint); margin-top: 3px; line-height: 1.6; }
 
   .btn { width: 100%; padding: 13px; border: none; border-radius: 8px; font-weight: 700; font-size: 14px; cursor: pointer; }
   .btn-primary { background: var(--red); color: #fff; }
@@ -171,16 +188,17 @@
     </div>
   </div>
 
+  <div id="menuGroupRow"></div>
   <div id="catNav"></div>
   <main id="menuMain"></main>
 </div>
 
-<!-- Size / add-to-cart sheet -->
+<!-- Item sheet: حجم + مرفقات + بدون + ملاحظة + كمية (نفس مودال الكاشير) -->
 <div class="sheet-overlay" id="sizeSheet">
   <div class="sheet">
     <div class="sheet-head"><h3 id="sizeSheetTitle" style="font-size:20px"></h3><button class="sheet-close" data-close="sizeSheet">✕</button></div>
     <div id="sizeSheetBody"></div>
-    <button class="btn btn-gold" style="margin-top:16px" data-close="sizeSheet">تم</button>
+    <button class="btn btn-primary" style="margin-top:6px" id="sizeSheetAddBtn"></button>
   </div>
 </div>
 
@@ -222,6 +240,10 @@ const CUSTOMER_TOKEN_KEY = "satamoni_customer_token";
 
 const state = {
   config: null, cart: {}, activeCat: null,
+  // المرحلة 8.53: "regular" (عادي) | "fasting" (صيامي) - نفس تبديل المنيو في شاشة الكاشير بالظبط
+  menuGroup: "regular",
+  // مودال الصنف الحالي المفتوح (حجم + مرفقات + بدون + ملاحظة + كمية) - null لما يكون مقفول
+  itemModal: null,
   orderType: "delivery", tableNumber: "", branchId: "", areaId: "",
   addressDetails: "", distinguishingMark: "", name: "", phone: "", phone2: "",
   paymentMethodId: "", locating: false, submitting: false, confirmResult: null,
@@ -240,8 +262,7 @@ async function boot() {
     document.getElementById("loadingState").innerHTML = `<span style="color:var(--err)">تعذّر تحميل المنيو - تأكد من الاتصال بالإنترنت وحاول تاني</span>`;
     return;
   }
-  const cats = Array.from(new Set(state.config.menu.map(m => m.category)));
-  state.activeCat = cats[0] || null;
+  state.activeCat = categories()[0] || null;
   const branches = (state.config.branches || []).filter(b => !b.isCentralKitchen);
   state.branchId = branches[0]?.id || "";
   const enabledPayments = (state.config.paymentMethods || []).filter(p => p.enabled);
@@ -253,6 +274,7 @@ async function boot() {
 
   document.getElementById("loadingState").style.display = "none";
   document.getElementById("app").style.display = "block";
+  renderMenuGroupRow();
   renderCatNav();
   renderMenu();
   wireStatic();
@@ -388,7 +410,30 @@ function logout() {
   if (document.getElementById("checkoutSheet").classList.contains("open")) renderCheckout();
 }
 
-function categories() { return Array.from(new Set(state.config.menu.map(m => m.category))); }
+// المرحلة 8.53: المنيو بيتفلتر بالمجموعة النشطة (عادي/صيامي) الأول - ترتيب الأقسام جاي جاهز من
+// /api/config/full (ORDER BY mc.display_order) فمفيش داعي نرتّبه هنا تاني، Array.from(new Set(...))
+// بيحافظ على نفس الترتيب ده بالظبط
+function menuForGroup() { return state.config.menu.filter(m => (m.menuGroup || "regular") === state.menuGroup); }
+function menuGroupsPresent() { return new Set(state.config.menu.map(m => m.menuGroup || "regular")); }
+function categories() { return Array.from(new Set(menuForGroup().map(m => m.category))); }
+
+function renderMenuGroupRow() {
+  const wrap = document.getElementById("menuGroupRow");
+  if (menuGroupsPresent().size < 2) { wrap.style.display = "none"; wrap.innerHTML = ""; return; }
+  wrap.style.display = "flex";
+  wrap.innerHTML = `
+    <div class="menugroup-pill ${state.menuGroup === "regular" ? "active" : ""}" data-group="regular">المنيو العادي</div>
+    <div class="menugroup-pill ${state.menuGroup === "fasting" ? "active" : ""}" data-group="fasting">المنيو الصيامي</div>
+  `;
+  wrap.querySelectorAll("[data-group]").forEach(el => {
+    el.onclick = () => {
+      if (el.dataset.group === state.menuGroup) return;
+      state.menuGroup = el.dataset.group;
+      state.activeCat = categories()[0] || null;
+      renderMenuGroupRow(); renderCatNav(); renderMenu();
+    };
+  });
+}
 
 function renderCatNav() {
   document.getElementById("catNav").innerHTML = categories().map(cat => `
@@ -416,20 +461,20 @@ function priceLabel(item) {
 }
 
 function qtyOfItem(item) {
-  return Object.entries(state.cart).filter(([k]) => k.startsWith(item.id + "__")).reduce((s, [, v]) => s + v.qty, 0);
+  return cartList().filter(l => l.itemId === item.id).reduce((s, l) => s + l.qty, 0);
 }
 
 function renderMenu() {
   const cats = categories();
   document.getElementById("menuMain").innerHTML = cats.map(cat => {
-    const items = state.config.menu.filter(m => m.category === cat);
+    const items = menuForGroup().filter(m => m.category === cat);
     return `
       <section class="cat-section" id="sec-${cssId(cat)}">
         <h2>${cat}</h2>
         ${items.map(item => `
-          <div class="menu-item">
+          <div class="menu-item" data-open="${item.id}" style="cursor:pointer">
             ${item.image ? `<img class="thumb" src="${escapeAttr(item.image)}" alt="" />` : ""}
-            <div class="info" data-open="${item.id}" style="cursor:pointer">
+            <div class="info">
               <div class="name-row">
                 <span class="name">${escapeHtml(item.name)}</span>
                 ${item.best ? `<span class="best-badge">الأكثر طلبًا</span>` : ""}
@@ -437,7 +482,7 @@ function renderMenu() {
               ${item.description ? `<div class="desc">${escapeHtml(item.description)}</div>` : ""}
               <div class="price">${priceLabel(item)}</div>
             </div>
-            <button class="add-btn" data-add="${item.id}">+<span class="qty-badge">${qtyOfItem(item) || ""}</span></button>
+            <button class="add-btn" data-open2="${item.id}">+<span class="qty-badge">${qtyOfItem(item) || ""}</span></button>
           </div>
         `).join("")}
       </section>
@@ -445,67 +490,138 @@ function renderMenu() {
   }).join("") || `<div id="emptyMenuNote">المنيو مش متاح دلوقتي، حاول تاني بعدين</div>`;
 
   document.querySelectorAll(".add-btn").forEach(btn => {
-    btn.onclick = () => handleAddClick(btn.dataset.add);
+    btn.onclick = (e) => { e.stopPropagation(); openItemModal(btn.dataset.open2); };
     const badge = btn.querySelector(".qty-badge");
     if (badge && badge.textContent) badge.style.display = "flex"; else if (badge) badge.style.display = "none";
   });
   document.querySelectorAll("[data-open]").forEach(el => {
-    el.onclick = () => openSizeSheet(el.dataset.open, false);
+    el.onclick = () => openItemModal(el.dataset.open);
   });
 }
 
 function findItem(id) { return state.config.menu.find(m => String(m.id) === String(id)); }
 
-function handleAddClick(itemId) {
-  const item = findItem(itemId);
-  if (!item) return;
-  if (item.variants.length > 1) { openSizeSheet(itemId, true); return; }
-  addToCart(item, item.variants[0]);
-  renderMenu();
-  flashCartFab();
+// ---------------- مودال الصنف: حجم + مرفقات + بدون + ملاحظة + كمية ----------------
+// المرحلة 8.53: نفس تجربة مودال الصنف في شاشة الكاشير بالظبط (openItemModal/renderItemModal هناك) -
+// بيفتح لكل صنف عادي (مش بس اللي له أكتر من حجم أو مرفقات)، عشان العميل يقدر يضيف مرفق أو "بدون
+// <مكوّن>" أو ملاحظة حرة لأي صنف وقت الطلب. modifierPriceForVariant بتستخدم variantPrices بالظبط
+// زي شاشة الكاشير (مرفق ممكن يكون له سعر مخصوص لحجم معيّن، غير السعر الافتراضي)
+function modifierPriceForVariant(modifier, variantId) {
+  const override = (modifier.variantPrices || {})[variantId];
+  return override != null ? Number(override) : Number(modifier.priceDelta);
 }
 
-function openSizeSheet(itemId, autoAdd) {
+function openItemModal(itemId) {
   const item = findItem(itemId);
   if (!item) return;
-  document.getElementById("sizeSheetTitle").textContent = item.name;
-  document.getElementById("sizeSheetBody").innerHTML = item.variants.map(v => {
-    const key = item.id + "__" + v.label;
-    const q = state.cart[key]?.qty || 0;
-    return `
-      <div class="size-row">
-        <div>
-          <div style="font-size:14px;font-weight:700">${escapeHtml(v.label)}</div>
-          <div class="mono" style="font-size:13px;color:var(--gold-bright)">${money(v.price)}</div>
-        </div>
-        <div class="stepper">
-          ${q > 0 ? `<button class="step-btn" data-dec="${key}">−</button><span class="mono" style="min-width:14px;text-align:center">${q}</span>` : ""}
-          <button class="step-btn solid" data-inc="${item.id}|${v.label}">+</button>
-        </div>
-      </div>
-    `;
-  }).join("");
-  document.querySelectorAll("[data-inc]").forEach(b => {
-    b.onclick = () => {
-      const [iid, label] = b.dataset.inc.split("|");
-      const it = findItem(iid);
-      const variant = it.variants.find(v => v.label === label);
-      addToCart(it, variant);
-      openSizeSheet(itemId, false);
-      renderMenu();
-      flashCartFab();
-    };
-  });
-  document.querySelectorAll("[data-dec]").forEach(b => {
-    b.onclick = () => { decFromCart(b.dataset.dec); openSizeSheet(itemId, false); renderMenu(); flashCartFab(); };
-  });
+  state.itemModal = { item, variant: item.variants[0], modifierIds: new Set(), excludedIds: new Set(), notes: "", qty: 1 };
+  renderItemModal();
   openSheet("sizeSheet");
 }
 
-function addToCart(item, variant) {
-  const key = item.id + "__" + variant.label;
+function renderItemModal() {
+  const m = state.itemModal;
+  if (!m) return;
+  const { item, variant, modifierIds, excludedIds, qty } = m;
+  document.getElementById("sizeSheetTitle").textContent = item.name;
+
+  const variantsHtml = item.variants.length > 1 ? `
+    <div class="modal-section-label">الحجم</div>
+    ${item.variants.map(v => `
+      <div class="toggle-row ${v.id === variant.id ? "active" : ""}" data-variant="${v.id}">
+        <span>${escapeHtml(v.label)}</span><span class="mono" style="color:var(--gold-bright)">${money(v.price)}</span>
+      </div>`).join("")}
+  ` : "";
+
+  const mods = item.modifiers || [];
+  const modsHtml = mods.length ? `
+    <div class="modal-section-label">مرفقات (اختياري)</div>
+    ${mods.map(mo => {
+      const delta = modifierPriceForVariant(mo, variant.id);
+      return `<div class="toggle-row ${modifierIds.has(mo.id) ? "active" : ""}" data-modifier="${mo.id}">
+        <span>${escapeHtml(mo.name)}</span><span class="mono" style="color:var(--gold-bright)">${delta > 0 ? "+" + money(delta) : "مجاني"}</span>
+      </div>`;
+    }).join("")}
+  ` : "";
+
+  const ingredients = variant.ingredients || [];
+  const exclHtml = ingredients.length ? `
+    <div class="modal-section-label">بدون (اختياري)</div>
+    ${ingredients.map(ing => `
+      <div class="toggle-row ${excludedIds.has(ing.inventoryItemId) ? "active" : ""}" data-exclude="${ing.inventoryItemId}">
+        <span>بدون ${escapeHtml(ing.name)}</span>
+      </div>`).join("")}
+  ` : "";
+
+  document.getElementById("sizeSheetBody").innerHTML = `
+    ${variantsHtml}
+    ${modsHtml}
+    ${exclHtml}
+    <div class="modal-section-label">ملاحظة (اختياري)</div>
+    <textarea id="itemModalNotes" placeholder="مثال: عجينة رفيعة، تحمير زيادة..."
+      style="width:100%;background:#111113;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:10px;font-size:14px;min-height:56px;resize:vertical;font-family:'Cairo',sans-serif">${escapeHtml(m.notes)}</textarea>
+    <div class="qty-stepper-row">
+      <button class="step-btn solid" id="modalQtyDec">−</button>
+      <span class="mono qty-num">${qty}</span>
+      <button class="step-btn solid" id="modalQtyInc">+</button>
+    </div>
+  `;
+
+  document.querySelectorAll("[data-variant]").forEach(el => {
+    el.onclick = () => {
+      const v = item.variants.find(v => String(v.id) === el.dataset.variant);
+      if (v.id !== m.variant.id) { m.variant = v; m.excludedIds = new Set(); renderItemModal(); }
+    };
+  });
+  document.querySelectorAll("[data-modifier]").forEach(el => {
+    el.onclick = () => {
+      const id = Number(el.dataset.modifier);
+      if (m.modifierIds.has(id)) m.modifierIds.delete(id); else m.modifierIds.add(id);
+      renderItemModal();
+    };
+  });
+  document.querySelectorAll("[data-exclude]").forEach(el => {
+    el.onclick = () => {
+      const id = Number(el.dataset.exclude);
+      if (m.excludedIds.has(id)) m.excludedIds.delete(id); else m.excludedIds.add(id);
+      renderItemModal();
+    };
+  });
+  document.getElementById("itemModalNotes").oninput = (e) => { m.notes = e.target.value; };
+  document.getElementById("modalQtyDec").onclick = () => { if (m.qty > 1) { m.qty--; renderItemModal(); } };
+  document.getElementById("modalQtyInc").onclick = () => { m.qty++; renderItemModal(); };
+
+  const selectedMods = mods.filter(mo => modifierIds.has(mo.id)).map(mo => ({ id: mo.id, priceDelta: modifierPriceForVariant(mo, variant.id) }));
+  const unitPrice = Number(variant.price) + selectedMods.reduce((s, mo) => s + mo.priceDelta, 0);
+  document.getElementById("sizeSheetAddBtn").textContent = `إضافة للسلة — ${money(unitPrice * qty)}`;
+}
+
+document.getElementById("sizeSheetAddBtn").onclick = () => {
+  const m = state.itemModal;
+  if (!m) return;
+  const mods = (m.item.modifiers || []).filter(mo => m.modifierIds.has(mo.id))
+    .map(mo => ({ id: mo.id, name: mo.name, priceDelta: modifierPriceForVariant(mo, m.variant.id) }));
+  const ingredients = m.variant.ingredients || [];
+  const excluded = ingredients.filter(ing => m.excludedIds.has(ing.inventoryItemId));
+  addToCart(m.item, m.variant, mods, m.notes.trim(), excluded, m.qty);
+  closeSheet("sizeSheet");
+  renderMenu();
+  flashCartFab();
+};
+
+// المرحلة 8.53: مفتاح السلة بقى بيشمل المرفقات/الاستبعادات/الملاحظة - سطرين لنفس الصنف بتفاصيل مختلفة
+// لازم يفضلوا سطرين منفصلين، مش يتجمعوا في كمية واحدة تفقد التفاصيل (نفس منطق شاشة الكاشير بالظبط)
+function addToCart(item, variant, modifiers = [], notes = "", excludedIngredients = [], qty = 1) {
+  const modIds = modifiers.map(mo => mo.id).sort((a, b) => a - b);
+  const exclIds = excludedIngredients.map(e => e.inventoryItemId).sort((a, b) => a - b);
+  const key = [item.id, variant.id, modIds.join(","), exclIds.join(","), notes].join("__");
   const cur = state.cart[key];
-  state.cart[key] = { itemId: item.id, variantId: variant.id, name: item.name, label: variant.label, price: Number(variant.price), qty: (cur?.qty || 0) + 1 };
+  const unitPrice = Number(variant.price) + modifiers.reduce((s, mo) => s + Number(mo.priceDelta), 0);
+  state.cart[key] = {
+    itemId: item.id, variantId: variant.id, name: item.name, label: variant.label, price: unitPrice,
+    modifiers, notes, excludedIngredientItemIds: exclIds, excludedIngredientNames: excludedIngredients.map(e => e.name),
+    qty: (cur?.qty || 0) + qty,
+  };
 }
 function decFromCart(key) {
   const cur = state.cart[key];
@@ -541,6 +657,12 @@ function renderCart() {
         <div class="cart-line">
           <div style="flex:1">
             <div>${escapeHtml(l.name)} ${l.label !== "عادي" ? `(${escapeHtml(l.label)})` : ""}</div>
+            ${(l.modifiers || []).length || (l.excludedIngredientNames || []).length || l.notes ? `
+              <div class="line-detail">
+                ${(l.modifiers || []).length ? `+ ${l.modifiers.map(mo => escapeHtml(mo.name)).join("، +")}<br/>` : ""}
+                ${(l.excludedIngredientNames || []).length ? `بدون: ${l.excludedIngredientNames.map(escapeHtml).join("، ")}<br/>` : ""}
+                ${l.notes ? `ملاحظة: ${escapeHtml(l.notes)}` : ""}
+              </div>` : ""}
             <div class="qty-ctrl">
               <button class="step-btn" data-cartdec="${l.key}">−</button>
               <span class="mono">${l.qty}</span>
@@ -719,7 +841,12 @@ async function submitOrder() {
       paymentMethodId: state.paymentMethodId,
       deliveryFee: deliveryFee(),
       idempotencyKey: state.idempotencyKey,
-      items: cartList().map(l => ({ itemId: l.itemId, variantId: l.variantId, quantity: l.qty })),
+      items: cartList().map(l => ({
+        itemId: l.itemId, variantId: l.variantId, quantity: l.qty,
+        modifiers: (l.modifiers || []).map(mo => ({ id: mo.id })),
+        notes: l.notes || undefined,
+        excludedIngredientItemIds: l.excludedIngredientItemIds || [],
+      })),
     };
     const res = await fetch(`${API_BASE_URL}/api/orders`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
