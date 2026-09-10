@@ -68,12 +68,13 @@ router.post("/orders", async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    const source = [], orderType = [], tableNumber = [], addressDetails = [], customerName = [], customerPhone = [];
+    const source = [], orderType = [], tableNumber = [], addressDetails = [], distinguishingMark = [], customerName = [], customerPhone = [];
     const subtotal = [], deliveryFee = [], discount = [], total = [], status = [], paymentStatus = [];
     const voided = [], voidReason = [], createdAt = [], syncUuid = [];
     for (const o of uniqueOrders) {
       source.push(o.source); orderType.push(o.order_type); tableNumber.push(o.table_number);
-      addressDetails.push(o.address_details); customerName.push(o.customer_name); customerPhone.push(o.customer_phone);
+      addressDetails.push(o.address_details); distinguishingMark.push(o.distinguishing_mark || null);
+      customerName.push(o.customer_name); customerPhone.push(o.customer_phone);
       subtotal.push(o.subtotal); deliveryFee.push(o.delivery_fee); discount.push(o.discount); total.push(o.total);
       status.push(o.status); paymentStatus.push(o.payment_status);
       voided.push(o.voided || false); voidReason.push(o.void_reason || null);
@@ -82,16 +83,16 @@ router.post("/orders", async (req, res) => {
 
     const upsertRes = await client.query(
       `INSERT INTO orders
-        (branch_id, source, order_type, table_number, address_details,
+        (branch_id, source, order_type, table_number, address_details, distinguishing_mark,
          customer_name, customer_phone, subtotal, delivery_fee, discount, total,
          status, payment_status, voided, void_reason, created_at, sync_uuid, synced_at)
-       SELECT $1, s.source, s.order_type, s.table_number, s.address_details, s.customer_name, s.customer_phone,
+       SELECT $1, s.source, s.order_type, s.table_number, s.address_details, s.distinguishing_mark, s.customer_name, s.customer_phone,
               s.subtotal, s.delivery_fee, s.discount, s.total, s.status, s.payment_status, s.voided, s.void_reason,
               s.created_at, s.sync_uuid, now()
-       FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[],
-                    $8::numeric[], $9::numeric[], $10::numeric[], $11::numeric[], $12::text[], $13::text[],
-                    $14::boolean[], $15::text[], $16::timestamptz[], $17::uuid[])
-         AS s(source, order_type, table_number, address_details, customer_name, customer_phone,
+       FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[],
+                    $9::numeric[], $10::numeric[], $11::numeric[], $12::numeric[], $13::text[], $14::text[],
+                    $15::boolean[], $16::text[], $17::timestamptz[], $18::uuid[])
+         AS s(source, order_type, table_number, address_details, distinguishing_mark, customer_name, customer_phone,
               subtotal, delivery_fee, discount, total, status, payment_status, voided, void_reason, created_at, sync_uuid)
        ON CONFLICT (sync_uuid) DO UPDATE SET
          status = EXCLUDED.status,
@@ -100,7 +101,7 @@ router.post("/orders", async (req, res) => {
          void_reason = EXCLUDED.void_reason,
          synced_at = now()
        RETURNING id, sync_uuid`,
-      [branchId, source, orderType, tableNumber, addressDetails, customerName, customerPhone,
+      [branchId, source, orderType, tableNumber, addressDetails, distinguishingMark, customerName, customerPhone,
        subtotal, deliveryFee, discount, total, status, paymentStatus, voided, voidReason, createdAt, syncUuid]
     );
 
