@@ -29,6 +29,7 @@ async function requireAuth(req, res, next) {
   try {
     const result = await pool.query(
       `SELECT u.id, u.name, u.email, u.role, u.branch_id, u.is_active,
+              u.permission_grants, u.permission_revokes,
               COALESCE(b.is_central_kitchen, FALSE) AS is_central_kitchen
        FROM users u LEFT JOIN branches b ON b.id = u.branch_id
        WHERE u.id = $1`,
@@ -45,6 +46,10 @@ async function requireAuth(req, res, next) {
       role: user.role,
       branchId: user.branch_id,
       isCentralKitchen: user.is_central_kitchen,
+      // المرحلة 8.58: استثناءات صلاحيات فردية فوق دوره - بترجع فريش من القاعدة في كل طلب (نفس فلسفة
+      // role/branchId/is_active فوق بالظبط) عشان أي تعديل من الأدمن يبان أثره فورًا من غير لوج آوت
+      permissionGrants: user.permission_grants || [],
+      permissionRevokes: user.permission_revokes || [],
     };
     next();
   } catch (err) {

@@ -175,7 +175,7 @@ router.get("/:id", requireAuth, async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: "الشيفت مش موجود" });
     const shift = result.rows[0];
     const isOwner = shift.user_id === req.user.id;
-    const canViewBranch = hasPermission(req.user.role, "shifts.view_branch") && assertOwnBranch(req.user, shift.branch_id);
+    const canViewBranch = hasPermission(req.user, "shifts.view_branch") && assertOwnBranch(req.user, shift.branch_id);
     if (!isOwner && !canViewBranch) {
       return res.status(403).json({ error: "معندكش صلاحية تشوف الشيفت ده" });
     }

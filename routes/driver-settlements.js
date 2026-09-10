@@ -36,7 +36,7 @@ router.get("/preview", async (req, res) => {
     if (req.user.role === "driver") {
       const own = await loadOwnDriver(pool, req.user.id);
       if (!own || own.id !== driver.id) return res.status(403).json({ error: "معندكش صلاحية تشوف تسوية سائق تاني" });
-    } else if (!hasPermission(req.user.role, "driver_settlements.create") && !hasPermission(req.user.role, "driver_settlements.review")) {
+    } else if (!hasPermission(req.user, "driver_settlements.create") && !hasPermission(req.user, "driver_settlements.review")) {
       return res.status(403).json({ error: "معندكش صلاحية تشوف تسويات السائقين" });
     } else if (!assertOwnBranch(req.user, driver.branch_id)) {
       return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
@@ -56,7 +56,7 @@ router.get("/preview", async (req, res) => {
 router.get("/pending-drivers", async (req, res) => {
   const branchId = req.query.branchId || req.user.branchId;
   if (!branchId) return res.status(400).json({ error: "لازم تحدد الفرع" });
-  if (!hasPermission(req.user.role, "driver_settlements.create") && !hasPermission(req.user.role, "driver_settlements.review")) {
+  if (!hasPermission(req.user, "driver_settlements.create") && !hasPermission(req.user, "driver_settlements.review")) {
     return res.status(403).json({ error: "معندكش صلاحية تشوف تسويات السائقين" });
   }
   if (!assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
@@ -88,7 +88,7 @@ router.get("/pending-drivers", async (req, res) => {
 router.get("/branch-drivers", async (req, res) => {
   const branchId = req.query.branchId || req.user.branchId;
   if (!branchId) return res.status(400).json({ error: "لازم تحدد الفرع" });
-  if (!hasPermission(req.user.role, "driver_settlements.create") && !hasPermission(req.user.role, "driver_settlements.review")) {
+  if (!hasPermission(req.user, "driver_settlements.create") && !hasPermission(req.user, "driver_settlements.review")) {
     return res.status(403).json({ error: "معندكش صلاحية تشوف السائقين" });
   }
   if (!assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
@@ -120,7 +120,7 @@ router.get("/driver-orders", async (req, res) => {
     if (req.user.role === "driver") {
       const own = await loadOwnDriver(pool, req.user.id);
       if (!own || own.id !== driver.id) return res.status(403).json({ error: "معندكش صلاحية تشوف أوردرات سائق تاني" });
-    } else if (!hasPermission(req.user.role, "driver_settlements.create") && !hasPermission(req.user.role, "driver_settlements.review")) {
+    } else if (!hasPermission(req.user, "driver_settlements.create") && !hasPermission(req.user, "driver_settlements.review")) {
       return res.status(403).json({ error: "معندكش صلاحية تشوف أوردرات السائقين" });
     } else if (!assertOwnBranch(req.user, driver.branch_id)) {
       return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
@@ -206,7 +206,7 @@ router.get("/", async (req, res) => {
     const own = await loadOwnDriver(pool, req.user.id);
     if (!own) return res.status(400).json({ error: "معندكش سجل سائق مرتبط بالحساب ده" });
     conditions.push(`ds.driver_id = $${i++}`); values.push(own.id);
-  } else if (hasPermission(req.user.role, "driver_settlements.create") || hasPermission(req.user.role, "driver_settlements.review")) {
+  } else if (hasPermission(req.user, "driver_settlements.create") || hasPermission(req.user, "driver_settlements.review")) {
     const branchId = req.query.branchId || req.user.branchId;
     if (!branchId) return res.status(400).json({ error: "لازم تحدد الفرع" });
     if (!assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
@@ -245,7 +245,7 @@ router.get("/:id", async (req, res) => {
     if (req.user.role === "driver") {
       const own = await loadOwnDriver(pool, req.user.id);
       if (!own || own.id !== settlement.driver_id) return res.status(403).json({ error: "التسوية دي مش بتاعتك" });
-    } else if (!hasPermission(req.user.role, "driver_settlements.create") && !hasPermission(req.user.role, "driver_settlements.review")) {
+    } else if (!hasPermission(req.user, "driver_settlements.create") && !hasPermission(req.user, "driver_settlements.review")) {
       return res.status(403).json({ error: "معندكش صلاحية تشوف تسويات السائقين" });
     } else if (!assertOwnBranch(req.user, settlement.branch_id)) {
       return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });

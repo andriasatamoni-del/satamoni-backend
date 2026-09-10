@@ -66,6 +66,13 @@
 
   #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
   #loginOverlay.hidden { display: none; }
+  .hidden { display: none !important; }
+  button.secondary { background: var(--bg-alt) !important; color: var(--ink) !important; border: 1px solid var(--line) !important; }
+  .chk { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  #permGroups details { background: var(--bg-alt); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; }
+  #permGroups summary { cursor: pointer; font-weight: 700; padding: 4px 0; }
+  #permGroups label.chk { display: flex; margin: 6px 0 6px 4px; font-size: 13px; }
+  #permErr { color: var(--err); font-size: 12px; margin-top: 6px; }
   #loginBox { width: 320px; text-align: center; }
   #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
   #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
@@ -134,6 +141,9 @@
         <option value="admin">أدمن</option>
       </select>
       <select id="fBranch"></select>
+      <!-- المرحلة 8.58: صلاحيات فردية لكل موظف فوق دوره الأساسي - اختياري وقت الإنشاء، الدور بيدّي
+      مجموعة افتراضية لو محدّش فتح الشاشة دي أصلًا -->
+      <button type="button" id="fPermissionsBtn" class="secondary">⚙️ ضبط الصلاحيات (اختياري)</button>
       <button id="createBtn">إضافة</button>
     </div>
     <div id="formErr"></div>
@@ -141,9 +151,30 @@
 
   <h1>الموظفين الحاليين</h1>
   <table style="margin-bottom:24px">
-    <thead><tr><th>الاسم</th><th>البريد</th><th>الدور</th><th>الفرع</th><th>الحالة</th><th>PIN موافقة</th><th></th></tr></thead>
+    <thead><tr><th>الاسم</th><th>البريد</th><th>الدور</th><th>الفرع</th><th>الحالة</th><th>PIN موافقة</th><th>الصلاحيات</th><th></th></tr></thead>
     <tbody id="usersBody"></tbody>
   </table>
+
+  <!-- المرحلة 8.58: شاشة عرض/تعديل كل صلاحية موجودة في السيستم لموظف بعينه - تفتح لإنشاء موظف جديد
+  (بيبدأ من صلاحيات دوره الافتراضية) أو لتعديل موظف موجود (بيبدأ من صلاحياته الفعلية الحالية) -->
+  <div id="permissionsOverlay" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px">
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;max-width:720px;width:100%;max-height:88vh;overflow:auto">
+      <h2 id="permTitle" style="margin-top:0">الصلاحيات</h2>
+      <div style="font-size:12px;color:var(--faint);margin-bottom:10px">
+        الدور بيدّي مجموعة صلاحيات افتراضية. اتحكّم في صلاحيات الشخص ده بعينه: علّم أي صلاحية عايزه يقدر يعملها،
+        وشيل العلامة من أي صلاحية من صلاحيات دوره الأساسية مش عايزه يقدر يعملها.
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <button type="button" id="permResetBtn" class="secondary">↩️ إعادة لصلاحيات الدور الافتراضية</button>
+      </div>
+      <div id="permGroups"></div>
+      <div class="row" style="margin-top:14px">
+        <button type="button" id="permSaveBtn">حفظ</button>
+        <button type="button" id="permCancelBtn" class="secondary">إلغاء</button>
+      </div>
+      <div id="permErr" class="err"></div>
+    </div>
+  </div>
 
   <h1>إعدادات نقطة البيع</h1>
   <div id="posSettingsForm">
@@ -303,8 +334,10 @@ document.getElementById("branchSubmit").onclick = async () => {
   } catch (e) { errBox.textContent = e.message; }
 };
 
+let usersCache = [];
 async function loadUsers() {
   const users = await api("/api/users");
+  usersCache = users;
   const roleLabels = { admin: "أدمن", branch_manager: "مدير فرع", accountant: "محاسب", cashier: "كاشير", callcenter: "كول سنتر" };
   const canHavePin = (role) => role === "admin" || role === "branch_manager";
   document.getElementById("usersBody").innerHTML = users.map(u => `
@@ -319,6 +352,7 @@ async function loadUsers() {
            <button class="linkbtn" data-setpin="${u.id}" data-name="${u.name}">${u.has_pin ? "تغيير" : "تحديد"}</button>`
         : "—"}
       </td>
+      <td><button class="linkbtn" data-editperm="${u.id}">تعديل الصلاحيات</button></td>
       <td><button class="linkbtn" data-id="${u.id}" data-active="${u.is_active}">${u.is_active ? "تعطيل" : "تفعيل"}</button></td>
     </tr>`).join("");
   document.querySelectorAll("#usersBody button[data-id]").forEach(btn => {
@@ -344,7 +378,104 @@ async function loadUsers() {
       } catch (e) { alert(e.message); }
     };
   });
+  document.querySelectorAll("#usersBody button[data-editperm]").forEach(btn => {
+    btn.onclick = async () => {
+      const user = usersCache.find((u) => String(u.id) === btn.dataset.editperm);
+      if (!user) return;
+      await ensurePermCatalog();
+      const effective = computeEffectivePermissions(user.role, user.permission_grants, user.permission_revokes);
+      openPermissionsEditor({ mode: "edit", userId: user.id, role: user.role, effectivePermissions: effective });
+    };
+  });
 }
+
+// ---------------- المرحلة 8.58: شاشة صلاحيات الموظف الفردية ----------------
+let permCatalog = null; // { catalog: [...], rolePermissions: {...} }
+let permContext = null; // { mode, userId, role }
+let pendingCreatePermissions = null; // لو الأدمن ضبط صلاحيات وقت إنشاء موظف جديد، قبل ما يدوس "إضافة"
+
+async function ensurePermCatalog() {
+  if (!permCatalog) permCatalog = await api("/api/users/permissions-catalog");
+  return permCatalog;
+}
+function computeEffectivePermissions(role, grants, revokes) {
+  const base = permCatalog.rolePermissions[role] || [];
+  const set = new Set(base);
+  for (const p of (grants || [])) set.add(p);
+  for (const p of (revokes || [])) set.delete(p);
+  return [...set];
+}
+function renderPermGroups(role, effectivePermissions) {
+  const base = permCatalog.rolePermissions[role] || [];
+  const container = document.getElementById("permGroups");
+  container.innerHTML = permCatalog.catalog.map((g) => `
+    <details open>
+      <summary>${g.groupLabel}</summary>
+      ${g.permissions.map((p) => {
+        const checked = effectivePermissions.includes(p.key);
+        const isExtra = checked && !base.includes(p.key);
+        const isRevoked = !checked && base.includes(p.key);
+        const tag = isExtra
+          ? ` <span style="color:var(--green);font-size:11px">(إضافية)</span>`
+          : isRevoked ? ` <span style="color:var(--err);font-size:11px">(ملغاة من الدور)</span>` : "";
+        return `<label class="chk"><input type="checkbox" data-perm="${p.key}" ${checked ? "checked" : ""}/> ${p.label}<span data-tag>${tag}</span></label>`;
+      }).join("")}
+    </details>
+  `).join("");
+  container.querySelectorAll("input[data-perm]").forEach((cb) => {
+    cb.onchange = () => {
+      const key = cb.dataset.perm;
+      const isBase = base.includes(key);
+      const tagSpan = cb.closest("label").querySelector("[data-tag]");
+      if (cb.checked && !isBase) {
+        tagSpan.innerHTML = ` <span style="color:var(--green);font-size:11px">(إضافية)</span>`;
+      } else if (!cb.checked && isBase) {
+        tagSpan.innerHTML = ` <span style="color:var(--err);font-size:11px">(ملغاة من الدور)</span>`;
+      } else {
+        tagSpan.innerHTML = "";
+      }
+    };
+  });
+}
+async function openPermissionsEditor({ mode, userId, role, effectivePermissions }) {
+  await ensurePermCatalog();
+  permContext = { mode, userId, role };
+  document.getElementById("permTitle").textContent = mode === "create" ? "صلاحيات الموظف الجديد" : "تعديل صلاحيات الموظف";
+  document.getElementById("permErr").textContent = "";
+  renderPermGroups(role, effectivePermissions);
+  document.getElementById("permissionsOverlay").classList.remove("hidden");
+}
+document.getElementById("permResetBtn").onclick = async () => {
+  await ensurePermCatalog();
+  renderPermGroups(permContext.role, permCatalog.rolePermissions[permContext.role] || []);
+};
+document.getElementById("permCancelBtn").onclick = () => {
+  document.getElementById("permissionsOverlay").classList.add("hidden");
+};
+document.getElementById("permSaveBtn").onclick = async () => {
+  const checked = [...document.querySelectorAll("#permGroups input[data-perm]:checked")].map((cb) => cb.dataset.perm);
+  if (permContext.mode === "create") {
+    pendingCreatePermissions = checked;
+    document.getElementById("permissionsOverlay").classList.add("hidden");
+    return;
+  }
+  const errBox = document.getElementById("permErr");
+  errBox.textContent = "";
+  try {
+    await api(`/api/users/${permContext.userId}`, { method: "PATCH", body: JSON.stringify({ permissions: checked }) });
+    document.getElementById("permissionsOverlay").classList.add("hidden");
+    loadUsers();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("fPermissionsBtn").onclick = async () => {
+  await ensurePermCatalog();
+  const role = document.getElementById("fRole").value;
+  openPermissionsEditor({
+    mode: "create", role,
+    effectivePermissions: pendingCreatePermissions || permCatalog.rolePermissions[role] || [],
+  });
+};
+document.getElementById("fRole").addEventListener("change", () => { pendingCreatePermissions = null; });
 
 // ---------------- إعدادات نقطة البيع ----------------
 async function loadPosSettings() {
@@ -438,10 +569,17 @@ document.getElementById("createBtn").onclick = async () => {
   const role = document.getElementById("fRole").value;
   const branchId = document.getElementById("fBranch").value || null;
   try {
-    await api("/api/users", { method: "POST", body: JSON.stringify({ name, email, password, role, branchId }) });
+    await api("/api/users", {
+      method: "POST",
+      body: JSON.stringify({
+        name, email, password, role, branchId,
+        permissions: pendingCreatePermissions || undefined,
+      }),
+    });
     document.getElementById("fName").value = "";
     document.getElementById("fEmail").value = "";
     document.getElementById("fPassword").value = "";
+    pendingCreatePermissions = null;
     loadUsers();
   } catch (e) {
     errBox.textContent = e.message;

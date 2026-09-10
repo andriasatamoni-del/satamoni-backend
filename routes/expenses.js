@@ -428,7 +428,7 @@ router.post("/:id/cancel", requireAuth, canManage, async (req, res) => {
     }
 
     if (expense.status === "POSTED") {
-      if (!hasPermission(req.user.role, "accounting.reverse")) {
+      if (!hasPermission(req.user, "accounting.reverse")) {
         await client.query("ROLLBACK");
         return res.status(403).json({ error: "إلغاء مصروف مرحّل يحتاج صلاحية عكس قيود (أدمن بس)" });
       }

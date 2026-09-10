@@ -29,7 +29,7 @@ async function authorizeDeliveryAction(client, req, res, order) {
     }
     return { isDriverSelf: true };
   }
-  if (!hasPermission(req.user.role, "deliveries.assign")) {
+  if (!hasPermission(req.user, "deliveries.assign")) {
     res.status(403).json({ error: "معندكش صلاحية تعمل الإجراء ده" });
     return null;
   }
@@ -122,7 +122,7 @@ router.get("/:orderId", async (req, res) => {
       if (!driver || order.driver_id !== driver.id) {
         return res.status(403).json({ error: "الطلب ده مش مُسند لك" });
       }
-    } else if (!hasPermission(req.user.role, "deliveries.view_branch")) {
+    } else if (!hasPermission(req.user, "deliveries.view_branch")) {
       return res.status(403).json({ error: "معندكش صلاحية تشوف الطلب ده" });
     } else if (!assertOwnBranch(req.user, order.branch_id)) {
       return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });

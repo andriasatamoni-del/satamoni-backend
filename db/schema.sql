@@ -48,6 +48,13 @@ CREATE TABLE users (
   is_active     BOOLEAN DEFAULT TRUE,
   pin_hash      TEXT, -- PIN قصير (4-6 أرقام) لمدير الفرع/الأدمن بس - لموافقة الخصومات الكبيرة واسترجاع الطلبات
                        -- من غير ما يسجلوا خروج ودخول تاني على جهاز الكاشير
+  -- المرحلة 8.58: صلاحيات الموظف الفعلية = صلاحيات دوره الأساسية (middleware/permissions.js
+  -- ROLE_PERMISSIONS) + permission_grants - permission_revokes. كل عمود array نصوص (مفاتيح صلاحيات
+  -- من PERMISSION_CATALOG) - فاضي افتراضيًا يعني "خالص على دوره بالظبط من غير أي استثناء". الاستثناء
+  -- (لو موجود) دايمًا بيغلب: صلاحية اتشالت صراحة بتفضل متشالة حتى لو الدور نفسه فيها (مفيد حتى لو حد
+  -- غيّر role الأدمن لاحقًا - راجع hasPermission)
+  permission_grants  JSONB NOT NULL DEFAULT '[]'::jsonb,
+  permission_revokes JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at    TIMESTAMPTZ DEFAULT now()
 );
 
