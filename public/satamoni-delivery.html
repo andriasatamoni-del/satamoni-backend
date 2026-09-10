@@ -461,7 +461,15 @@ async function handleAction(order, act) {
         if (order.payment_status === "pending_collection") {
           const input = prompt(`المبلغ اللي الطيار حصّله فعليًا من العميل (الإجمالي ${order.total} ج.م):`, order.total);
           if (input === null) return;
-          body = { collectedAmount: Number(input) };
+          const collectedAmount = Number(input);
+          body = { collectedAmount };
+          // المرحلة 8.51: فرق بين المبلغ المُدخل والإجمالي - محتاج موافقة مدير الفرع/الأدمن (نفس نمط الاسترجاع)
+          const variance = Math.round((collectedAmount - Number(order.total)) * 100) / 100;
+          if (variance !== 0 && auth.user.role !== "admin" && auth.user.role !== "branch_manager") {
+            const approval = await openPinModal(`في فرق ${Math.abs(variance)} ج.م بين المبلغ ده وإجمالي الطلب - محتاج موافقة مدير الفرع أو الأدمن. دخّل الـ PIN:`, order.branch_id);
+            if (!approval) return;
+            body.approverId = approval.approverId;
+          }
         }
         await api(`/api/deliveries/${order.id}/delivered`, { method: "POST", body: JSON.stringify(body) });
       } else {

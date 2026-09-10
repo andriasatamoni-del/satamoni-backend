@@ -110,7 +110,14 @@ async function markOutForDelivery(client, { order, actorUserId }) {
 // "ذمة مدينة" لـ"عهدة كاش السائق" (مش كاش الفرع مباشرة - ده هيحصل بعدين وقت التسوية، الفلوس لسه فعليًا
 // في إيد السائق مش في درج الفرع). أي فرق بين المتوقع (order.total) والمحصّل بيتسجل كسطر منفصل واضح،
 // مش مخفي جوه الرقمين التانيين
-async function markDelivered(client, { order, actorUserId, collectedAmount }) {
+//
+// المرحلة 8.51: كان أي فرق (حتى تحصيل صفر بدل الإجمالي كامل) بيتسجل "اتحصّل" أوتوماتيك من غير أي مراجعة
+// - عكس فلسفة النظام المعلنة ("أي فرق لازم يظهر صراحة، مفيش تصحيح تلقائي صامت"، زي فروق الشيفت/تسوية
+// السائق المجمّعة بالظبط). دلوقتي: لو اللي بيسجّل التسليم مش السائق نفسه (كاشير/كول سنتر بيسجّل بالنيابة
+// عن السائق لما يرجع الفرع) وفيه فرق، لازم موافقة مدير الفرع/الأدمن (approverId) - نفس نمط استرجاع
+// الطلب (Void) بالظبط. السائق نفسه (isDriverSelf، بيسجّل من تطبيقه وهو لسه عند العميل) مستثنى عمدًا -
+// مفيش مدير فرع حاضر فعليًا في اللحظة دي، والفرق بيتراجع لاحقًا وقت التسوية المجمّعة على أي حال
+async function markDelivered(client, { order, actorUserId, collectedAmount, isDriverSelf, approverId }) {
   if (order.dispatch_status !== "OUT_FOR_DELIVERY") {
     throw invalidTransition("الطلب لازم يكون في الطريق الأول عشان تسجّله اتسلّم");
   }
@@ -120,6 +127,7 @@ async function markDelivered(client, { order, actorUserId, collectedAmount }) {
 
   let collectedAmountVal = null;
   let collectionVariance = null;
+  let finalApproverId = null;
   if (isCashCollection) {
     const amt = Number(collectedAmount);
     if (collectedAmount === undefined || collectedAmount === null || Number.isNaN(amt) || amt < 0) {
@@ -128,7 +136,15 @@ async function markDelivered(client, { order, actorUserId, collectedAmount }) {
       throw err;
     }
     collectedAmountVal = amt;
-    collectionVariance = amt - Number(order.total);
+    collectionVariance = Math.round((amt - Number(order.total)) * 100) / 100;
+    if (!isDriverSelf && collectionVariance !== 0) {
+      if (!approverId) {
+        const err = new Error(`في فرق ${Math.abs(collectionVariance)} ج.م بين المبلغ ده وإجمالي الطلب - محتاج موافقة مدير الفرع أو الأدمن`);
+        err.code = "COLLECTION_VARIANCE_APPROVAL_REQUIRED";
+        throw err;
+      }
+      finalApproverId = approverId;
+    }
   }
 
   const result = await client.query(
@@ -173,6 +189,7 @@ async function markDelivered(client, { order, actorUserId, collectedAmount }) {
     branchId: order.branch_id, userId: actorUserId, action: "DELIVERY_COLLECTED", entityType: "order", entityId: order.id,
     oldValues: { dispatchStatus: "OUT_FOR_DELIVERY" },
     newValues: { dispatchStatus: "DELIVERED", collectedAmount: collectedAmountVal, collectionVariance },
+    metadata: finalApproverId ? { approverId: finalApproverId } : undefined,
   });
   return updated;
 }
@@ -221,15 +238,22 @@ async function rescheduleFailed(client, { order, actorUserId }) {
   return result.rows[0];
 }
 
-// ملخص الطلبات المعلّقة تسوية لسائق معيّن - محسوب حيّ من orders الحقيقية (بس الطلبات المُسلَّمة كاش
-// اللي لسه معندهاش driver_settlement_id) - نفس فلسفة computeShiftFinancials بالظبط، بيتستخدم في
-// المعاينة قبل التسوية وفي التسوية نفسها (بيتجمّد وقتها)
+// ملخص الطلبات المعلّقة تسوية لسائق معيّن - محسوب حيّ من orders الحقيقية (كل الطلبات المُسلَّمة اللي
+// لسه معندهاش driver_settlement_id، بغض النظر عن طريقة الدفع) - نفس فلسفة computeShiftFinancials
+// بالظبط، بيتستخدم في المعاينة قبل التسوية وفي التسوية نفسها (بيتجمّد وقتها)
+//
+// المرحلة 8.51: كان مقصور على طلبات الكاش بس (pm.kind = 'cash') - يعني بونص أي طلب دليفري اتدفع بفيزا/
+// محفظة/آجل ماكانش بيتحصّل خالص، لأن آلية دفع البونص كلها كانت مربوطة بمسار تسوية الكاش. البونص حق
+// السائق مقابل التسليم نفسه (حسب خدمة التوصيل)، مش مقابل تحصيل كاش - فبقى لازم كل الطلبات المُسلَّمة
+// تدخل هنا عشان بونصها يتحسب ويترحّل، حتى لو مفيش كاش هيتسلّم فيها. المبالغ المالية الفعلية (codExpected/
+// codCollected/deliveryFeesTotal/expectedHandover) فضلت مقصورة على الكاش عمدًا - دي بس اللي الفرع بينتظر
+// يستلمه فعليًا من السائق، عكس البونص اللي بيترحّل رواتب مش هيتسلّم كاش
 async function computeDriverUnsettledSummary(client, driverId) {
   const res = await client.query(
-    `SELECT o.id, o.total, o.collected_amount, o.delivery_fee, o.delivered_at
+    `SELECT o.id, o.total, o.collected_amount, o.delivery_fee, o.delivered_at, pm.kind AS payment_kind
      FROM orders o
      JOIN payment_methods pm ON pm.id = o.payment_method_id
-     WHERE o.driver_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL AND pm.kind = 'cash'
+     WHERE o.driver_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL
      ORDER BY o.delivered_at`,
     [driverId]
   );
@@ -242,10 +266,12 @@ async function computeDriverUnsettledSummary(client, driverId) {
     deliveryFee: Number(o.delivery_fee || 0),
     bonus: calcDriverOrderBonus(o.delivery_fee || 0),
     deliveredAt: o.delivered_at,
+    isCash: o.payment_kind === "cash",
   }));
-  const codExpected = orders.reduce((s, o) => s + o.total, 0);
-  const codCollected = orders.reduce((s, o) => s + (o.collectedAmount || 0), 0);
-  const deliveryFeesTotal = orders.reduce((s, o) => s + o.deliveryFee, 0);
+  const cashOrders = orders.filter((o) => o.isCash);
+  const codExpected = cashOrders.reduce((s, o) => s + o.total, 0);
+  const codCollected = cashOrders.reduce((s, o) => s + (o.collectedAmount || 0), 0);
+  const deliveryFeesTotal = cashOrders.reduce((s, o) => s + o.deliveryFee, 0);
   const bonusTotal = orders.reduce((s, o) => s + o.bonus, 0);
   return {
     orders,
@@ -269,9 +295,11 @@ function classifySettlementVariance(variance, { ackThreshold }) {
 // هتستنى القفل ده، وبعد ما الأولى تعمل commit (وتحدد driver_settlement_id للطلبات) هتلاقي مفيش طلبات
 // معلّقة خالص فتاخد NOTHING_TO_SETTLE بدل ما تمسك نفس الطلبات تاني
 async function createSettlement(client, { driverId, branchId, settledByUserId, actualHandover, notes, thresholds, driverEmployeeId }) {
+  // المرحلة 8.51: بقت بتقفل كل الطلبات المُسلَّمة المعلّقة (مش الكاش بس) - عشان سائق آخد طلبات دفع
+  // إلكتروني بس (فيزا/محفظة/آجل) يقدر تتسوّى تسوية بونصه من غير ما يحتاج يسلّم أي كاش أصلًا
   const lockRes = await client.query(
-    `SELECT o.id FROM orders o JOIN payment_methods pm ON pm.id = o.payment_method_id
-     WHERE o.driver_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL AND pm.kind = 'cash'
+    `SELECT o.id FROM orders o
+     WHERE o.driver_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL
      FOR UPDATE OF o`,
     [driverId]
   );
