@@ -183,8 +183,22 @@
   .strow-item .varianceCell.neg { color: var(--err); font-weight: 700; }
   .strow-item .varianceCell.pos { color: var(--green); font-weight: 700; }
   .strow-item select.reasonSelect, .strow-item select.chargeSelect, .strow-item select.employeeSelect { min-width: 130px; font-size: 12px; }
-  .stHistoryRow { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .stHistoryRow { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; cursor: pointer; }
   .stHistoryRow:last-child { border-bottom: none; }
+  .stHistoryRow:hover { color: var(--gold-bright); }
+  #stDetailBackBtn { background: transparent; border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 13px; margin-bottom: 12px; }
+  .stdrow-item td { vertical-align: top; font-size: 12px; }
+  .stdrow-item .neg { color: var(--err); font-weight: 700; }
+  .stdrow-item .pos { color: var(--green); font-weight: 700; }
+  .stCorrectionsList { margin-top: 6px; }
+  .stCorrectionRow { font-size: 11px; color: var(--faint); padding: 3px 0; border-top: 1px dashed var(--line); }
+  .stCorrectBtn { background: transparent; border: 1px solid var(--gold); color: var(--gold-bright); border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 11px; }
+  .stCorrectForm { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px; background: var(--bg-alt); border-radius: 8px; }
+  .stCorrectForm input, .stCorrectForm select { background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 7px 9px; font-size: 12px; }
+  .stCorrectForm button { border: none; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 12px; font-weight: 700; }
+  .stCorrectSubmit { background: var(--red); color: #fff; }
+  .stCorrectCancel { background: transparent; border: 1px solid var(--line) !important; color: var(--ink); }
+  .stCorrectForm .err { width: 100%; margin: 0; }
 
   @media (max-width: 820px) {
     #main { max-width: 100%; padding: 16px 12px 50px; }
@@ -278,7 +292,20 @@
     <div id="stResultMsg"></div>
 
     <h1 style="font-size:16px;color:var(--gold-bright);margin:30px 0 10px">سجل جلسات الجرد</h1>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">اضغط على أي جلسة عشان تشوف تفاصيلها بكل سطورها، وتقدر تعمل تصحيح لأي سطر لو دخلت رقم غلط.</div>
     <div id="stHistoryWrap"></div>
+
+    <div id="stDetailWrap" style="display:none">
+      <button id="stDetailBackBtn" type="button">→ رجوع لسجل الجلسات</button>
+      <div id="stDetailHeader"></div>
+      <div class="tablewrap"><table class="rtable" id="stDetailTable">
+        <thead><tr>
+          <th>الخامة</th><th>رصيد النظام وقتها</th><th>الكمية الفعلية</th><th>الفرق</th><th>القيمة</th>
+          <th>السبب</th><th>يتحمّلها</th><th>بعد التصحيحات</th><th></th>
+        </tr></thead>
+        <tbody id="stDetailTableBody"></tbody>
+      </table></div>
+    </div>
   </div>
 
 </div>
@@ -986,6 +1013,8 @@ async function openStocktakeView() {
   document.getElementById("detailView").style.display = "none";
   document.getElementById("listView").style.display = "none";
   document.getElementById("stocktakeView").style.display = "block";
+  document.getElementById("stDetailWrap").style.display = "none";
+  document.getElementById("stHistoryWrap").style.display = "block";
   window.scrollTo(0, 0);
 
   const branchSel = document.getElementById("stBranchSelect");
@@ -1204,14 +1233,190 @@ async function loadStocktakeHistory() {
     const list = await api(`/api/stocktake?branchId=${stBranchId}`);
     if (list.length === 0) { wrap.innerHTML = `<div class="statemsg">مفيش جلسات جرد مسجّلة لسه</div>`; return; }
     wrap.innerHTML = list.map((s) => `
-      <div class="stHistoryRow">
-        <span>${new Date(s.created_at).toLocaleString("ar-EG")} - ${esc(s.created_by_name || "—")} - ${s.lines_count} صنف</span>
+      <div class="stHistoryRow" data-stid="${s.id}">
+        <span>جرد #${s.id} - ${new Date(s.created_at).toLocaleString("ar-EG")} - ${esc(s.created_by_name || "—")} - ${s.lines_count} صنف</span>
         <span style="font-weight:700;color:${Number(s.total_variance_value) < 0 ? "var(--err)" : "var(--green)"}">${money(s.total_variance_value)}</span>
       </div>
     `).join("");
+    wrap.querySelectorAll(".stHistoryRow").forEach((row) => {
+      row.onclick = () => openStocktakeDetail(Number(row.dataset.stid));
+    });
   } catch (e) {
     wrap.innerHTML = `<div class="statemsg errormsg">${esc(e.message)}</div>`;
   }
+}
+
+// ---------------- المرحلة 8.59: تفاصيل جلسة جرد + تصحيح سطر اتسجّل برقم غلط ----------------
+let stDetailCache = null; // آخر GET /api/stocktake/:id اتحمّل - عشان نقرا منه الفرع/الكمية المعتمدة حاليًا وقت التصحيح من غير رحلة سيرفر زيادة
+
+document.getElementById("stDetailBackBtn").onclick = () => {
+  document.getElementById("stDetailWrap").style.display = "none";
+  document.getElementById("stHistoryWrap").style.display = "block";
+};
+
+async function openStocktakeDetail(id) {
+  document.getElementById("stHistoryWrap").style.display = "none";
+  document.getElementById("stDetailWrap").style.display = "block";
+  window.scrollTo(0, document.getElementById("stDetailWrap").offsetTop - 20);
+  await loadStocktakeDetail(id);
+}
+
+async function loadStocktakeDetail(id) {
+  const headerBox = document.getElementById("stDetailHeader");
+  const body = document.getElementById("stDetailTableBody");
+  headerBox.innerHTML = `<div class="statemsg">جاري التحميل...</div>`;
+  body.innerHTML = "";
+  try {
+    stDetailCache = await api(`/api/stocktake/${id}`);
+    headerBox.innerHTML = `
+      <div style="font-size:13px;margin-bottom:12px">
+        جرد #${stDetailCache.id} - ${new Date(stDetailCache.created_at).toLocaleString("ar-EG")} - ${esc(stDetailCache.created_by_name || "—")}
+        ${stDetailCache.notes ? ` - ${esc(stDetailCache.notes)}` : ""}<br/>
+        <span style="font-weight:700;color:${Number(stDetailCache.total_variance_value) < 0 ? "var(--err)" : "var(--green)"}">
+          صافي قيمة الفرق الحالي (بعد أي تصحيحات): ${money(stDetailCache.total_variance_value)}
+        </span>
+      </div>`;
+    renderStDetailLines(stDetailCache.lines);
+  } catch (e) {
+    headerBox.innerHTML = `<div class="statemsg errormsg">${esc(e.message)}</div>`;
+  }
+}
+
+function renderStDetailLines(lines) {
+  const body = document.getElementById("stDetailTableBody");
+  if (lines.length === 0) { body.innerHTML = `<tr><td colspan="9">مفيش سطور فرق في الجلسة دي</td></tr>`; return; }
+  body.innerHTML = lines.map((l) => {
+    const wasCorrected = l.corrections && l.corrections.length > 0;
+    const chargeLabel = l.charge_type === "employee" ? `سلفة: ${esc(l.charge_employee_name || "—")}`
+      : l.charge_type === "account" ? `حساب ${esc(l.charge_account_code || "")}` : "—";
+    const correctionsHtml = wasCorrected ? `<div class="stCorrectionsList">${l.corrections.map((c) => `
+        <div class="stCorrectionRow">
+          ${new Date(c.created_at).toLocaleString("ar-EG")} - ${esc(c.created_by_name || "—")}:
+          ${num(c.previous_actual_quantity)} ← ${num(c.corrected_actual_quantity)}
+          (${Number(c.delta_quantity) > 0 ? "+" : ""}${num(c.delta_quantity)}${c.delta_value != null ? `، ${money(c.delta_value)}` : ""})
+          ${c.charge_type === "employee" ? ` - سلفة: ${esc(c.charge_employee_name || "—")}` : c.charge_type === "account" ? ` - حساب ${esc(c.charge_account_code || "")}` : ""}
+          ${c.reason ? ` - ${esc(c.reason)}` : ""}
+        </div>`).join("")}</div>` : "";
+    return `
+      <tr class="stdrow-item" data-lineid="${l.id}" data-unitcost="${l.unit_cost == null ? "" : l.unit_cost}">
+        <td>${esc(l.item_name)} (${esc(l.unit)})</td>
+        <td>${num(l.system_quantity)}</td>
+        <td>${num(l.actual_quantity)}</td>
+        <td class="${Number(l.variance_quantity) < 0 ? "neg" : "pos"}">${Number(l.variance_quantity) > 0 ? "+" : ""}${num(l.variance_quantity)}</td>
+        <td>${l.variance_value != null ? money(l.variance_value) : "—"}</td>
+        <td>${esc(l.reason || "—")}</td>
+        <td>${chargeLabel}</td>
+        <td>
+          ${wasCorrected ? `<strong>${num(l.effectiveActualQuantity)}</strong> (فرق ${Number(l.effectiveVarianceQuantity) > 0 ? "+" : ""}${num(l.effectiveVarianceQuantity)}${l.effectiveVarianceValue != null ? `، ${money(l.effectiveVarianceValue)}` : ""})` : "—"}
+          ${correctionsHtml}
+        </td>
+        <td><button type="button" class="stCorrectBtn" data-lineid="${l.id}">✏️ تصحيح</button></td>
+      </tr>
+      <tr class="stCorrectFormRow" data-forlineid="${l.id}" style="display:none"><td colspan="9"></td></tr>
+    `;
+  }).join("");
+
+  body.querySelectorAll(".stCorrectBtn").forEach((btn) => {
+    btn.onclick = () => toggleStCorrectForm(Number(btn.dataset.lineid));
+  });
+}
+
+function toggleStCorrectForm(lineId) {
+  const formRow = document.querySelector(`.stCorrectFormRow[data-forlineid="${lineId}"]`);
+  const isOpen = formRow.style.display !== "none";
+  document.querySelectorAll(".stCorrectFormRow").forEach((r) => { r.style.display = "none"; r.querySelector("td").innerHTML = ""; });
+  if (isOpen) return;
+
+  const line = stDetailCache.lines.find((l) => l.id === lineId);
+  const unitCost = line.unit_cost == null ? null : Number(line.unit_cost);
+  const currentActual = Number(line.effectiveActualQuantity);
+
+  formRow.style.display = "table-row";
+  formRow.querySelector("td").innerHTML = `
+    <div class="stCorrectForm">
+      <label style="font-size:12px">الكمية الصح: <input type="number" step="0.001" min="0" class="stCorrectQty" value="${currentActual}" style="width:110px" /></label>
+      <input type="text" class="stCorrectReason" placeholder="سبب التصحيح (اختياري)" style="width:200px" />
+      <span class="stCorrectPreview" style="font-size:12px;color:var(--faint)"></span>
+      <select class="stCorrectCharge" style="display:none">
+        <option value="account">حساب محاسبي</option>
+        <option value="employee">سلفة على موظف</option>
+      </select>
+      <select class="stCorrectEmployee" style="display:none"></select>
+      <button type="button" class="stCorrectSubmit">✅ حفظ التصحيح</button>
+      <button type="button" class="stCorrectCancel">إلغاء</button>
+      <div class="err stCorrectErr"></div>
+    </div>
+  `;
+
+  const qtyInput = formRow.querySelector(".stCorrectQty");
+  const preview = formRow.querySelector(".stCorrectPreview");
+  const chargeSelect = formRow.querySelector(".stCorrectCharge");
+  const employeeSelect = formRow.querySelector(".stCorrectEmployee");
+  const errBox = formRow.querySelector(".stCorrectErr");
+
+  function updatePreview() {
+    const raw = qtyInput.value;
+    if (raw === "") { preview.textContent = ""; chargeSelect.style.display = "none"; employeeSelect.style.display = "none"; return; }
+    const delta = Math.round((Number(raw) - currentActual) * 1000) / 1000;
+    if (delta === 0) {
+      preview.textContent = "مفيش فرق";
+      chargeSelect.style.display = "none"; employeeSelect.style.display = "none";
+      return;
+    }
+    const deltaValue = unitCost != null ? Math.round(delta * unitCost * 100) / 100 : null;
+    preview.textContent = `فرق التصحيح: ${delta > 0 ? "+" : ""}${delta}` + (deltaValue != null ? ` (${money(deltaValue)})` : "");
+    if (deltaValue != null && delta < 0) {
+      chargeSelect.style.display = "inline-block";
+    } else {
+      chargeSelect.style.display = "none"; employeeSelect.style.display = "none";
+    }
+  }
+  qtyInput.oninput = updatePreview;
+  updatePreview();
+
+  chargeSelect.onchange = async () => {
+    if (chargeSelect.value === "employee") {
+      try {
+        const employees = await ensureStEmployees();
+        employeeSelect.innerHTML = `<option value="">-- اختر الموظف --</option>` + employees.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join("");
+        employeeSelect.style.display = "inline-block";
+      } catch (e) {
+        errBox.textContent = e.message;
+        chargeSelect.value = "account";
+      }
+    } else {
+      employeeSelect.style.display = "none";
+    }
+  };
+
+  formRow.querySelector(".stCorrectCancel").onclick = () => { formRow.style.display = "none"; formRow.querySelector("td").innerHTML = ""; };
+  formRow.querySelector(".stCorrectSubmit").onclick = async () => {
+    errBox.textContent = "";
+    const raw = qtyInput.value;
+    if (raw === "") { errBox.textContent = "لازم تدخل الكمية الصح"; return; }
+    const body = { correctedActualQuantity: Number(raw) };
+    const reason = formRow.querySelector(".stCorrectReason").value.trim();
+    if (reason) body.reason = reason;
+    if (chargeSelect.style.display !== "none") {
+      body.chargeType = chargeSelect.value;
+      if (chargeSelect.value === "employee") {
+        const empId = Number(employeeSelect.value) || null;
+        if (!empId) { errBox.textContent = "لازم تحدد الموظف اللي هيتحمّل التصحيح"; return; }
+        body.chargeEmployeeId = empId;
+      }
+    }
+    const submitBtn = formRow.querySelector(".stCorrectSubmit");
+    submitBtn.disabled = true;
+    try {
+      await api(`/api/stocktake/${stDetailCache.id}/lines/${lineId}/correct`, { method: "POST", body: JSON.stringify(body) });
+      await loadStocktakeDetail(stDetailCache.id);
+      await loadStocktakeHistory();
+      await loadStocktakeBoard();
+    } catch (e) {
+      errBox.textContent = e.message;
+      submitBtn.disabled = false;
+    }
+  };
 }
 
 if (auth.token && auth.user) {

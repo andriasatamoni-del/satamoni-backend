@@ -206,3 +206,135 @@ describe("سجل جلسات الجرد (8.58)", () => {
     expect(Array.isArray(res.body.lines)).toBe(true);
   });
 });
+
+// المرحلة 8.59: تصحيح سطر جرد اتسجّل برقم غلط - بيسجّل حركة مخزون وقيد محاسبي جديدين يحملوا بس الفرق
+// (delta) من غير ما يلمس السطر الأصلي أو قيده المرحّل POSTED خالص (نفس قاعدة "قيد POSTED ميتلمسش")
+describe("تصحيح سطر جرد (8.59)", () => {
+  let corrItemId;
+  let corrStocktakeId;
+  let corrLineId;
+
+  beforeAll(async () => {
+    const item = await pool.query(
+      "INSERT INTO inventory_items (name, unit, unit_cost) VALUES ('خامة-تصحيح-جرد-8.59-جست', 'كيلو', 10) RETURNING id"
+    );
+    corrItemId = item.rows[0].id;
+    await pool.query(
+      "INSERT INTO branch_inventory_stock (branch_id, inventory_item_id, quantity) VALUES ($1,$2,200)",
+      [branchId, corrItemId]
+    );
+    const res = await request(app).post("/api/stocktake").set(authed(managerToken)).send({
+      branchId, lines: [{ inventoryItemId: corrItemId, actualQuantity: 180, reason: "تلف" }],
+    });
+    corrStocktakeId = res.body.id;
+    corrLineId = res.body.lines[0].id;
+  });
+
+  test("تصحيح بيزوّد العجز - قيد جديد بس على الفرق، مش بيلمس القيد الأصلي POSTED", async () => {
+    const res = await request(app)
+      .post(`/api/stocktake/${corrStocktakeId}/lines/${corrLineId}/correct`)
+      .set(authed(managerToken))
+      .send({ correctedActualQuantity: 170, reason: "غلطة عد" });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.delta_quantity)).toBe(-10);
+    expect(Number(res.body.delta_value)).toBe(-100);
+    expect(res.body.charge_type).toBe("account");
+    expect(res.body.charge_account_code).toBe("5300");
+
+    const stock = await pool.query(
+      "SELECT quantity FROM branch_inventory_stock WHERE branch_id=$1 AND inventory_item_id=$2", [branchId, corrItemId]
+    );
+    expect(Number(stock.rows[0].quantity)).toBe(170);
+
+    const je = await pool.query(
+      "SELECT * FROM journal_entries WHERE source_type='stock_count_correction' AND source_id=$1", [res.body.inventory_movement_id]
+    );
+    expect(je.rows.length).toBe(1);
+
+    const originalLine = await pool.query("SELECT inventory_movement_id FROM stocktake_lines WHERE id=$1", [corrLineId]);
+    const originalJe = await pool.query(
+      "SELECT status FROM journal_entries WHERE source_type='stock_count' AND source_id=$1", [originalLine.rows[0].inventory_movement_id]
+    );
+    expect(originalJe.rows[0].status).toBe("POSTED");
+  });
+
+  test("تصحيح تاني بيقلّل العجز - اتجاه القيد بيتعكس (مدين مخزون 1400 / دائن حساب التسوية 5300)", async () => {
+    const res = await request(app)
+      .post(`/api/stocktake/${corrStocktakeId}/lines/${corrLineId}/correct`)
+      .set(authed(managerToken))
+      .send({ correctedActualQuantity: 175 });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.delta_quantity)).toBe(5);
+    expect(Number(res.body.delta_value)).toBe(50);
+
+    const je = await pool.query(
+      "SELECT * FROM journal_entries WHERE source_type='stock_count_correction' AND source_id=$1", [res.body.inventory_movement_id]
+    );
+    const jeLines = await pool.query("SELECT * FROM journal_entry_lines WHERE journal_entry_id=$1", [je.rows[0].id]);
+    const inv = await pool.query("SELECT id FROM accounts WHERE code='1400'");
+    const debitLine = jeLines.rows.find((l) => Number(l.debit) > 0);
+    expect(debitLine.account_id).toBe(inv.rows[0].id);
+  });
+
+  test("تصحيح بيحمّل العجز الإضافي كسلفة على موظف بعينه", async () => {
+    const res = await request(app)
+      .post(`/api/stocktake/${corrStocktakeId}/lines/${corrLineId}/correct`)
+      .set(authed(managerToken))
+      .send({ correctedActualQuantity: 170, chargeType: "employee", chargeEmployeeId: employeeId });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.delta_quantity)).toBe(-5);
+    expect(res.body.charge_type).toBe("employee");
+
+    const adjustments = await pool.query(
+      "SELECT * FROM payroll_adjustments WHERE employee_id=$1 AND stocktake_id=$2 AND notes LIKE 'تصحيح%'",
+      [employeeId, corrStocktakeId]
+    );
+    expect(adjustments.rows.length).toBe(1);
+    expect(Number(adjustments.rows[0].amount)).toBe(50);
+  });
+
+  test("تصحيح بيقلّل العجز ومحاولة تحميله على موظف - يترفض 400", async () => {
+    const res = await request(app)
+      .post(`/api/stocktake/${corrStocktakeId}/lines/${corrLineId}/correct`)
+      .set(authed(managerToken))
+      .send({ correctedActualQuantity: 172, chargeType: "employee", chargeEmployeeId: employeeId });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/مينفعش يتحمّله موظف/);
+  });
+
+  test("نفس الكمية المسجّلة حاليًا - يترفض 400 (مفيش فرق)", async () => {
+    const res = await request(app)
+      .post(`/api/stocktake/${corrStocktakeId}/lines/${corrLineId}/correct`)
+      .set(authed(managerToken))
+      .send({ correctedActualQuantity: 170 });
+    expect(res.status).toBe(400);
+  });
+
+  test("سطر مش موجود - 404", async () => {
+    const res = await request(app)
+      .post(`/api/stocktake/${corrStocktakeId}/lines/999999999/correct`)
+      .set(authed(managerToken))
+      .send({ correctedActualQuantity: 100 });
+    expect(res.status).toBe(404);
+  });
+
+  test("فرع تاني - يترفض 403", async () => {
+    const b2 = await pool.query("INSERT INTO branches (name) VALUES ('فرع-تصحيح-جرد-تاني-8.59') RETURNING id");
+    await seedUser({ branchId: b2.rows[0].id, name: "مدير-فرع-تاني-8.59", email: "manager-corr-b2-859@jest.test", role: "branch_manager" });
+    const token2 = await login("manager-corr-b2-859@jest.test");
+    const res = await request(app)
+      .post(`/api/stocktake/${corrStocktakeId}/lines/${corrLineId}/correct`)
+      .set(authed(token2))
+      .send({ correctedActualQuantity: 100 });
+    expect(res.status).toBe(403);
+  });
+
+  test("GET /api/stocktake/:id - بيرجّع سجل التصحيحات والكمية/الفرق المعتمدين حاليًا لكل سطر", async () => {
+    const res = await request(app).get(`/api/stocktake/${corrStocktakeId}`).set(authed(managerToken));
+    expect(res.status).toBe(200);
+    const line = res.body.lines.find((l) => l.id === corrLineId);
+    expect(line.corrections.length).toBe(3);
+    expect(Number(line.effectiveActualQuantity)).toBe(170);
+    expect(Number(line.effectiveVarianceQuantity)).toBe(-30);
+  });
+});

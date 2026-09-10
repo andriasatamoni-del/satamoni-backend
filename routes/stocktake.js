@@ -15,6 +15,7 @@ const { validateIdParam } = require("../middleware/validate-id-param");
 
 router.use(requireAuth);
 router.param("id", validateIdParam);
+router.param("lineId", validateIdParam);
 
 // أسباب مقترحة (توثيق سريع، مش تصنيف مقفول - الحقل reason نص حر برضو) - مقسّمة حسب اتجاه الفرق لأن
 // سبب "تلف" منطقي للعجز بس، وسبب "جرد سابق ناقص" منطقي للزيادة بس
@@ -261,7 +262,8 @@ router.get("/", requirePermission("inventory.view"), async (req, res) => {
   }
 });
 
-// GET /api/stocktake/:id - تفاصيل جلسة جرد بسطورها
+// GET /api/stocktake/:id - تفاصيل جلسة جرد بسطورها، وكل سطر بيحمل سجل تصحيحاته (لو فيه) + الكمية/الفرق/
+// القيمة "الفعلية المعتمدة حاليًا" (آخر تصحيح لو موجود، وإلا الأصلية زي ما اتسجلت وقت التأكيد)
 router.get("/:id", requirePermission("inventory.view"), async (req, res) => {
   try {
     const headerRes = await pool.query(
@@ -282,9 +284,183 @@ router.get("/:id", requirePermission("inventory.view"), async (req, res) => {
        ORDER BY l.id`,
       [req.params.id]
     );
-    res.json({ ...header, lines: linesRes.rows });
+    const lineIds = linesRes.rows.map((l) => l.id);
+    const correctionsRes = lineIds.length
+      ? await pool.query(
+          `SELECT c.*, u.name AS created_by_name, e.name AS charge_employee_name
+           FROM stocktake_line_corrections c
+           LEFT JOIN users u ON u.id = c.created_by
+           LEFT JOIN employees e ON e.id = c.charge_employee_id
+           WHERE c.stocktake_line_id = ANY($1::int[])
+           ORDER BY c.created_at`,
+          [lineIds]
+        )
+      : { rows: [] };
+    const correctionsByLine = new Map();
+    for (const c of correctionsRes.rows) {
+      if (!correctionsByLine.has(c.stocktake_line_id)) correctionsByLine.set(c.stocktake_line_id, []);
+      correctionsByLine.get(c.stocktake_line_id).push(c);
+    }
+    const lines = linesRes.rows.map((l) => {
+      const corrections = correctionsByLine.get(l.id) || [];
+      const last = corrections[corrections.length - 1];
+      const effectiveActualQuantity = last ? Number(last.corrected_actual_quantity) : Number(l.actual_quantity);
+      const effectiveVarianceQuantity = Math.round((effectiveActualQuantity - Number(l.system_quantity)) * 1000) / 1000;
+      const effectiveVarianceValue = Math.round(
+        (Number(l.variance_value || 0) + corrections.reduce((sum, c) => sum + Number(c.delta_value || 0), 0)) * 100
+      ) / 100;
+      return { ...l, corrections, effectiveActualQuantity, effectiveVarianceQuantity, effectiveVarianceValue };
+    });
+    res.json({ ...header, lines });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/stocktake/:id/lines/:lineId/correct - {correctedActualQuantity, reason?, chargeType?,
+// chargeAccountCode?, chargeEmployeeId?} - تصحيح سطر جرد اتسجّل برقم غلط. القاعدة الثابتة في المشروع
+// إن قيد محاسبي POSTED ميتلمسش خالص - فبدل ما نعدّل السطر الأصلي أو قيده، كل تصحيح هنا بيحمل بس الفرق
+// (delta) بين آخر كمية فعلية معتمدة والكمية الصح الجديدة، وبيترحّل بحركة مخزون وقيد محاسبي مستقلين خاصين
+// بيه. ممكن تعمل أكتر من تصحيح لنفس السطر بمرور الوقت لو لزم الأمر
+router.post("/:id/lines/:lineId/correct", requirePermission("inventory.count"), async (req, res) => {
+  const { correctedActualQuantity, reason, chargeType, chargeAccountCode, chargeEmployeeId } = req.body;
+  if (correctedActualQuantity === undefined || correctedActualQuantity === null || Number(correctedActualQuantity) < 0) {
+    return res.status(400).json({ error: "الكمية الصح مطلوبة ولازم تكون رقم موجب" });
+  }
+  if (chargeType && !["account", "employee"].includes(chargeType)) {
+    return res.status(400).json({ error: "نوع تحميل غير معروف" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const lineRes = await client.query(
+      `SELECT l.*, s.branch_id FROM stocktake_lines l JOIN stocktakes s ON s.id = l.stocktake_id
+       WHERE l.id = $1 AND l.stocktake_id = $2 FOR UPDATE OF l`,
+      [req.params.lineId, req.params.id]
+    );
+    if (lineRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "سطر الجرد مش موجود" });
+    }
+    const line = lineRes.rows[0];
+    if (!assertOwnBranch(req.user, line.branch_id)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "معندكش صلاحية تعدّل جرد فرع تاني" });
+    }
+
+    const lastCorrectionRes = await client.query(
+      `SELECT * FROM stocktake_line_corrections WHERE stocktake_line_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [line.id]
+    );
+    const previousActualQuantity = lastCorrectionRes.rows.length > 0
+      ? Number(lastCorrectionRes.rows[0].corrected_actual_quantity)
+      : Number(line.actual_quantity);
+
+    const newActual = Number(correctedActualQuantity);
+    const deltaQuantity = Math.round((newActual - previousActualQuantity) * 1000) / 1000;
+    if (deltaQuantity === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "الكمية اللي دخلتها زي الكمية المسجّلة حاليًا بالظبط - مفيش تصحيح لازم" });
+    }
+    if (deltaQuantity > 0 && chargeType === "employee") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "التصحيح ده بيقلّل العجز - مينفعش يتحمّله موظف، لازم يترحّل لحساب محاسبي" });
+    }
+
+    const correctionNote = `تصحيح جرد فعلي #${line.stocktake_id} - سطر ${line.id}: كان ${previousActualQuantity}، الصح ${newActual}` + (reason ? ` - ${reason}` : "");
+    const { movement } = await postInventoryMovement(client, {
+      branchId: line.branch_id, inventoryItemId: line.inventory_item_id, quantity: deltaQuantity, movementType: "STOCK_COUNT",
+      notes: correctionNote, userId: req.user.id, negativeStockOverrideApproved: true,
+    });
+    const unitCost = movement.unit_cost != null ? Number(movement.unit_cost) : null;
+    const deltaValue = unitCost != null ? Math.round(deltaQuantity * unitCost * 100) / 100 : null;
+
+    const effectiveChargeType = deltaValue && deltaValue !== 0 ? (chargeType || line.charge_type || "account") : null;
+    if (effectiveChargeType === "employee" && deltaQuantity > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "التصحيح ده بيقلّل العجز - مينفعش يتحمّله موظف، لازم يترحّل لحساب محاسبي" });
+    }
+    let resolvedAccountCode = null;
+    let resolvedEmployeeId = null;
+
+    if (effectiveChargeType === "account" && deltaValue) {
+      resolvedAccountCode = chargeAccountCode || line.charge_account_code || "5300";
+      const accountExists = await client.query("SELECT id FROM accounts WHERE code = $1", [resolvedAccountCode]);
+      if (accountExists.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: `الحساب المحاسبي ${resolvedAccountCode} غير موجود` });
+      }
+      const adjustmentAccount = await getAccountByCode(client, resolvedAccountCode);
+      const inventoryAccount = await getAccountByCode(client, "1400");
+      const absValue = Math.abs(deltaValue);
+      const isIncrease = deltaQuantity > 0;
+      await postJournalEntry(client, {
+        entryDate: movement.business_date, description: `تصحيح فرق جرد فعلي #${line.stocktake_id}`,
+        sourceType: "stock_count_correction", sourceId: movement.id, branchId: line.branch_id,
+        lines: isIncrease
+          ? [{ accountId: inventoryAccount.id, debit: absValue }, { accountId: adjustmentAccount.id, credit: absValue }]
+          : [{ accountId: adjustmentAccount.id, debit: absValue }, { accountId: inventoryAccount.id, credit: absValue }],
+        idempotencyKey: `stock-count-correction-${movement.id}`, userId: req.user.id,
+      });
+    } else if (effectiveChargeType === "employee" && deltaValue) {
+      resolvedEmployeeId = chargeEmployeeId || line.charge_employee_id;
+      if (!resolvedEmployeeId) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "لازم تحدد الموظف اللي هيتحمّل التصحيح" });
+      }
+      const employeeRes = await client.query("SELECT id, name FROM employees WHERE id = $1", [resolvedEmployeeId]);
+      if (employeeRes.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "الموظف المحدّد غير موجود" });
+      }
+      const employee = employeeRes.rows[0];
+      const receivableAccount = await getOrCreateEmployeeReceivableAccount(client, employee.id);
+      const inventoryAccount = await getAccountByCode(client, "1400");
+      const shortage = Math.round(Math.abs(deltaValue) * 100) / 100;
+      await postJournalEntry(client, {
+        entryDate: movement.business_date, description: `تصحيح عجز جرد #${line.stocktake_id} - ${employee.name}`,
+        sourceType: "stock_count_correction", sourceId: movement.id, branchId: line.branch_id,
+        lines: [
+          { accountId: receivableAccount.id, debit: shortage, branchId: line.branch_id },
+          { accountId: inventoryAccount.id, credit: shortage, branchId: line.branch_id },
+        ],
+        idempotencyKey: `stock-count-correction-${movement.id}`, userId: req.user.id,
+      });
+      await client.query(
+        `INSERT INTO payroll_adjustments (employee_id, entry_date, adjustment_type, amount, notes, created_by, stocktake_id)
+         VALUES ($1, CURRENT_DATE, 'advance', $2, $3, $4, $5)`,
+        [employee.id, shortage, `تصحيح عجز جرد فعلي #${line.stocktake_id} - سطر ${line.id}`, req.user.id, line.stocktake_id]
+      );
+    }
+
+    const correctionRes = await client.query(
+      `INSERT INTO stocktake_line_corrections
+        (stocktake_line_id, previous_actual_quantity, corrected_actual_quantity, delta_quantity,
+         unit_cost, delta_value, reason, charge_type, charge_account_code, charge_employee_id, inventory_movement_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [
+        line.id, previousActualQuantity, newActual, deltaQuantity,
+        unitCost, deltaValue, reason || null, effectiveChargeType, resolvedAccountCode, resolvedEmployeeId, movement.id, req.user.id,
+      ]
+    );
+
+    await client.query(
+      `UPDATE stocktakes SET total_variance_value = ROUND((COALESCE(total_variance_value, 0) + $1)::numeric, 2) WHERE id = $2`,
+      [deltaValue || 0, line.stocktake_id]
+    );
+    await logAudit(client, {
+      branchId: line.branch_id, userId: req.user.id, action: "STOCKTAKE_LINE_CORRECTED", entityType: "stocktake_line", entityId: line.id,
+      newValues: { previousActualQuantity, correctedActualQuantity: newActual, deltaQuantity, deltaValue }, req,
+    });
+    await client.query("COMMIT");
+    res.status(201).json(correctionRes.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
