@@ -88,3 +88,29 @@ describe("GET /api/orders - فلتر shiftId (طلبات الشيفت الحال
     expect(res.body.length).toBe(0); // اتفلتر تلقائي على branch_id بتاع فرع B (مفيش طلب بالرقم ده هناك)
   });
 });
+
+// المرحلة 8.52: created_at::date كان بيتقارن بتوقيت جلسة Postgres الافتراضي (UTC)، بينما "الطلبات
+// الجارية" في الكاشير بتبعت تاريخ اليوم بتوقيت القاهرة (UTC+2) - أي طلب اتسجل في أول ساعتين بعد نص
+// الليل بتوقيت القاهرة كان بيتحسب لسه "إمبارح" بتوقيت UTC، فيختفي تمامًا من فلتر date=اليوم رغم إنه
+// اتسجل فعليًا النهاردة. بنحاكي الحالة دي بتحديث created_at مباشرة لوقت داخل النافذة الخطرة دي
+describe("GET /api/orders - فلتر date بتوقيت القاهرة (8.52)", () => {
+  test("طلب اتسجل بعد نص الليل بتوقيت القاهرة بس قبل نص الليل بتوقيت UTC - لازم يظهر في فلتر تاريخ اليوم بتوقيت القاهرة", async () => {
+    const order = await makeOrder(managerAToken, branchA);
+    expect(order.status).toBe(201);
+    const orderId = order.body.orderId;
+
+    // نبني توقيت UTC بيمثّل 00:30 بتوقيت القاهرة (UTC+2) يوم معيّن - يعني 22:30 بتوقيت UTC اليوم اللي قبله
+    const cairoMidnightPlus30 = new Date(Date.UTC(2026, 2, 15, 22, 30, 0)); // = 2026-03-16 00:30 بتوقيت القاهرة
+    await pool.query("UPDATE orders SET created_at = $1 WHERE id = $2", [cairoMidnightPlus30, orderId]);
+
+    const cairoDate = "2026-03-16"; // اليوم بتوقيت القاهرة وقت التسجيل
+    const utcDate = "2026-03-15"; // نفس اللحظة بتوقيت UTC - ده اللي كان بيتفلتر بيه غلط قبل الإصلاح
+
+    const cairoRes = await request(app).get(`/api/orders?date=${cairoDate}&branchId=${branchA}`).set(authed(managerAToken));
+    expect(cairoRes.status).toBe(200);
+    expect(cairoRes.body.map((o) => o.id)).toContain(orderId);
+
+    const utcRes = await request(app).get(`/api/orders?date=${utcDate}&branchId=${branchA}`).set(authed(managerAToken));
+    expect(utcRes.body.map((o) => o.id)).not.toContain(orderId);
+  });
+});
