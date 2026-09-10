@@ -56,6 +56,7 @@ async function syncOrders() {
     source: o.source,
     table_number: o.table_number,
     address_details: o.address_details,
+    distinguishing_mark: o.distinguishing_mark,
     customer_name: o.customer_name,
     customer_phone: o.customer_phone,
     subtotal: o.subtotal,

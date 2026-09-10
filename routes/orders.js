@@ -358,14 +358,14 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     const orderResult = await client.query(
       `INSERT INTO orders
         (branch_id, source, order_type, table_number, delivery_area_id,
-         address_details, customer_name, customer_phone, payment_method_id,
+         address_details, distinguishing_mark, customer_name, customer_phone, payment_method_id,
          created_by, subtotal, delivery_fee, discount, discount_approved_by, total, status, payment_status,
          loyalty_points_earned, loyalty_points_redeemed, loyalty_redeem_value, idempotency_key, shift_id,
          dispatch_status, vat_amount, talabat_order_id, talabat_cash_collected)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
-       addressDetails, customerName, customerPhone, paymentMethodId,
+       addressDetails, orderType === "delivery" ? (distinguishingMark || null) : null, customerName, customerPhone, paymentMethodId,
        createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus,
        loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, idempotencyKey || null, shiftId,
        initialDispatchStatus, vatAmount, source === "talabat" ? (talabatOrderId || null) : null, talabatCashCollectedFinal]
@@ -1627,6 +1627,7 @@ router.put(
       const finalCustomerPhone = customerPhone !== undefined ? customerPhone : order.customer_phone;
       const finalCustomerName = customerName !== undefined ? customerName : order.customer_name;
       const finalAddressDetails = addressDetails !== undefined ? addressDetails : order.address_details;
+      const finalDistinguishingMark = distinguishingMark !== undefined ? distinguishingMark : order.distinguishing_mark;
       const finalDeliveryAreaId = deliveryAreaId !== undefined ? deliveryAreaId : order.delivery_area_id;
       const finalPaymentMethodId = paymentMethodId !== undefined ? paymentMethodId : order.payment_method_id;
       const finalTableNumber = tableNumber !== undefined ? tableNumber : order.table_number;
@@ -1672,14 +1673,16 @@ router.put(
 
       await client.query(
         `UPDATE orders SET
-           table_number = $1, delivery_area_id = $2, address_details = $3,
-           customer_name = $4, customer_phone = $5, payment_method_id = $6,
-           subtotal = $7, delivery_fee = $8, discount = $9, discount_approved_by = $10,
-           total = $11, loyalty_points_earned = $12, loyalty_points_redeemed = $13, loyalty_redeem_value = $14,
-           vat_amount = $15, synced_at = NULL
-         WHERE id = $16`,
+           table_number = $1, delivery_area_id = $2, address_details = $3, distinguishing_mark = $4,
+           customer_name = $5, customer_phone = $6, payment_method_id = $7,
+           subtotal = $8, delivery_fee = $9, discount = $10, discount_approved_by = $11,
+           total = $12, loyalty_points_earned = $13, loyalty_points_redeemed = $14, loyalty_redeem_value = $15,
+           vat_amount = $16, synced_at = NULL
+         WHERE id = $17`,
         [
-          finalTableNumber, finalDeliveryAreaId, finalAddressDetails, finalCustomerName, finalCustomerPhone,
+          finalTableNumber, finalDeliveryAreaId, finalAddressDetails,
+          order.order_type === "delivery" ? finalDistinguishingMark : null,
+          finalCustomerName, finalCustomerPhone,
           finalPaymentMethodId, subtotal, deliveryFee, discount, discountApprovedBy || null,
           total, loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, vatAmount, order.id,
         ]

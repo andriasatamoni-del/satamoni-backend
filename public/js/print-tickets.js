@@ -111,6 +111,7 @@
         <div class="meta">العميل: ${esc(full.customer_name) || "—"} — ${esc(full.customer_phone) || "—"}</div>
         ${full.table_number ? `<div class="meta">ترابيزة: ${esc(full.table_number)}</div>` : ""}
         ${full.address_details ? `<div class="meta">العنوان: ${esc(full.address_details)}</div>` : ""}
+        ${full.distinguishing_mark ? `<div class="meta">علامة مميزة: ${esc(full.distinguishing_mark)}</div>` : ""}
         <table>${itemsRows(full.items || [])}</table>
       `;
       win.print();
@@ -141,6 +142,9 @@
         <div class="meta">إيصال طلب #${full.id} — ${esc(labels.orderTypeLabel || full.order_type)}</div>
         <div class="meta">${labels.branchLabel ? esc(labels.branchLabel) + " — " : ""}${new Date(full.created_at).toLocaleString("ar-EG")}</div>
         ${full.customer_name || full.customer_phone ? `<div class="meta">العميل: ${esc(full.customer_name) || "—"} — ${esc(full.customer_phone) || "—"}</div>` : ""}
+        ${full.table_number ? `<div class="meta">ترابيزة: ${esc(full.table_number)}</div>` : ""}
+        ${full.address_details ? `<div class="meta">العنوان: ${esc(full.address_details)}</div>` : ""}
+        ${full.distinguishing_mark ? `<div class="meta">علامة مميزة: ${esc(full.distinguishing_mark)}</div>` : ""}
         <table>${itemsRowsWithPrice(full.items || [])}</table>
         <table class="totals">${totalsRows.join("")}</table>
         <div class="meta" style="margin-top:10px">طريقة الدفع: ${esc(labels.paymentMethodLabel) || "—"}</div>

@@ -251,6 +251,10 @@ CREATE TABLE orders (
   table_number       TEXT,
   delivery_area_id  INTEGER REFERENCES delivery_areas(id),
   address_details   TEXT,
+  -- المرحلة 8.55: علامة مميزة (بجوار كذا، لون العمارة...) كانت بتتسجل في ملف العميل (customers) بس -
+  -- مش على الطلب نفسه، فالإيصال/تذكرة المطبخ مقدروش يعرضوها أبدًا لأي طلب. دلوقتي بتتجمّد هنا زي
+  -- address_details بالظبط وقت إنشاء/تعديل الطلب - نفس فلسفة "لقطة وقت الطلب" مش مرجع حي لملف العميل
+  distinguishing_mark TEXT,
   customer_name     TEXT,
   customer_phone    TEXT,
   payment_method_id INTEGER REFERENCES payment_methods(id),
