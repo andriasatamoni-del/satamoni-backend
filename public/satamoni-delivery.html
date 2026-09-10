@@ -485,8 +485,17 @@ async function handleAction(order, act) {
       await api(`/api/deliveries/${order.id}/failed`, { method: "POST", body: JSON.stringify({ reason: reasonCode }) });
       alert("اتسجّل فشل التسليم. لما الطيار يرجع الفرع، استخدم زرار الاسترجاع (Void) لو الطلب هيتلغي، أو أعد الجدولة من شاشة لوحة التوزيع لو هيتسلّم تاني.");
     } else if (act === "cancel") {
-      if (!confirm(`متأكد من إلغاء الطلب #${order.id}؟`)) return;
-      await api(`/api/orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) });
+      // المرحلة 8.57: الإلغاء بقى بيعدّي بـPOST /:id/void بالظبط زي "استرجاع" تحت - كان قبل كده PATCH
+      // /status بدون أي موافقة مدير ولا عكس مخزون/قيد محاسبي، ثغرة حقيقية اتكشفت من بلاغ كاشير حقيقي
+      const reason = prompt(`سبب إلغاء الطلب #${order.id}:`);
+      if (!reason) return;
+      let approverId = null;
+      if (auth.user.role !== "admin" && auth.user.role !== "branch_manager") {
+        const approval = await openPinModal("إلغاء الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:", order.branch_id);
+        if (!approval) return;
+        approverId = approval.approverId;
+      }
+      await api(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approverId }) });
     } else if (act === "collect") {
       await api(`/api/orders/${order.id}/payment-status`, { method: "PATCH", body: JSON.stringify({ paymentStatus: "collected" }) });
     } else if (act === "void") {

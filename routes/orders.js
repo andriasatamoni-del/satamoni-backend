@@ -926,11 +926,15 @@ router.get(
   }
 );
 
-const ORDER_STATUSES = ["preparing", "out_for_delivery", "completed", "cancelled"];
+// المرحلة 8.57: "cancelled" اتشال من هنا عمدًا - كان ينفع يتبعت من غير أي موافقة مدير ولا عكس مخزون/قيد
+// محاسبي (عكس POST /:id/void اللي بيطلب PIN مدير/أدمن للكاشير ويعكس كل أثر البيع فعليًا). إلغاء طلب
+// دلوقتي بيعدّي بس من هناك - راجع تعليق /:id/void تحت لتفاصيل الثغرة اللي اتصلحت
+const ORDER_STATUSES = ["preparing", "out_for_delivery", "completed"];
 const TERMINAL_STATUSES = ["completed", "cancelled"];
 
 // PATCH /api/orders/:id/status - تغيير حالة الطلب (دورة حياة الدليفري: تحت التحضير -> في الطريق -> اتسلمت)
-// {status, driverName?, notes?} - لازم اسم الطيار لما ننقل الطلب "في الطريق"
+// {status, driverName?, notes?} - لازم اسم الطيار لما ننقل الطلب "في الطريق". إلغاء الطلب مش من هنا خالص
+// (راجع تعليق ORDER_STATUSES فوق) - استخدم POST /:id/void بدل كده
 router.patch(
   "/:id/status",
   requireAuth,
@@ -978,26 +982,6 @@ router.patch(
         `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, $4)`,
         [req.params.id, status, req.user.id, notes || null]
       );
-
-      // لو الطلب اتلغى قبل ما يكتمل، لازم نرجّع نقاط الولاء اللي كانت اتضافت للعميل وقت الإنشاء، ونرجّع
-      // له كمان أي نقاط كان استخدمها كخصم على نفس الطلب (الطلب اتلغى، فمن حقه ياخد نقاطه اللي دفعها تاني)
-      if (status === "cancelled" && current.customer_phone) {
-        const netPoints = Number(current.loyalty_points_earned || 0) - Number(current.loyalty_points_redeemed || 0);
-        if (netPoints !== 0) {
-          await client.query(
-            `UPDATE customers SET loyalty_points = GREATEST(loyalty_points - $1, 0) WHERE phone = $2`,
-            [netPoints, current.customer_phone]
-          );
-        }
-      }
-
-      if (status === "cancelled") {
-        await logAudit(client, {
-          branchId: current.branch_id, userId: req.user.id, action: "ORDER_CANCELLED",
-          entityType: "order", entityId: Number(req.params.id),
-          oldValues: { status: current.status }, newValues: { status }, metadata: { notes }, req,
-        });
-      }
 
       await client.query("COMMIT");
       // المرحلة 8.40: الطلب وصل فعليًا للعميل (الطيار سلّم/رجع) - دلوقتي وقت طلب التقييم، مش وقت الإنشاء
@@ -1226,11 +1210,18 @@ router.post(
   }
 );
 
-// POST /api/orders/:id/void - استرجاع طلب مكتمل اتسجل بالغلط (Void) - بيرجّعه لحالة "ملغي" (يستبعده من
-// الإيرادات في التقارير زي أي إلغاء) وبيرجّع المخزون اللي كان اتخصم وقته. لازم موافقة مدير الفرع/الأدمن
-// دايمًا: لو اللي بيسترجع نفسه مدير فرع/أدمن بيوافق بحسابه على طول، غيره لازم PIN معتمد (approverId من
-// verify-override-pin). حالة التحصيل (اتحصّل الفلوس فعليًا ولا لأ) مبتتغيّرش أوتوماتيك هنا - لو الفلوس
-// كانت اتحصّلت فعلاً، ده محتاج تسوية كاش يدوية منفصلة، مش جزء من الاسترجاع نفسه.
+// POST /api/orders/:id/void - إلغاء/استرجاع أي طلب لسه شغال (تحت التحضير/في الطريق) أو مكتمل اتسجل
+// بالغلط - بيرجّعه لحالة "ملغي" (يستبعده من الإيرادات في التقارير زي أي إلغاء) وبيرجّع المخزون اللي كان
+// اتخصم وقته + يعكس قيد البيع المحاسبي. لازم موافقة مدير الفرع/الأدمن دايمًا: لو اللي بيسترجع نفسه مدير
+// فرع/أدمن بيوافق بحسابه على طول، غيره لازم PIN معتمد (approverId من verify-override-pin). حالة التحصيل
+// (اتحصّل الفلوس فعليًا ولا لأ) مبتتغيّرش أوتوماتيك هنا - لو الفلوس كانت اتحصّلت فعلاً، ده محتاج تسوية
+// كاش يدوية منفصلة، مش جزء من الاسترجاع نفسه.
+//
+// المرحلة 8.57: ده بقى المسار الوحيد لإلغاء أي طلب - PATCH /:id/status بقى مش بيقبل status=cancelled
+// خالص. قبل كده كان الكاشير يقدر يلغي طلب "تحت التحضير" أو "في الطريق" من هناك من غير أي موافقة مدير
+// ومن غير ما المخزون أو القيد المحاسبي (اللي اتسجلوا وقت إنشاء الطلب مش وقت اكتماله) يترجعوا خالص -
+// ثغرة حقيقية اتكشفت من بلاغ كاشير حقيقي. دلوقتي أي طلب لسه مش "ملغي" بالفعل ينفع يتسترجع من هنا بنفس
+// الضمانات (PIN + عكس كامل) بغض النظر عن حالته
 router.post(
   "/:id/void",
   requireAuth,
@@ -1254,17 +1245,12 @@ router.post(
         await client.query("ROLLBACK");
         return res.status(403).json({ error: "معندكش صلاحية تسترجع طلب فرع تاني" });
       }
-      // المرحلة 7F: نفس الاسترجاع (عكس مخزون + نقاط ولاء + قيد محاسبي) بيتقبل كمان لطلب دليفري فشل
-      // تسليمه فعليًا وبيرجع للفرع (dispatch_status='FAILED') - قبل ما يوصل حالة 'completed' أصلًا.
-      // الأثر المطلوب عكسه (خصم مخزون، قيد بيع) اتسجل وقت إنشاء الطلب مش وقت التسليم، فمينفعش نستنى
-      // لحد ما يوصل completed اللي مش هيوصلها أبدًا في الحالة دي - نفس منطق العكس بالظبط، مش منطق جديد
-      const isVoidableCompleted = order.status === "completed";
-      const isVoidableFailedDelivery = order.status === "out_for_delivery" && order.dispatch_status === "FAILED";
-      if ((!isVoidableCompleted && !isVoidableFailedDelivery) || order.voided) {
+      // المرحلة 8.57: أي طلب مش "ملغي" بالفعل ينفع يتسترجع من هنا - سواء لسه تحت التحضير/في الطريق (المخزون
+      // والقيد المحاسبي اتسجلوا وقت الإنشاء مش وقت الاكتمال، فمفيش داعي نستنى الطلب يوصل completed أصلًا
+      // عشان نقدر نعكس أثره) أو مكتمل بالفعل. الضمانة الوحيدة المطلوبة هي إنه "لسه حي" (مش cancelled/voided)
+      if (order.status === "cancelled" || order.voided) {
         await client.query("ROLLBACK");
-        return res.status(400).json({
-          error: "الاسترجاع (Void) بس للطلبات المكتملة، أو طلبات دليفري فشل تسليمها وترجعت للفرع، اللي لسه ما اتسترجعتش",
-        });
+        return res.status(400).json({ error: "الطلب ده اتلغى أو اتسترجع بالفعل" });
       }
 
       let finalApproverId;
@@ -1283,11 +1269,16 @@ router.post(
       }
 
       // synced_at بيترجع NULL عمدًا - لو الطلب ده كان اتبعت للمركزي قبل الاسترجاع، لازم يترفع تاني
-      // بحالته الجديدة (ملغي/مسترجع) عشان الإيرادات المجمّعة مركزيًا متفضلش شايلة بيع اتلغى فعليًا
+      // بحالته الجديدة (ملغي/مسترجع) عشان الإيرادات المجمّعة مركزيًا متفضلش شايلة بيع اتلغى فعليًا.
+      // المرحلة 8.57: ASSIGNED/OUT_FOR_DELIVERY (مش بس FAILED زي قبل كده) بقى بيتحول لـRETURNED كمان -
+      // دلوقتي ينفع نسترجع طلب سائق شايله فعليًا (مش بس اللي فشل تسليمه ورجع بالفعل)، فلازم نشيله فورًا
+      // من قائمة السائق النشطة (GET /api/deliveries/mine بتستبعد RETURNED) عشان ميفضلش شايل طلب ملغي
+      // من غير ما يعرف - driver_id نفسه بيفضل زي ما هو للتتبّع، زي ما FAILED->RETURNED كان بيعمل بالظبط
       await client.query(
         `UPDATE orders SET status = 'cancelled', voided = TRUE, voided_by = $1, voided_at = now(),
          void_reason = $2, synced_at = NULL,
-         dispatch_status = CASE WHEN dispatch_status = 'FAILED' THEN 'RETURNED' ELSE dispatch_status END
+         dispatch_status = CASE WHEN dispatch_status IN ('FAILED', 'ASSIGNED', 'OUT_FOR_DELIVERY')
+                                 THEN 'RETURNED' ELSE dispatch_status END
          WHERE id = $3`,
         [finalApproverId, reason, order.id]
       );
