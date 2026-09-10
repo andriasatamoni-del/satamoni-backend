@@ -6,7 +6,7 @@ const { app, request, pool, seedUser, login, authed } = require("./helpers");
 
 let branchA;
 let managerAToken, cashierAToken;
-let cashPmId, itemId, variantId;
+let cashPmId, cardPmId, itemId, variantId;
 
 beforeAll(async () => {
   const b = await pool.query("INSERT INTO branches (name) VALUES ('فرع بونص-توصيل-جست') RETURNING id");
@@ -19,6 +19,8 @@ beforeAll(async () => {
 
   const pm = await pool.query("INSERT INTO payment_methods (name, kind) VALUES ('كاش-بونص-توصيل-جست', 'cash') RETURNING id");
   cashPmId = pm.rows[0].id;
+  const pmCard = await pool.query("INSERT INTO payment_methods (name, kind) VALUES ('كارت-بونص-توصيل-جست', 'card_or_wallet') RETURNING id");
+  cardPmId = pmCard.rows[0].id;
   const cat = await pool.query("INSERT INTO menu_categories (name) VALUES ('بونص-توصيل-جست-قسم') RETURNING id");
   const mi = await pool.query("INSERT INTO menu_items (category_id, name) VALUES ($1,'صنف-بونص-توصيل-جست') RETURNING id", [cat.rows[0].id]);
   itemId = mi.rows[0].id;
@@ -143,6 +145,97 @@ describe("سائق من غير ملف موظف مرتبط - البونص بيت�
       "SELECT * FROM audit_logs WHERE action = 'DRIVER_BONUS_SKIPPED_NO_EMPLOYEE' AND entity_id = $1", [settle.body.id]
     );
     expect(audit.rows.length).toBe(1);
+  });
+});
+
+// المرحلة 8.51: بونص التوصيل مبني على delivery_fee بس (مش طريقة الدفع) حسب المواصفة الأصلية - قبل كده
+// computeDriverUnsettledSummary وقفل الصفوف في createSettlement كانوا مقصورين على pm.kind='cash'،
+// يعني بونص أي طلب دليفري اتدفع بكارت/محفظة/آجل ماكانش بيتحصّل خالص لأن السائق معندوش كاش يسلّمه
+// فتفضل التسوية تقول "مفيش طلبات معلّقة" حتى لو عنده بونص مستحق. دلوقتي التسوية بتقفل كل الطلبات
+// المُسلَّمة (بغض النظر عن طريقة الدفع)، والمبالغ الفعلية (codExpected/codCollected/expectedHandover)
+// فضلت مقصورة على الكاش عمدًا - دي بس اللي الفرع بينتظره فعليًا من السائق
+async function makeDeliveredCardOrder(driverId, deliveryFee) {
+  const order = await request(app).post("/api/orders").set(authed(managerAToken)).send({
+    branchId: branchA, source: "pos", orderType: "delivery",
+    customerPhone: `019${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(0, 11),
+    addressDetails: "شارع بونص التوصيل - كارت", paymentMethodId: cardPmId,
+    items: [{ itemId, variantId, quantity: 1 }],
+  });
+  const orderId = order.body.orderId;
+  await pool.query("UPDATE orders SET delivery_fee = $1 WHERE id = $2", [deliveryFee, orderId]);
+  await pool.query(
+    `UPDATE orders SET driver_id = $1, dispatch_status = 'ASSIGNED', assigned_at = now() WHERE id = $2`,
+    [driverId, orderId]
+  );
+  const total = Number(order.body.total);
+  await pool.query(
+    `UPDATE orders SET status = 'completed', dispatch_status = 'DELIVERED', delivered_at = now() WHERE id = $1`,
+    [orderId]
+  );
+  return { orderId, total, deliveryFee };
+}
+
+describe("بونص طلبات الدفع الإلكتروني (كارت/محفظة) - 8.51", () => {
+  test("سائق عنده طلبات كارت بس (مفيش كاش خالص) - التسوية بتنجح وبتحسب البونص وبتقفل الطلبات", async () => {
+    const { driverId } = await makeDriver({ withEmployee: false });
+    await makeDeliveredCardOrder(driverId, 25); // بونص 5
+    await makeDeliveredCardOrder(driverId, 60); // بونص 10
+
+    const preview = await request(app).get(`/api/driver-settlements/preview?driverId=${driverId}`).set(authed(cashierAToken));
+    expect(preview.status).toBe(200);
+    expect(preview.body.orderCount).toBe(2);
+    expect(preview.body.codExpected).toBe(0);
+    expect(preview.body.codCollected).toBe(0);
+    expect(preview.body.expectedHandover).toBe(0);
+    expect(preview.body.bonusTotal).toBe(15);
+
+    const settle = await request(app).post("/api/driver-settlements").set(authed(cashierAToken)).send({ driverId, actualHandover: 0 });
+    expect(settle.status).toBe(201);
+    expect(settle.body.order_count).toBe(2);
+    expect(Number(settle.body.bonus_total)).toBe(15);
+    expect(Number(settle.body.handover_variance)).toBe(0);
+    expect(settle.body.variance_status).toBe("NONE");
+
+    const orders = await pool.query("SELECT driver_settlement_id FROM orders WHERE driver_id = $1", [driverId]);
+    expect(orders.rows.every((o) => o.driver_settlement_id === settle.body.id)).toBe(true);
+
+    // مفيش طلبات تانية معلّقة دلوقتي - محاولة تسوية تانية بترفض
+    const again = await request(app).post("/api/driver-settlements").set(authed(cashierAToken)).send({ driverId, actualHandover: 0 });
+    expect(again.status).toBe(400);
+  });
+
+  test("سائق عنده كاش وكارت مع بعض - البونص بيجمع الاتنين، لكن أرقام الكاش (codExpected/expectedHandover) بتفضل مقصورة على الكاش بس", async () => {
+    const { driverId } = await makeDriver({ withEmployee: false });
+    await makeDeliveredCashOrder(driverId, 60); // كاش، بونص 10
+    await makeDeliveredCardOrder(driverId, 60); // كارت، بونص 10
+
+    const preview = await request(app).get(`/api/driver-settlements/preview?driverId=${driverId}`).set(authed(cashierAToken));
+    expect(preview.body.orderCount).toBe(2);
+    expect(preview.body.bonusTotal).toBe(20);
+    expect(preview.body.codExpected).toBeGreaterThan(0); // طلب الكاش بس
+    expect(preview.body.expectedHandover).toBe(preview.body.codExpected); // الكارت مبيدخلش هنا
+
+    const settle = await request(app).post("/api/driver-settlements").set(authed(cashierAToken)).send({
+      driverId, actualHandover: preview.body.expectedHandover,
+    });
+    expect(settle.status).toBe(201);
+    expect(Number(settle.body.bonus_total)).toBe(20);
+    expect(settle.body.order_count).toBe(2); // الاتنين اتقفلوا مع بعض
+  });
+
+  test("سائق كارت بس بيظهر في /pending-drivers بـpending_cash=0", async () => {
+    const { driverId } = await makeDriver({ withEmployee: false });
+    await makeDeliveredCardOrder(driverId, 60);
+
+    const before = await request(app).get(`/api/driver-settlements/pending-drivers?branchId=${branchA}`).set(authed(cashierAToken));
+    const found = before.body.find((d) => d.id === driverId);
+    expect(found).toBeTruthy();
+    expect(found.pending_order_count).toBe(1);
+    expect(Number(found.pending_cash)).toBe(0);
+
+    await request(app).post("/api/driver-settlements").set(authed(cashierAToken)).send({ driverId, actualHandover: 0 });
+    const after = await request(app).get(`/api/driver-settlements/pending-drivers?branchId=${branchA}`).set(authed(cashierAToken));
+    expect(after.body.find((d) => d.id === driverId)).toBeUndefined();
   });
 });
 

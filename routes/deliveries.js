@@ -211,9 +211,12 @@ router.post("/:orderId/out-for-delivery", async (req, res) => {
   }
 });
 
-// POST /api/deliveries/:orderId/delivered - {collectedAmount?} - السائق نفسه أو مدير الفرع
+// POST /api/deliveries/:orderId/delivered - {collectedAmount?, approverId?} - السائق نفسه أو مدير الفرع
+// المرحلة 8.51: approverId مطلوب بس لو (أ) اللي بيسجّل مش السائق نفسه (كاشير/كول سنتر بيسجّل بالنيابة
+// عنه لما يرجع الفرع)، و(ب) فيه فرق بين المبلغ المُدخل وإجمالي الطلب - نفس نمط استرجاع الطلب (Void)
+// بالظبط: مدير الفرع/الأدمن بيوافق بحسابه على طول، غيره لازم PIN معتمد
 router.post("/:orderId/delivered", async (req, res) => {
-  const { collectedAmount } = req.body;
+  const { collectedAmount, approverId } = req.body;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -222,13 +225,31 @@ router.post("/:orderId/delivered", async (req, res) => {
     const order = orderRes.rows[0];
     const auth = await authorizeDeliveryAction(client, req, res, order);
     if (!auth) { await client.query("ROLLBACK"); return; }
-    const updated = await markDelivered(client, { order, actorUserId: req.user.id, collectedAmount });
+
+    let finalApproverId = null;
+    if (!auth.isDriverSelf) {
+      if (req.user.role === "admin" || req.user.role === "branch_manager") {
+        finalApproverId = req.user.id;
+      } else if (approverId) {
+        const approver = await client.query(
+          `SELECT id FROM users
+           WHERE id = $1 AND is_active = TRUE
+             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
+          [approverId, order.branch_id]
+        );
+        if (approver.rows.length > 0) finalApproverId = approverId;
+      }
+    }
+
+    const updated = await markDelivered(client, {
+      order, actorUserId: req.user.id, collectedAmount, isDriverSelf: auth.isDriverSelf, approverId: finalApproverId,
+    });
     await client.query("COMMIT");
     res.json(updated);
   } catch (err) {
     await client.query("ROLLBACK");
-    if (["INVALID_DELIVERY_TRANSITION", "COLLECTED_AMOUNT_REQUIRED"].includes(err.code)) {
-      return res.status(400).json({ error: err.message });
+    if (["INVALID_DELIVERY_TRANSITION", "COLLECTED_AMOUNT_REQUIRED", "COLLECTION_VARIANCE_APPROVAL_REQUIRED"].includes(err.code)) {
+      return res.status(400).json({ error: err.message, code: err.code });
     }
     res.status(500).json({ error: err.message });
   } finally {

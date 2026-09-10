@@ -61,13 +61,16 @@ router.get("/pending-drivers", async (req, res) => {
   }
   if (!assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
   try {
+    // المرحلة 8.51: شالت شرط pm.kind = 'cash' من الـ WHERE عشان سائق عنده أوردرات دفع إلكتروني بس (فيزا/
+    // محفظة/آجل) معلّقة بونص يظهر في القايمة برضه (مش بس اللي عنده كاش معلّق) - pending_cash فضل محسوب
+    // كاش بس (FILTER) عشان الرقم المعروض للكاشير يفضل دقيق (0 للسائق اللي معندوش كاش أصلًا)
     const result = await pool.query(
       `SELECT d.id, d.name, d.driver_code, COUNT(o.id)::int AS pending_order_count,
-              COALESCE(SUM(o.collected_amount), 0) AS pending_cash
+              COALESCE(SUM(o.collected_amount) FILTER (WHERE pm.kind = 'cash'), 0) AS pending_cash
        FROM drivers d
        JOIN orders o ON o.driver_id = d.id
        JOIN payment_methods pm ON pm.id = o.payment_method_id
-       WHERE d.branch_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL AND pm.kind = 'cash'
+       WHERE d.branch_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL
        GROUP BY d.id, d.name, d.driver_code
        ORDER BY d.name`,
       [branchId]
@@ -133,10 +136,13 @@ router.get("/driver-orders", async (req, res) => {
        ORDER BY o.delivered_at`,
       [driverId, date || null]
     );
+    // المرحلة 8.51: collected بقى بيتحسب من driver_settlement_id مباشرة (مش مقصور على الكاش) عشان
+    // بونص الأوردرات غير الكاش يدخل صح في collectedBonusTotal/pendingBonusTotal تحت - التسوية نفسها
+    // بقت بتقفل كل الأوردرات المُسلَّمة (delivery-engine.js createSettlement)، مش الكاش بس
     const orders = result.rows.map((o) => ({
       ...o,
       bonus: calcDriverOrderBonus(o.delivery_fee || 0),
-      collected: o.payment_kind === "cash" ? o.driver_settlement_id !== null : null,
+      collected: o.driver_settlement_id !== null,
     }));
     const bonusTotal = orders.reduce((s, o) => s + o.bonus, 0);
     const cashOrders = orders.filter((o) => o.payment_kind === "cash");

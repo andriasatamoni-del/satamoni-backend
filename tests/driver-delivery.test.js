@@ -259,6 +259,66 @@ describe("فروق تحصيل الكاش عند التسليم (عجز/زياد�
   });
 });
 
+// المرحلة 8.51: قبل كده أي فرق بين المبلغ المُدخل والإجمالي (حتى صفر بدل الإجمالي كامل) كان بيتسجل
+// "اتحصّل" أوتوماتيك من غير أي مراجعة، لو اللي بيسجّل التسليم مش السائق نفسه. دلوقتي محتاج موافقة مدير
+// الفرع/الأدمن (approverId) - نفس نمط استرجاع الطلب (Void) بالظبط. السائق نفسه (isDriverSelf) مستثنى
+// عمدًا - الاختبارات فوق (فروق تحصيل الكاش) أصلًا بتستخدم driverA1Token وبتنجح من غير approverId، وده
+// بيغطي حالة الاستثناء ده بالفعل
+describe("موافقة فرق التحصيل عند التسليم (8.51)", () => {
+  async function dispatchOrder(collectorToken) {
+    const order = await makeDeliveryOrder(managerAToken, branchA, cashPmId);
+    const orderId = order.body.orderId;
+    await request(app).post(`/api/deliveries/${orderId}/assign`).set(authed(managerAToken)).send({ driverId: driverA1Id });
+    await request(app).post(`/api/deliveries/${orderId}/out-for-delivery`).set(authed(driverA1Token));
+    return orderId;
+  }
+
+  test("كاشير بيسجّل التسليم بمبلغ مختلف عن الإجمالي من غير approverId - بيترفض", async () => {
+    const orderId = await dispatchOrder();
+    const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 0 });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("COLLECTION_VARIANCE_APPROVAL_REQUIRED");
+
+    const row = await pool.query("SELECT dispatch_status FROM orders WHERE id=$1", [orderId]);
+    expect(row.rows[0].dispatch_status).toBe("OUT_FOR_DELIVERY"); // فضل معلّق، مفيش تحصيل اتسجّل بالغلط
+  });
+
+  test("كاشير بيسجّل نفس الحالة مع approverId صحيح (مدير الفرع) - بينجح", async () => {
+    const orderId = await dispatchOrder();
+    const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 0, approverId: managerAId });
+    expect(res.status).toBe(200);
+    expect(res.body.dispatch_status).toBe("DELIVERED");
+    expect(Number(res.body.collection_variance)).toBe(-500);
+
+    const audit = await pool.query(
+      "SELECT metadata FROM audit_logs WHERE action='DELIVERY_COLLECTED' AND entity_id=$1", [orderId]
+    );
+    expect(audit.rows[0].metadata.approverId).toBe(managerAId);
+  });
+
+  test("approverId من فرع تاني - بيترفض برضو", async () => {
+    const bId = await seedUser({ branchId: branchB, name: "مدير-فرع-تاني-approver", email: "managerB-approver@jest.test", role: "branch_manager" });
+    const orderId = await dispatchOrder();
+    const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 0, approverId: bId });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("COLLECTION_VARIANCE_APPROVAL_REQUIRED");
+  });
+
+  test("مدير الفرع نفسه بيسجّل فرق تحصيل - بيوافق بحسابه على طول من غير approverId", async () => {
+    const orderId = await dispatchOrder();
+    const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(managerAToken)).send({ collectedAmount: 480 });
+    expect(res.status).toBe(200);
+    expect(Number(res.body.collection_variance)).toBe(-20);
+  });
+
+  test("مبلغ مطابق تمامًا (فرق صفر) - مفيش داعي لموافقة حتى لو كاشير", async () => {
+    const orderId = await dispatchOrder();
+    const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 500 });
+    expect(res.status).toBe(200);
+    expect(Number(res.body.collection_variance)).toBe(0);
+  });
+});
+
 describe("فشل التسليم وحل الفشل (إعادة جدولة أو رجوع)", () => {
   test("سبب فشل غير معروف بيترفض", async () => {
     const order = await makeDeliveryOrder(managerAToken, branchA, cashPmId);

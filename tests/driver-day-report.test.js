@@ -74,11 +74,14 @@ async function makeDeliveredOrder({ pmId, deliveryFee, deliveredAt, settled }) {
 }
 
 describe("GET /api/driver-settlements/driver-orders", () => {
+  // المرحلة 8.51: collected بقى بيتحسب من driver_settlement_id مباشرة (مش مقصور على الكاش) - طلب
+  // الكارت (o3) دلوقتي بيدخل في pendingBonusTotal زي أي طلب تاني لسه معندوش تسوية، مش مستبعد بـnull.
+  // cashPendingCount/cashCollectedCount فضلوا مقصورين على الكاش عمدًا (دول أرقام تسوية الكاش تحديدًا)
   test("كل أوردرات السائق النهاردة - كاش متحصّل + كاش معلّق + كارت، مع بونص كل واحد صح", async () => {
     const today = new Date().toISOString().slice(0, 10);
     const o1 = await makeDeliveredOrder({ pmId: cashPmId, deliveryFee: 25, deliveredAt: `${today} 10:00:00`, settled: true }); // بونص 5، متحصّل
     const o2 = await makeDeliveredOrder({ pmId: cashPmId, deliveryFee: 55, deliveredAt: `${today} 11:00:00`, settled: false }); // بونص 10، معلّق
-    const o3 = await makeDeliveredOrder({ pmId: cardPmId, deliveryFee: 40, deliveredAt: `${today} 12:00:00`, settled: false }); // بونص 10، مش كاش أصلًا
+    const o3 = await makeDeliveredOrder({ pmId: cardPmId, deliveryFee: 40, deliveredAt: `${today} 12:00:00`, settled: false }); // بونص 10، كارت لسه معلّق تسوية
 
     const res = await request(app).get(`/api/driver-settlements/driver-orders?driverId=${driverId}&date=${today}`).set(authed(cashierAToken));
     expect(res.status).toBe(200);
@@ -93,11 +96,11 @@ describe("GET /api/driver-settlements/driver-orders", () => {
     expect(byId[o2.orderId].collected).toBe(false);
 
     expect(byId[o3.orderId].bonus).toBe(10);
-    expect(byId[o3.orderId].collected).toBeNull(); // مش كاش - مفهوم التحصيل مبيتطبقش عليه
+    expect(byId[o3.orderId].collected).toBe(false); // كارت لسه معلّق تسوية - بونصه محسوب معلّق زي أي طلب تاني
 
     expect(res.body.bonusTotal).toBe(25);
     expect(res.body.collectedBonusTotal).toBe(5);
-    expect(res.body.pendingBonusTotal).toBe(10);
+    expect(res.body.pendingBonusTotal).toBe(20);
     expect(res.body.cashCollectedCount).toBe(1);
     expect(res.body.cashPendingCount).toBe(1);
     expect(res.body.deliveryFeesTotal).toBe(120);
