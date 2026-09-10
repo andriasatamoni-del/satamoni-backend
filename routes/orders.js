@@ -730,10 +730,16 @@ router.get(
     }
 
     try {
+      // المرحلة 8.52: created_at::date كان بيتحسب بتوقيت جلسة Postgres الافتراضي (UTC على استضافة
+      // زي Render) بينما $2 (date) جاي من المتصفح كتاريخ اليوم بتوقيت القاهرة (UTC+2) - أي طلب اتسجل
+      // في أول ساعتين بعد نص الليل بتوقيت القاهرة كان لسه بيتحسب "إمبارح" بتوقيت UTC، فيختفي تمامًا من
+      // "الطلبات الجارية" عند الكاشير رغم إنه اتقبل وموجود فعليًا - نفس الجذر بالظبط اللي اتصلح قبل كده
+      // في routes/branch-days.js (8.41)، بس هنا في GET /api/orders نفسه اللي شاشات POS/الطلبات بتعتمد
+      // عليه. الحل: توقيت القاهرة صراحة، مش توقيت السيرفر الافتراضي
       const result = await pool.query(
         `SELECT * FROM orders
          WHERE ($1::int IS NULL OR branch_id = $1)
-           AND ($2::date IS NULL OR created_at::date = $2)
+           AND ($2::date IS NULL OR (created_at AT TIME ZONE 'Africa/Cairo')::date = $2)
            AND ($3::text IS NULL OR status = $3)
            AND ($4::text IS NULL OR order_type = $4)
            AND ($5::text IS NULL OR payment_status = $5)

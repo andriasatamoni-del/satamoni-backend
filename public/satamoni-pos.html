@@ -2598,7 +2598,12 @@ async function loadActiveOrders() {
       // اتسجل من الكول سنتر أو الموقع (source != 'pos') تمامًا، لأن shift_id بتاعه NULL دايمًا (بيتحدد
       // بس لطلبات POS وقت الإنشاء - راجع routes/orders.js). "الطلبات الجارية" المفروض تعرض كل أوردرات
       // الفرع النهاردة أيًا كان مصدرها، مش أوردرات الكاشير نفسه بس - زي شاشتي الدليفري والكول سنتر بالظبط
-      qs.set("date", new Date().toISOString().slice(0, 10));
+      //
+      // المرحلة 8.52: toISOString() بيرجّع تاريخ UTC مش تاريخ القاهرة - أي طلب (خصوصًا من الموقع) اتسجل
+      // في أول ساعتين بعد نص الليل بتوقيت القاهرة كان بيختفي من القايمة لأن اليوم اتغيّر بتوقيت القاهرة
+      // بس لسه ماتغيّرش بتوقيت UTC. استخدام توقيت القاهرة صراحة هنا بيطابق نفس المقارنة في السيرفر
+      // (routes/orders.js GET /) بعد إصلاحها لنفس السبب
+      qs.set("date", new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" }));
     }
     const orders = await ordersApi(`/api/orders?${qs.toString()}`);
     renderActiveOrders(orders);
