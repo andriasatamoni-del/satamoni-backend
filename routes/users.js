@@ -4,8 +4,20 @@ const bcrypt = require("bcryptjs");
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
+const { PERMISSION_CATALOG, ROLE_PERMISSIONS, ALL_PERMISSIONS, computeEffectivePermissionOverrides } = require("../middleware/permissions");
 
 router.use(requireAuth);
+
+// GET /api/users/permissions-catalog - كل صلاحية موجودة في النظام (مجمّعة بمجالها) + صلاحيات كل دور
+// الافتراضية - عشان شاشة تعديل الموظف تقدر تبني قائمة الصلاحيات كاملة وتحدد إيه اللي جاي من دوره
+// الأساسي وإيه اللي محتاج يتحدد صراحة. أدمن بس (نفس نطاق إدارة المستخدمين عمومًا)
+router.get("/permissions-catalog", requireRole("admin"), async (req, res) => {
+  const rolePermissions = {};
+  for (const role of Object.keys(ROLE_PERMISSIONS)) {
+    rolePermissions[role] = role === "admin" ? ALL_PERMISSIONS : ROLE_PERMISSIONS[role];
+  }
+  res.json({ catalog: PERMISSION_CATALOG, rolePermissions });
+});
 
 // GET /api/users?branchId= - قايمة الموظفين (أدمن: كل حد، مدير فرع: موظفين فرعه بس)
 router.get("/", requireRole("admin", "branch_manager"), async (req, res) => {
@@ -18,7 +30,7 @@ router.get("/", requireRole("admin", "branch_manager"), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.name, u.email, u.role, u.is_active, u.branch_id, b.name AS branch_name, u.created_at,
-              (u.pin_hash IS NOT NULL) AS has_pin
+              (u.pin_hash IS NOT NULL) AS has_pin, u.permission_grants, u.permission_revokes
        FROM users u
        LEFT JOIN branches b ON b.id = u.branch_id
        WHERE ($1::int IS NULL OR u.branch_id = $1)
@@ -34,7 +46,7 @@ router.get("/", requireRole("admin", "branch_manager"), async (req, res) => {
 // POST /api/users - إنشاء موظف جديد (أدمن بس) - role='employee' لازم employeeId (بيربط حساب الدخول
 // الذاتي الجديد بملف HR موجود بالفعل في employees، زي ما اتحدد في المرحلة 7T)
 router.post("/", requireRole("admin"), async (req, res) => {
-  const { name, email, password, role, branchId, employeeId } = req.body;
+  const { name, email, password, role, branchId, employeeId, permissions } = req.body;
   const validRoles = ["admin", "branch_manager", "accountant", "cashier", "callcenter", "driver", "employee"];
   const branchFreeRoles = ["admin", "accountant", "callcenter", "employee"];
   if (!name || !email || !password || !validRoles.includes(role)) {
@@ -46,15 +58,28 @@ router.post("/", requireRole("admin"), async (req, res) => {
   if (!branchFreeRoles.includes(role) && !branchId) {
     return res.status(400).json({ error: "لازم تحدد الفرع لدور المدير/الكاشير" });
   }
+  // المرحلة 8.58: permissions (اختياري) = مجموعة الصلاحيات الفعلية المطلوبة للموظف ده - لو مبعوتة
+  // بنستنتج منها grants/revokes فوق صلاحيات دوره الافتراضية، لو مش مبعوتة بيتسجل بصلاحيات دوره
+  // الافتراضية بالظبط من غير أي استثناء (السلوك الأصلي قبل المرحلة دي)
+  let overrides;
+  try {
+    overrides = computeEffectivePermissionOverrides(role, permissions);
+  } catch (err) {
+    if (err.code === "INVALID_PERMISSIONS") return res.status(400).json({ error: err.message });
+    throw err;
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await client.query(
-      `INSERT INTO users (name, email, password_hash, role, branch_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, name, email, role, branch_id, is_active, created_at`,
-      [name, email, passwordHash, role, branchId || null]
+      `INSERT INTO users (name, email, password_hash, role, branch_id, permission_grants, permission_revokes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, name, email, role, branch_id, is_active, created_at, permission_grants, permission_revokes`,
+      [
+        name, email, passwordHash, role, branchId || null,
+        JSON.stringify(overrides ? overrides.grants : []), JSON.stringify(overrides ? overrides.revokes : []),
+      ]
     );
     if (role === "employee") {
       const linked = await client.query(
@@ -69,7 +94,8 @@ router.post("/", requireRole("admin"), async (req, res) => {
     await logAudit(client, {
       branchId: branchId || null, userId: req.user.id, action: "USER_CREATED",
       entityType: "user", entityId: result.rows[0].id,
-      newValues: { name, email, role, branchId: branchId || null, employeeId: role === "employee" ? employeeId : undefined }, req,
+      newValues: { name, email, role, branchId: branchId || null, employeeId: role === "employee" ? employeeId : undefined },
+      metadata: overrides ? { permissionGrants: overrides.grants, permissionRevokes: overrides.revokes } : undefined, req,
     });
     await client.query("COMMIT");
     res.status(201).json(result.rows[0]);
@@ -88,43 +114,61 @@ router.post("/", requireRole("admin"), async (req, res) => {
 // PIN بتاع موافقة الخصومات الكبيرة واسترجاع الطلبات - بيتحدد بس لمدير فرع/أدمن (4-6 أرقام)
 router.patch("/:id", requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { role, branchId, isActive, password, pin } = req.body;
-  const fields = [];
-  const values = [];
-  let i = 1;
+  const { role, branchId, isActive, password, pin, permissions } = req.body;
 
-  if (role !== undefined) { fields.push(`role = $${i++}`); values.push(role); }
-  if (branchId !== undefined) { fields.push(`branch_id = $${i++}`); values.push(branchId); }
-  if (isActive !== undefined) { fields.push(`is_active = $${i++}`); values.push(isActive); }
-  if (password) {
-    const passwordHash = await bcrypt.hash(password, 10);
-    fields.push(`password_hash = $${i++}`);
-    values.push(passwordHash);
-  }
-  if (pin !== undefined) {
-    if (pin === null) {
-      fields.push(`pin_hash = $${i++}`);
-      values.push(null);
-    } else {
-      if (!/^\d{4,6}$/.test(pin)) return res.status(400).json({ error: "الـ PIN لازم يكون رقم من 4 لـ 6 خانات" });
-      const pinHash = await bcrypt.hash(pin, 10);
-      fields.push(`pin_hash = $${i++}`);
-      values.push(pinHash);
-    }
-  }
-  if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
-
-  values.push(id);
   try {
-    const before = await pool.query("SELECT role, is_active, branch_id FROM users WHERE id = $1", [id]);
+    const before = await pool.query("SELECT role, is_active, branch_id, permission_grants, permission_revokes FROM users WHERE id = $1", [id]);
+    if (before.rows.length === 0) return res.status(404).json({ error: "المستخدم مش موجود" });
+    const prev = before.rows[0];
+
+    // المرحلة 8.58: راجع تعليق POST / فوق - لو الدور نفسه بيتغيّر في نفس الطلب، الاستنتاج بيبقى مقابل
+    // الدور الجديد (عشان الأدمن يقدر يغيّر الدور ويظبط الصلاحيات مرة واحدة من غير خطوتين)
+    let overrides;
+    try {
+      overrides = computeEffectivePermissionOverrides(role !== undefined ? role : prev.role, permissions);
+    } catch (err) {
+      if (err.code === "INVALID_PERMISSIONS") return res.status(400).json({ error: err.message });
+      throw err;
+    }
+
+    const fields = [];
+    const values = [];
+    let i = 1;
+
+    if (role !== undefined) { fields.push(`role = $${i++}`); values.push(role); }
+    if (branchId !== undefined) { fields.push(`branch_id = $${i++}`); values.push(branchId); }
+    if (isActive !== undefined) { fields.push(`is_active = $${i++}`); values.push(isActive); }
+    if (password) {
+      const passwordHash = await bcrypt.hash(password, 10);
+      fields.push(`password_hash = $${i++}`);
+      values.push(passwordHash);
+    }
+    if (pin !== undefined) {
+      if (pin === null) {
+        fields.push(`pin_hash = $${i++}`);
+        values.push(null);
+      } else {
+        if (!/^\d{4,6}$/.test(pin)) return res.status(400).json({ error: "الـ PIN لازم يكون رقم من 4 لـ 6 خانات" });
+        const pinHash = await bcrypt.hash(pin, 10);
+        fields.push(`pin_hash = $${i++}`);
+        values.push(pinHash);
+      }
+    }
+    if (overrides) {
+      fields.push(`permission_grants = $${i++}`); values.push(JSON.stringify(overrides.grants));
+      fields.push(`permission_revokes = $${i++}`); values.push(JSON.stringify(overrides.revokes));
+    }
+    if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
+
+    values.push(id);
     const result = await pool.query(
       `UPDATE users SET ${fields.join(", ")} WHERE id = $${i}
-       RETURNING id, name, email, role, branch_id, is_active, created_at, (pin_hash IS NOT NULL) AS has_pin`,
+       RETURNING id, name, email, role, branch_id, is_active, created_at, (pin_hash IS NOT NULL) AS has_pin,
+                 permission_grants, permission_revokes`,
       values
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "المستخدم مش موجود" });
     const updated = result.rows[0];
-    const prev = before.rows[0];
 
     if (role !== undefined && prev && prev.role !== role) {
       await logAudit(pool, {
@@ -156,6 +200,14 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
       await logAudit(pool, {
         branchId: updated.branch_id, userId: req.user.id, action: "PASSWORD_CHANGE",
         entityType: "user", entityId: updated.id, req,
+      });
+    }
+    if (overrides) {
+      await logAudit(pool, {
+        branchId: updated.branch_id, userId: req.user.id, action: "PERMISSIONS_CHANGED",
+        entityType: "user", entityId: updated.id,
+        oldValues: { permissionGrants: prev.permission_grants, permissionRevokes: prev.permission_revokes },
+        newValues: { permissionGrants: overrides.grants, permissionRevokes: overrides.revokes }, req,
       });
     }
     res.json(updated);

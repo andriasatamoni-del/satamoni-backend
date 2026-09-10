@@ -134,20 +134,209 @@ const ROLE_PERMISSIONS = {
   ],
 };
 
-function hasPermission(role, permission) {
+// المرحلة 8.58: كتالوج كل صلاحية موجودة في النظام (مجمّعة بالمجال + اسم عربي واضح) - عشان شاشة تعديل
+// الموظف تقدر تعرضهم كلهم وتدّي/تشيل أي واحدة منهم لأي شخص بعينه، فوق دوره الأساسي. القائمة دي هي
+// نفسها المصدر الوحيد للتحقق من صحة أي permission key بيتبعت من الفرونت إند (راجع routes/users.js) -
+// لازم تتحدّث هنا أول ما تتضاف صلاحية جديدة لأي دور فوق، وإلا الشاشة مش هتعرضها ولا تقبلها
+const PERMISSION_CATALOG = [
+  { group: "orders", groupLabel: "الطلبات", permissions: [
+    { key: "orders.create", label: "تسجيل طلب جديد" },
+    { key: "orders.cancel", label: "إلغاء طلب" },
+    { key: "orders.discount.request", label: "طلب خصم (يحتاج موافقة)" },
+    { key: "orders.discount.approve", label: "الموافقة على خصم" },
+    { key: "orders.void.request", label: "طلب استرجاع (Void) طلب" },
+    { key: "orders.void.approve", label: "الموافقة على استرجاع طلب" },
+  ] },
+  { group: "inventory", groupLabel: "المخزون", permissions: [
+    { key: "inventory.view", label: "رؤية أرصدة المخزون" },
+    { key: "inventory.adjust", label: "تعديل/تسوية المخزون يدويًا" },
+    { key: "inventory.count", label: "عمل جرد فعلي (Spot Check)" },
+  ] },
+  { group: "recipes", groupLabel: "الوصفات", permissions: [
+    { key: "recipes.view", label: "رؤية الوصفات" },
+    { key: "recipes.create", label: "إنشاء وصفة" },
+    { key: "recipes.edit", label: "تعديل وصفة" },
+    { key: "recipes.submit", label: "تقديم وصفة للاعتماد" },
+    { key: "recipes.approve", label: "اعتماد وصفة" },
+    { key: "recipes.activate", label: "تفعيل وصفة" },
+    { key: "recipes.archive", label: "أرشفة وصفة" },
+  ] },
+  { group: "production", groupLabel: "التصنيع", permissions: [
+    { key: "production.view", label: "رؤية أوامر التصنيع" },
+    { key: "production.create", label: "إنشاء أمر تصنيع" },
+    { key: "production.complete", label: "إكمال أمر تصنيع" },
+    { key: "production.cancel", label: "إلغاء أمر تصنيع" },
+    { key: "production.approve", label: "اعتماد أمر تصنيع" },
+  ] },
+  { group: "production_planning", groupLabel: "تخطيط التصنيع", permissions: [
+    { key: "production_planning.view", label: "رؤية خطة التصنيع" },
+    { key: "production_planning.create", label: "إنشاء خطة تصنيع" },
+  ] },
+  { group: "food_cost", groupLabel: "تكلفة الأصناف", permissions: [
+    { key: "food_cost.view", label: "رؤية تقارير تكلفة الأصناف" },
+    { key: "food_cost.export", label: "تصدير تقارير تكلفة الأصناف" },
+  ] },
+  { group: "expenses", groupLabel: "المصروفات", permissions: [
+    { key: "expenses.view", label: "رؤية كل المصروفات" },
+    { key: "expenses.create", label: "تسجيل مصروف" },
+    { key: "expenses.review", label: "مراجعة/اعتماد مصروف الكاشير" },
+    { key: "expenses.create_own_daily", label: "تسجيل مصروف كاشير (فرعه واليوم بس)" },
+    { key: "expenses.view_own_daily", label: "رؤية مصروفات الكاشير الخاصة بيوم شغله" },
+    { key: "expenses.edit_own_daily", label: "تعديل مصروف الكاشير قبل المراجعة" },
+  ] },
+  { group: "purchases", groupLabel: "المشتريات النقدية اليومية", permissions: [
+    { key: "purchases.view", label: "رؤية كل المشتريات النقدية" },
+    { key: "purchases.create", label: "تسجيل مشترى نقدي" },
+    { key: "purchases.review", label: "مراجعة/اعتماد مشترى الكاشير" },
+    { key: "purchases.create_own_daily", label: "تسجيل مشترى كاشير (فرعه واليوم بس)" },
+    { key: "purchases.view_own_daily", label: "رؤية مشتريات الكاشير الخاصة بيوم شغله" },
+    { key: "purchases.edit_own_daily", label: "تعديل مشترى الكاشير قبل المراجعة" },
+  ] },
+  { group: "purchasing", groupLabel: "أوامر الشراء الرسمية", permissions: [
+    { key: "purchasing.view", label: "رؤية طلبات/أوامر الشراء" },
+    { key: "purchasing.create", label: "إنشاء طلب/أمر شراء" },
+    { key: "purchasing.edit", label: "تعديل طلب/أمر شراء" },
+    { key: "purchasing.submit", label: "تقديم طلب/أمر شراء" },
+    { key: "purchasing.cancel", label: "إلغاء طلب/أمر شراء" },
+    { key: "purchasing.approve", label: "اعتماد طلب/أمر شراء" },
+    { key: "purchasing.export", label: "تصدير تقارير المشتريات" },
+  ] },
+  { group: "users", groupLabel: "المستخدمين", permissions: [
+    { key: "users.view", label: "رؤية قائمة المستخدمين" },
+  ] },
+  { group: "approvals", groupLabel: "طلبات الموافقة", permissions: [
+    { key: "approvals.create", label: "تقديم طلب موافقة" },
+    { key: "approvals.decide", label: "البت في طلب موافقة" },
+  ] },
+  { group: "audit", groupLabel: "سجل المراجعة", permissions: [
+    { key: "audit.view.branch", label: "رؤية سجل مراجعة الفرع" },
+  ] },
+  { group: "accounting", groupLabel: "المحاسبة", permissions: [
+    { key: "accounting.view", label: "رؤية الحسابات والقيود" },
+    { key: "accounting.create", label: "إنشاء قيد محاسبي" },
+    { key: "accounting.edit", label: "تعديل قيد محاسبي" },
+    { key: "accounting.approve", label: "اعتماد قيد محاسبي" },
+    { key: "accounting.post", label: "ترحيل قيد محاسبي" },
+    { key: "accounting.export", label: "تصدير التقارير المالية" },
+    { key: "accounting.reverse", label: "عكس قيد محاسبي مرحّل" },
+    { key: "accounting.close_period", label: "قفل شهر محاسبي" },
+    { key: "accounting.close_year", label: "قفل سنة مالية" },
+  ] },
+  { group: "treasuries", groupLabel: "الخزائن", permissions: [
+    { key: "treasuries.view", label: "رؤية الخزائن ودروج الكاشير" },
+    { key: "treasuries.transfer", label: "تحويل فلوس بين الخزائن" },
+  ] },
+  { group: "banks", groupLabel: "البنوك", permissions: [
+    { key: "banks.view", label: "رؤية حسابات البنوك" },
+    { key: "banks.manage", label: "إدارة/إنشاء حسابات بنوك" },
+  ] },
+  { group: "shifts", groupLabel: "شيفتات الكاشير", permissions: [
+    { key: "shifts.open_own", label: "فتح شيفت لنفسه" },
+    { key: "shifts.view_own", label: "رؤية شيفته الحالية" },
+    { key: "shifts.close_own", label: "قفل شيفت لنفسه" },
+    { key: "shifts.view_branch", label: "رؤية كل شيفتات الفرع" },
+    { key: "shifts.review", label: "مراجعة فروق كاش الشيفت" },
+  ] },
+  { group: "branch_day", groupLabel: "إقفال يوم الفرع", permissions: [
+    { key: "branch_day.view", label: "رؤية حالة إقفال اليوم" },
+    { key: "branch_day.close", label: "قفل يوم الفرع" },
+  ] },
+  { group: "deliveries", groupLabel: "التوصيل", permissions: [
+    { key: "deliveries.view_branch", label: "رؤية لوحة توزيع الفرع" },
+    { key: "deliveries.assign", label: "تعيين سائق لطلب" },
+    { key: "deliveries.view_own", label: "رؤية طلباته المُسندة (سائق)" },
+    { key: "deliveries.update_own", label: "تحديث حالة طلباته (سائق)" },
+  ] },
+  { group: "drivers", groupLabel: "بيانات السائقين", permissions: [
+    { key: "drivers.manage", label: "إدارة بيانات السائقين" },
+  ] },
+  { group: "driver_settlements", groupLabel: "تسوية كاش السائقين", permissions: [
+    { key: "driver_settlements.create", label: "بدء تسوية كاش سائق" },
+    { key: "driver_settlements.review", label: "مراجعة فرق تسليم سائق" },
+    { key: "driver_settlements.view_own", label: "رؤية تسوياته الخاصة (سائق)" },
+  ] },
+  { group: "driver_shifts", groupLabel: "حضور السائقين", permissions: [
+    { key: "driver_shifts.manage", label: "تسجيل حضور/انصراف سائق" },
+  ] },
+  { group: "kitchen", groupLabel: "شاشة المطبخ (KDS)", permissions: [
+    { key: "kitchen.view", label: "رؤية شاشة المطبخ" },
+    { key: "kitchen.advance", label: "تقديم حالة تحضير طلب" },
+  ] },
+  { group: "printers", groupLabel: "الطابعات", permissions: [
+    { key: "printers.view", label: "رؤية الطابعات" },
+    { key: "printers.manage", label: "إدارة الطابعات" },
+  ] },
+  { group: "print_routing", groupLabel: "توجيه الطباعة", permissions: [
+    { key: "print_routing.view", label: "رؤية توجيه الأصناف للمحطات" },
+    { key: "print_routing.manage", label: "إدارة توجيه الأصناف للمحطات" },
+  ] },
+  { group: "print_jobs", groupLabel: "طابور الطباعة", permissions: [
+    { key: "print_jobs.view", label: "رؤية طابور الطباعة" },
+    { key: "print_jobs.manage_queue", label: "إدارة طابور الطباعة (Print Agent)" },
+    { key: "print_jobs.trigger", label: "طباعة/إعادة طباعة إيصال" },
+  ] },
+  { group: "payslips", groupLabel: "قسائم الرواتب", permissions: [
+    { key: "payslips.view_own", label: "رؤية قسيمة راتبه (موظف)" },
+  ] },
+  { group: "leave_requests", groupLabel: "طلبات الإجازة", permissions: [
+    { key: "leave_requests.manage_own", label: "تقديم/متابعة طلبات إجازته (موظف)" },
+  ] },
+];
+
+const ALL_PERMISSIONS = PERMISSION_CATALOG.flatMap((g) => g.permissions.map((p) => p.key));
+
+// المرحلة 8.58: تدعم استقبال role نصي زي الأول تمامًا (توافق رجعي كامل مع كل استدعاء موجود في الكود)،
+// أو user object فيه {role, permissionGrants, permissionRevokes} - عشان نطبّق استثناءات فردية فوق
+// صلاحيات الدور. الأولوية: revoke صريح بيغلب كل حاجة (حتى صلاحية admin الشاملة "*")، بعدها grant صريح،
+// وأخيرًا صلاحيات الدور الافتراضية - نفس ترتيب "الاستثناء الأخص بيغلب القاعدة الأعم" المنطقي
+function hasPermission(user, permission) {
+  const isUserObject = user && typeof user === "object";
+  const role = isUserObject ? user.role : user;
+  const grants = isUserObject && Array.isArray(user.permissionGrants) ? user.permissionGrants : [];
+  const revokes = isUserObject && Array.isArray(user.permissionRevokes) ? user.permissionRevokes : [];
+
+  if (revokes.includes(permission)) return false;
+  if (grants.includes(permission)) return true;
+
   const perms = ROLE_PERMISSIONS[role] || [];
   return perms.includes("*") || perms.includes(permission);
 }
 
-// يقبل أكتر من صلاحية - يكفي إن الدور يملك واحدة منهم (OR)
+// المرحلة 8.58: شاشة تعديل الموظف بتبعت "الصلاحيات الفعلية المطلوبة" ككل (كل صلاحية اتعلّمت في
+// الشاشة) مش grants/revokes منفصلين - الدالة دي بتقارنها بصلاحيات دوره الافتراضية وتستنتج الفرق:
+// أي صلاحية اتعلّمت ومش من ضمن دوره الأساسي = grant، وأي صلاحية من دوره الأساسي ومش متعلّمة = revoke.
+// الأدمن قاعدته "*" فعليًا كل الصلاحيات (ALL_PERMISSIONS) عشان المقارنة تشتغل صح حتى لو حد شال صلاحية
+// محددة من أدمن معيّن بالغلط أو قصدًا
+function computeEffectivePermissionOverrides(role, desiredPermissions) {
+  const base = role === "admin" ? ALL_PERMISSIONS : (ROLE_PERMISSIONS[role] || []);
+  if (desiredPermissions === undefined) return null; // مفيش تعديل على الصلاحيات خالص
+  if (!Array.isArray(desiredPermissions)) {
+    const err = new Error("صيغة الصلاحيات غير صحيحة");
+    err.code = "INVALID_PERMISSIONS";
+    throw err;
+  }
+  const invalid = desiredPermissions.filter((p) => !ALL_PERMISSIONS.includes(p));
+  if (invalid.length > 0) {
+    const err = new Error(`صلاحيات غير معروفة: ${invalid.join("، ")}`);
+    err.code = "INVALID_PERMISSIONS";
+    throw err;
+  }
+  const grants = desiredPermissions.filter((p) => !base.includes(p));
+  const revokes = base.filter((p) => !desiredPermissions.includes(p));
+  return { grants, revokes };
+}
+
+// يقبل أكتر من صلاحية - يكفي إن اليوزر يملك واحدة منهم (OR)
 function requirePermission(...permissions) {
   return (req, res, next) => {
-    const role = req.user?.role;
-    if (!role || !permissions.some((p) => hasPermission(role, p))) {
+    if (!req.user || !permissions.some((p) => hasPermission(req.user, p))) {
       return res.status(403).json({ error: "معندكش صلاحية تعمل الإجراء ده" });
     }
     next();
   };
 }
 
-module.exports = { ROLE_PERMISSIONS, hasPermission, requirePermission };
+module.exports = {
+  ROLE_PERMISSIONS, PERMISSION_CATALOG, ALL_PERMISSIONS,
+  hasPermission, requirePermission, computeEffectivePermissionOverrides,
+};
