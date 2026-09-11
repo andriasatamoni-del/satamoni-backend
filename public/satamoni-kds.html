@@ -78,6 +78,7 @@
 <div id="topbar">
   <div class="brand">👨‍🍳 ستاموني — شاشة المطبخ</div>
   <select id="branchSelect" style="display:none"></select>
+  <select id="stationSelect" style="display:none" title="فلترة حسب محطة التحضير"></select>
   <span id="refreshInfo"></span>
   <div id="userInfo">
     <span id="userName"></span>
@@ -171,6 +172,21 @@ function currentBranchId() {
   return auth.user.role === "admin" ? document.getElementById("branchSelect").value : auth.user.branchId;
 }
 
+// المرحلة 9A-9: فلتر المحطة - "كل المحطات" (الافتراضي، سلوك اللوحة القديم بالظبط) أو محطة تحضير معيّنة
+// (بيتزا/فطير/مشروبات...) لو الفرع عنده أكتر من محطة مسجّلة فعليًا. لو الفرع مفيهوش أي محطات مسجّلة
+// (لسه مفعّلش نظام التوجيه من الإعدادات)، الفلتر مبيظهرش خالص - اللوحة تفضل شغالة بالسلوك القديم تمامًا
+async function loadStations() {
+  const branchId = currentBranchId();
+  const sel = document.getElementById("stationSelect");
+  if (!branchId) { sel.style.display = "none"; sel.innerHTML = ""; return; }
+  try {
+    const stations = await api(`/api/kds/stations?branchId=${branchId}`);
+    if (!stations.length) { sel.style.display = "none"; sel.innerHTML = ""; return; }
+    sel.innerHTML = `<option value="">كل المحطات</option>` + stations.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("");
+    sel.style.display = "block";
+  } catch (e) { sel.style.display = "none"; sel.innerHTML = ""; }
+}
+
 async function boot() {
   document.getElementById("board").style.display = "flex";
   document.getElementById("accessDenied").style.display = "none";
@@ -181,8 +197,10 @@ async function boot() {
     const sel = document.getElementById("branchSelect");
     sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
     sel.style.display = "block";
-    sel.onchange = loadBoard;
+    sel.onchange = async () => { await loadStations(); await loadBoard(); };
   }
+  document.getElementById("stationSelect").onchange = loadBoard;
+  await loadStations();
   await loadBoard();
   startAutoRefresh();
 }
@@ -261,8 +279,9 @@ async function loadBoard() {
   const branchId = currentBranchId();
   const board = document.getElementById("board");
   if (!branchId) { board.innerHTML = `<div class="empty" style="width:100%">اختار فرع</div>`; return; }
+  const stationId = document.getElementById("stationSelect").value;
   try {
-    const orders = await api(`/api/kds/orders?branchId=${branchId}`);
+    const orders = await api(`/api/kds/orders?branchId=${branchId}${stationId ? `&stationId=${stationId}` : ""}`);
     lastOrders = orders;
     board.innerHTML = COLUMNS.map(col => {
       const inCol = orders.filter(o => o.kitchen_status === col.key);
