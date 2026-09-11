@@ -11,6 +11,7 @@ const { postInventoryMovement } = require("../db/inventory-ledger");
 const { convertQuantity } = require("../db/unit-conversion");
 const { postJournalEntry, reverseJournalEntry, getAccountByCode } = require("../db/accounting-engine");
 const { getCairoBusinessDate } = require("../db/business-date");
+const { findDuplicatePurchaseReferences } = require("../db/purchase-duplicate-check");
 
 const RECEIVABLE_PO_STATUSES = ["APPROVED", "PARTIALLY_RECEIVED"];
 
@@ -48,7 +49,7 @@ async function insertGrnItems(client, grnId, poItemsById, items) {
 //          batchNumber?, expiryDate?, manufacturingDate?, qualityStatus?, rejectionReason?}],
 //  overReceiveApprovedBy?}
 router.post("/", requireAuth, requirePermission("purchasing.create"), async (req, res) => {
-  const { purchaseOrderId, supplierDocumentNumber, notes, idempotencyKey, items, overReceiveApprovedBy } = req.body;
+  const { purchaseOrderId, supplierDocumentNumber, notes, idempotencyKey, items, overReceiveApprovedBy, acknowledgeDuplicate } = req.body;
   if (!purchaseOrderId) return res.status(400).json({ error: "لازم تحدد أمر الشراء" });
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "لازم صنف واحد على الأقل" });
 
@@ -90,6 +91,23 @@ router.post("/", requireAuth, requirePermission("purchasing.create"), async (req
     }
 
     await client.query("BEGIN");
+
+    // المرحلة 9A-3: فحص مقابل مشتريات الكاشير الطارئة (routes/purchases.js) بنفس المورد ونفس رقم مستند
+    // المورد في نفس الفرع - عشان نمنع نفس التوريدة الحقيقية تتسجل مرتين (مرة مشترى نقدي سريع ومرة GRN
+    // رسمي). زي أي blocker تاني في المشروع ده - بيتعرض صراحة مش بيتمنع تلقائيًا، لازم تأكيد صريح
+    if (supplierDocumentNumber) {
+      const duplicates = await findDuplicatePurchaseReferences(client, {
+        supplierId: po.rows[0].supplier_id, supplierDocumentNumber, branchId: po.rows[0].branch_id,
+      });
+      if (duplicates.length > 0 && acknowledgeDuplicate !== true) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "فيه مشترى أو سند استلام بضاعة (GRN) مسجل بالفعل لنفس المورد ونفس رقم المستند - ممكن تكون نفس التوريدة اتسجلت مرتين",
+          duplicateReferences: duplicates,
+        });
+      }
+    }
+
     let grn;
     try {
       grn = await client.query(

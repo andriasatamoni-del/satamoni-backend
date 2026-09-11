@@ -8,6 +8,7 @@ const { postInventoryMovement } = require("../db/inventory-ledger");
 const { postJournalEntry, getAccountByCode, resolveCashCreditAccount } = require("../db/accounting-engine");
 const { validateIdParam } = require("../middleware/validate-id-param");
 const { getCairoBusinessDate } = require("../db/business-date");
+const { findDuplicatePurchaseReferences } = require("../db/purchase-duplicate-check");
 
 const canManage = requireRole("admin", "accountant", "branch_manager");
 
@@ -134,7 +135,7 @@ router.post(
   requirePermission("purchases.create", "purchases.create_own_daily"),
   async (req, res) => {
     const isCashierDaily = req.user.role === "cashier";
-    let { branchId, businessDate, category, amount, fromKitchen = false, notes, items } = req.body;
+    let { branchId, businessDate, category, amount, fromKitchen = false, notes, items, supplierId, supplierDocumentNumber, acknowledgeDuplicate } = req.body;
 
     if (isCashierDaily) {
       branchId = req.user.branchId;
@@ -163,6 +164,29 @@ router.post(
     try {
       await client.query("BEGIN");
 
+      // المرحلة 9A-3: المورد + رقم المستند اختياريين تمامًا - لو مفيش مورد محدد (زي أي مشترى نقدي بسيط
+      // من غير فاتورة رسمية) مفيش أي تغيير في السلوك خالص. لو محددين، لازم المورد يكون موجود فعلًا، وبعدين
+      // بيتفحص مقابل GRN/مشتريات تانية بنفس المورد ونفس رقم المستند في نفس الفرع
+      if (supplierId) {
+        const supplierRes = await client.query("SELECT id FROM suppliers WHERE id = $1", [supplierId]);
+        if (supplierRes.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: "المورد المحدد مش موجود" });
+        }
+      }
+      if (supplierId && supplierDocumentNumber) {
+        const duplicates = await findDuplicatePurchaseReferences(client, {
+          supplierId, supplierDocumentNumber, branchId,
+        });
+        if (duplicates.length > 0 && acknowledgeDuplicate !== true) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({
+            error: "فيه مشترى أو سند استلام بضاعة (GRN) مسجل بالفعل لنفس المورد ونفس رقم المستند - ممكن تكون نفس التوريدة اتسجلت مرتين",
+            duplicateReferences: duplicates,
+          });
+        }
+      }
+
       let computedAmount = amount || 0;
       let validatedItems = [];
       if (hasItems) {
@@ -186,9 +210,10 @@ router.post(
       }
 
       const result = await client.query(
-        `INSERT INTO purchases (branch_id, business_date, category, amount, from_kitchen, notes, status, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [branchId, businessDate, category || (hasItems ? "مواد خام" : null), computedAmount, fromKitchen, notes || null, status, req.user.id]
+        `INSERT INTO purchases (branch_id, business_date, category, amount, from_kitchen, notes, status, created_by, supplier_id, supplier_document_number)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        [branchId, businessDate, category || (hasItems ? "مواد خام" : null), computedAmount, fromKitchen, notes || null, status, req.user.id,
+         supplierId || null, supplierDocumentNumber || null]
       );
       const purchase = result.rows[0];
 

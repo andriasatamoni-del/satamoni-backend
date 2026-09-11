@@ -818,6 +818,14 @@ CREATE TABLE suppliers (
 -- expenses.supplier_id اتعرّف قبل كدة في الملف (expenses جاي قبل suppliers) - الـFK بيتضاف هنا
 ALTER TABLE expenses ADD CONSTRAINT fk_expenses_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id);
 
+-- المرحلة 9A-3: ربط اختياري بين مشترى الكاشير الطارئ (purchases) ومورد رسمي + رقم مستنده (فاتورة/إذن
+-- تسليم) - لو اتحدد، بيتفحص مقابل GRN الرسمي (وGRN التانية) بنفس المورد ونفس رقم المستند عشان يمنع
+-- تسجيل نفس التوريدة الحقيقية مرتين (مرة كمشترى نقدي سريع ومرة تانية كـGRN رسمي). راجع
+-- db/purchase-duplicate-check.js. اختياري بالكامل - مشترى نقدي بسيط من غير مورد محدد لسه شغال زي الأول
+ALTER TABLE purchases ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id);
+ALTER TABLE purchases ADD COLUMN supplier_document_number TEXT;
+CREATE INDEX idx_purchases_supplier_doc ON purchases(supplier_id, supplier_document_number) WHERE supplier_id IS NOT NULL;
+
 -- سعر كل مكوّن عند كل مورد بيبيعه (لمقارنة الأسعار واختيار الأرخص) - جدول قديم بيتحدّث بالسعر الأحدث
 -- بس (ON CONFLICT DO UPDATE)، مالوش تاريخ. لسه شغال زي ما هو لأي كود قديم بيقرأه - مش متضاف عليه أي حاجة
 CREATE TABLE inventory_item_suppliers (
