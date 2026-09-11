@@ -76,8 +76,22 @@
      زي أي تطبيق موبايل عادي، مش سكرول أفقي. فوق 900px (تابلت أفقي فأكبر) الثلاث أعمدة بتفضل زي ما هي
      بالظبط - التخطيط الأصلي متضايقش خالص */
   #mobilePaneTabs { display: none; }
+  /* المرحلة 9A-5: على تابلت (~820px) وموبايل (~400px) شريط الأدوات العلوي كان فيه أكتر من 10 عناصر
+     (فرع/حالة اتصال/شيفت/شيفتاتي/مصروف/تحصيل سائقين/حضور سائقين/طلبات جارية/اسم المستخدم/وضع ليلي/خروج)
+     جوه صف واحد ثابت الارتفاع (56px) من غير flex-wrap ولا overflow - على الشاشات الضيقة العناصر كانت
+     بتتقصّ فعليًا (مقروءة جزئيًا أو مختفية بره حدود الشاشة، من غير أي طريقة توصل لها). الحل: سكرول أفقي
+     للشريط نفسه بدل التفاف (wrap كان هيغيّر ارتفاع الـ56px الثابت اللي #main وmobilePaneTabs بيعتمدوا
+     عليه في حساباتهم - راجع margin-top/calc تحت) - كل العناصر بتفضل مقروءة وقابلة للضغط، بس ممكن تحتاج
+     سحب يمين/شمال للوصول لعنصر بعيد */
+  #topbar {
+    overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+  }
+  #topbar::-webkit-scrollbar { height: 4px; }
   @media (max-width: 900px) {
     #main { flex-wrap: wrap; }
+    #topbar { justify-content: flex-start; gap: 10px; padding: 0 12px; }
+    #topbar > * { flex-shrink: 0; }
+    #topbar .brand { font-size: 15px; }
     #cartPane, #menuPane, #detailsPane { display: none; width: 100% !important; min-width: 0 !important; border: none !important; }
     #cartPane.mp-active { display: flex; }
     #menuPane.mp-active { display: block; }
