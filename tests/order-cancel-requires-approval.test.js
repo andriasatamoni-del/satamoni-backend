@@ -50,10 +50,16 @@ afterAll(async () => {
   await pool.end();
 });
 
+// المرحلة 9A-1: `010${Date.now()}`.slice(0,11) كانت بتاخد أول 8 أرقام من Date.now() (ثابتة لمدة ~100
+// ثانية) - كانت بتتصادم مع نفس البادئة "010" في tests/order-edit.test.js لو اتنفذوا في نفس النافذة دي.
+// نفس نمط uniquePhone المستخدم في ملفات تانية (phase87-adversarial.test.js وغيره): آخر 8 أرقام من
+// Date.now() (بتتغيّر باستمرار) + عدّاد، مش أول 8 أرقام
+let phoneCounter857 = 0;
 async function makeDeliveryOrder(token) {
+  phoneCounter857 += 1;
   const res = await request(app).post("/api/orders").set(authed(token)).send({
     branchId, source: "pos", orderType: "delivery", paymentMethodId,
-    customerPhone: `010${Date.now()}`.slice(0, 11), addressDetails: "عنوان 8.57",
+    customerPhone: `0106${Date.now().toString().slice(-8)}${phoneCounter857}`.slice(0, 11), addressDetails: "عنوان 8.57",
     items: [{ itemId: menuItemId, variantId, quantity: 1 }],
   });
   expect(res.status).toBe(201);

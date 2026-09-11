@@ -21,17 +21,29 @@ router.param("id", validateIdParam);
 // عشان تتحسب في المخزون والمحاسبة) لازم كاشير/مدير فرع/أدمن مسجل دخول، وعلى فرعه بس.
 // طلبات الكول سنتر (source=callcenter) لازم موظف كول سنتر/أدمن، من غير قفل على فرع معين
 // (موظف الكول سنتر بياخد طلبات لأي فرع/منطقة توصيل).
+// المرحلة 9A-2: requireRole هنا كان بيحدد "مين نوع الحساب اللي يقدر يسجّل طلب pos/callcenter" بس -
+// صلاحية orders.create نفسها كانت موجودة في الكتالوج (middleware/permissions.js) بس مش متحقق منها
+// هنا خالص، يعني لو أدمن سحب orders.create من كاشير معيّن (permissionRevokes) كان مفيش أي تأثير حقيقي،
+// هيفضل يقدر يسجّل طلبات عادي. requirePermission بعد requireRole بيسد الفجوة دي من غير ما يغيّر
+// السلوك الافتراضي (orders.create مضافة لصلاحيات cashier/callcenter الافتراضية أصلًا، وبراتش مانجر بقت
+// معاها صراحة تحت في ROLE_PERMISSIONS)
 function requirePosAuthIfNeeded(req, res, next) {
   if (req.body.source === "pos" || req.body.source === "talabat") {
     return requireAuth(req, res, (err) => {
       if (err) return next(err);
-      requireRole("cashier", "branch_manager", "admin")(req, res, next);
+      requireRole("cashier", "branch_manager", "admin")(req, res, (err2) => {
+        if (err2) return next(err2);
+        requirePermission("orders.create")(req, res, next);
+      });
     });
   }
   if (req.body.source === "callcenter") {
     return requireAuth(req, res, (err) => {
       if (err) return next(err);
-      requireRole("callcenter", "admin")(req, res, next);
+      requireRole("callcenter", "admin")(req, res, (err2) => {
+        if (err2) return next(err2);
+        requirePermission("orders.create")(req, res, next);
+      });
     });
   }
   next();
@@ -230,6 +242,12 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     // مرتين. فوق حد تاني (discount_manager_max_percent) الموافقة لازم تبقى أدمن بس، مدير الفرع مبيكفيش.
     let discountApprover = null;
     if (discount > 0 && subtotal > 0) {
+      // المرحلة 9A-2: orders.discount.request كانت في الكتالوج بس مش متحققة خالص - أي حد يقدر يسجّل
+      // طلب (orders.create) كان يقدر يحط خصم كمان طالما تحت حد الموافقة، حتى لو orders.discount.request
+      // اتسحبت منه صراحة. دلوقتي أي خصم (كبير أو صغير) بيتطلب الصلاحية دي فعليًا
+      if (!hasPermission(req.user, "orders.discount.request")) {
+        return res.status(403).json({ error: "معندكش صلاحية تطلب خصم" });
+      }
       const settings = await client.query(
         "SELECT max_unapproved_discount_percent, discount_manager_max_percent FROM pos_settings WHERE id = 1"
       );
@@ -1456,6 +1474,11 @@ router.put(
       // هنا الطلب أصلًا موجود، فالتوكن بيتربط بمعرّف الطلب نفسه (target_type='order') مش idempotencyKey
       let discountApprover = null;
       if (discount > 0 && subtotal > 0) {
+        // المرحلة 9A-2: نفس فحص orders.discount.request بتاع POST / بالظبط
+        if (!hasPermission(req.user, "orders.discount.request")) {
+          await client.query("ROLLBACK");
+          return res.status(403).json({ error: "معندكش صلاحية تطلب خصم" });
+        }
         const settings = await client.query(
           "SELECT max_unapproved_discount_percent, discount_manager_max_percent FROM pos_settings WHERE id = 1"
         );

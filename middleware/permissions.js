@@ -4,6 +4,13 @@
 const ROLE_PERMISSIONS = {
   admin: ["*"],
   branch_manager: [
+    // المرحلة 9A-2: orders.create/discount.request/void.request كانت موجودة في الكتالوج بس مش متحققة
+    // فعليًا في أي راوت (requirePosAuthIfNeeded كان بيعتمد على requireRole بس) - يعني سحبها من مدير فرع
+    // معيّن كان مالوش أي تأثير حقيقي. دلوقتي بقت متحققة فعليًا (راجع routes/orders.js)، فلازم تتضاف هنا
+    // صراحة عشان السلوك الافتراضي (مدير الفرع أصلًا بيقدر يسجّل طلب/يطلب خصم/يطلب استرجاع لفرعه) يفضل
+    // زي ما هو من غير تغيير - هو أصلًا معاه orders.cancel/discount.approve فمعندوش داعي يطلب موافقة حد
+    // تاني على أي حاجة من دول، بس لازم يقدر يبدأها هو بنفسه الأول
+    "orders.create", "orders.discount.request", "orders.void.request",
     "orders.discount.approve", "orders.void.approve", "orders.cancel",
     "inventory.view", "inventory.adjust", "inventory.count",
     "recipes.view", "recipes.create", "recipes.edit", "recipes.submit",
