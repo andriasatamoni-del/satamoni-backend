@@ -13,6 +13,7 @@ const { logAudit } = require("../db/audit");
 const { postInventoryMovement, consumeFromBatches } = require("../db/inventory-ledger");
 const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
 const { generateBatchNumber } = require("../db/batch-numbering");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 // POST /api/packaging - أمر تعبئة جديد (DRAFT)
 // {branchId, inputItemId, inputBatchId?, plannedInputQuantity, outputItemId, plannedOutputQuantity, packagingDate?, batchNumber?, expiryDate?, notes?}
@@ -301,7 +302,7 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
         entryLines.push({ accountId: varianceAccount.id, debit: -varianceAmount, description: `فرق تعبئة${incompleteNote}` });
       }
       await postJournalEntry(client, {
-        entryDate: new Date().toISOString().slice(0, 10), description: `تعبئة - أمر #${order.id}`,
+        entryDate: getCairoBusinessDate(), description: `تعبئة - أمر #${order.id}`,
         sourceType: "packaging_order", sourceId: order.id, branchId: order.branch_id,
         lines: entryLines, idempotencyKey: `packaging-complete-${order.id}`, userId: req.user.id,
       });

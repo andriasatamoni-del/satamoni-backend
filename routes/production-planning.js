@@ -7,6 +7,7 @@ const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
+const { getCairoBusinessDate } = require("../db/business-date");
 const {
   computeProductionPlan, computeRawMaterialRequirement, activeRecipesByItem,
   approvedDemandByItem, pendingSubmittedDemandByItem, generateSuggestedRequisition,
@@ -29,7 +30,7 @@ function resolveCkBranchId(req) {
   return { ckBranchId: req.user.branchId };
 }
 
-function todayStr() { return new Date().toISOString().slice(0, 10); }
+function todayStr() { return getCairoBusinessDate(); }
 function resolveWindow(req) {
   const fromDate = req.query.fromDate || todayStr();
   const toDate = req.query.toDate || fromDate;

@@ -4,6 +4,7 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
 const { recordEmployeeHistoryChanges } = require("../db/employee-history");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 const canManageStaff = requireRole("admin", "branch_manager");
 const anyStaff = requireRole("admin", "branch_manager", "accountant", "cashier", "callcenter");
@@ -598,7 +599,7 @@ router.get("/reports/employee-status", requireAuth, canManageStaff, async (req, 
 router.get("/reports/average-tenure", requireAuth, canManageStaff, async (req, res) => {
   let { branchId, department, status } = req.query;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
-  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const asOf = req.query.asOf || getCairoBusinessDate();
   try {
     const result = await pool.query(
       `SELECT AVG((COALESCE(termination_date, $4::date) - hire_date) / 30.44) AS avg_months,
@@ -626,7 +627,7 @@ router.get("/reports/average-tenure", requireAuth, canManageStaff, async (req, r
 router.get("/reports/turnover", requireAuth, canManageStaff, async (req, res) => {
   let { branchId, department } = req.query;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
-  const to = req.query.to || new Date().toISOString().slice(0, 10);
+  const to = req.query.to || getCairoBusinessDate();
   const from = req.query.from || `${new Date(to).getFullYear()}-01-01`;
   try {
     const departuresRes = await pool.query(
@@ -705,7 +706,7 @@ router.get("/reports/terminations", requireAuth, canManageStaff, async (req, res
 router.get("/reports/leave-balance", requireAuth, canManageStaff, async (req, res) => {
   let { branchId, department, status, employeeId } = req.query;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
-  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const asOf = req.query.asOf || getCairoBusinessDate();
   try {
     const settings = await pool.query("SELECT paid_leave_days_per_month FROM payroll_settings WHERE id = 1");
     const perMonth = Number(settings.rows[0]?.paid_leave_days_per_month || 0);

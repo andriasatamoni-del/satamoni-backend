@@ -10,6 +10,7 @@ const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { convertQuantity } = require("../db/unit-conversion");
 const { postJournalEntry, reverseJournalEntry, getAccountByCode } = require("../db/accounting-engine");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 const RECEIVABLE_PO_STATUSES = ["APPROVED", "PARTIALLY_RECEIVED"];
 
@@ -270,7 +271,7 @@ router.post("/:id/post", requireAuth, requirePermission("purchasing.create", "pu
       const inventoryAccount = await getAccountByCode(client, "1400");
       const apAccount = await getAccountByCode(client, "2100");
       await postJournalEntry(client, {
-        entryDate: new Date().toISOString().slice(0, 10), description: `استلام بضاعة - GRN #${grn.rows[0].id}`,
+        entryDate: getCairoBusinessDate(), description: `استلام بضاعة - GRN #${grn.rows[0].id}`,
         sourceType: "goods_receipt", sourceId: grn.rows[0].id, branchId: grn.rows[0].branch_id,
         lines: [
           { accountId: inventoryAccount.id, debit: totalAcceptedValue, description: valueIncomplete ? "تكلفة جزئية (تكلفة ناقصة لبعض الأصناف)" : null },
@@ -390,7 +391,7 @@ router.post("/:id/cancel", requireAuth, requirePermission("purchasing.cancel"), 
     );
     if (originalEntry.rows.length > 0) {
       await reverseJournalEntry(client, {
-        originalEntryId: originalEntry.rows[0].id, entryDate: new Date().toISOString().slice(0, 10),
+        originalEntryId: originalEntry.rows[0].id, entryDate: getCairoBusinessDate(),
         reason: `إلغاء سند استلام - ${reason || ""}`, userId: req.user.id,
         idempotencyKey: `goods-receipt-cancel-${grn.rows[0].id}`,
       });

@@ -7,6 +7,7 @@
 // (SUBMITTED - محتاج مراجعة مدير زي أي مصروف كاشير عادي) بدل ما الكاشير يحسبه ويكتبه يدوي.
 const { logAudit } = require("./audit");
 const { calcDriverOrderBonus } = require("./delivery-engine");
+const { getCairoBusinessDate } = require("./business-date");
 
 const WAGE_EXPENSE_CATEGORY_NAME = "أجور عمالة خارجية (سائقين)";
 
@@ -93,7 +94,7 @@ async function checkOutDriver(client, { driverShift, checkedOutByUserId, notes }
     `INSERT INTO expenses (branch_id, business_date, category_id, amount, notes, payment_method_id, status, created_by)
      VALUES ($1,$2,$3,$4,$5,$6,'SUBMITTED',$7) RETURNING *`,
     [
-      driverShift.branch_id, checkedOutAt.toISOString().slice(0, 10), categoryId, totalPay,
+      driverShift.branch_id, getCairoBusinessDate(checkedOutAt), categoryId, totalPay,
       `أجر يومية السائق ${driverName} - ${hoursWorked} ساعة × ${driverShift.hourly_rate} ج.م = ${wageAmount} ج.م + بونص ${bonusTotal} ج.م${notes ? ` - ${notes}` : ""}`,
       cashPm.rows[0].id, checkedOutByUserId,
     ]

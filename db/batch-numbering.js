@@ -4,6 +4,8 @@
 // atomic واحد (INSERT ... ON CONFLICT DO UPDATE ... RETURNING) عشان يفضل صحيح تحت التزامن من غير قفل
 // منفصل (نفس فلسفة nextval('journal_entry_number_seq') في accounting-engine.js، بس هنا محتاجين تصفير
 // يومي لكل بادئة فمينفعش نستخدم sequence عادي)
+const { getCairoBusinessDate } = require("./business-date");
+
 const DEFAULT_PREFIX = "MFG";
 
 async function generateBatchNumber(client, { inventoryItemId, date } = {}) {
@@ -11,7 +13,7 @@ async function generateBatchNumber(client, { inventoryItemId, date } = {}) {
     ? await client.query("SELECT batch_prefix FROM inventory_items WHERE id = $1", [inventoryItemId])
     : { rows: [] };
   const prefix = itemRes.rows[0]?.batch_prefix || DEFAULT_PREFIX;
-  const counterDate = date || new Date().toISOString().slice(0, 10);
+  const counterDate = date || getCairoBusinessDate();
 
   const counter = await client.query(
     `INSERT INTO batch_number_counters (prefix, counter_date, last_sequence)

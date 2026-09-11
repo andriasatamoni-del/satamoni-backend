@@ -5,6 +5,7 @@ const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/aut
 const { postInventoryMovement, consumeFromBatches } = require("../db/inventory-ledger");
 const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
 const { logAudit } = require("../db/audit");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 const stockManagers = requireRole("admin", "branch_manager");
 
@@ -700,7 +701,7 @@ router.post("/:id/discrepancies/:discrepancyId/resolve", requireAuth, requireRol
         const wasteAccount = await getAccountByCode(client, "5300");
         const inventoryAccount = await getAccountByCode(client, "1400");
         const je = await postJournalEntry(client, {
-          entryDate: new Date().toISOString().slice(0, 10),
+          entryDate: getCairoBusinessDate(),
           description: `فرق استلام #${disc.id} (${disc.discrepancy_type}) - تحويل #${req.params.id}`,
           sourceType: "transfer_discrepancy", sourceId: disc.id, branchId: toBranchId,
           lines: [

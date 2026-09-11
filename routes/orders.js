@@ -11,6 +11,7 @@ const { upsertCustomerAddress } = require("../db/customer-addresses");
 const { maybeSendOrderConfirmation, maybeSendRatingRequest } = require("../db/order-notifications");
 const { validateIdParam } = require("../middleware/validate-id-param");
 const { queueOrderCreationPrintJobs, queueDineInPreparingPrintJobs, queueDineInBillPrintJob } = require("../db/print-queue");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 // المرحلة 8B: :id لازم يكون رقم صحيح قبل ما يوصل لأي راوت هنا - غير كده Postgres بيرمي خطأ cast خام
 // كـ500 بدل 400 واضح (اتكشف بهجوم أمني حي - راجع middleware/validate-id-param.js)
@@ -696,7 +697,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       }
 
       await postJournalEntry(client, {
-        entryDate: new Date().toISOString().slice(0, 10), description: `بيع - طلب #${orderId}`,
+        entryDate: getCairoBusinessDate(), description: `بيع - طلب #${orderId}`,
         sourceType: "order_sale", sourceId: orderId, branchId,
         lines: revenueLines, idempotencyKey: `order-sale-${orderId}`, userId: createdBy,
       });
@@ -1381,7 +1382,7 @@ router.post(
       );
       if (originalEntry.rows.length > 0) {
         await reverseJournalEntry(client, {
-          originalEntryId: originalEntry.rows[0].id, entryDate: new Date().toISOString().slice(0, 10),
+          originalEntryId: originalEntry.rows[0].id, entryDate: getCairoBusinessDate(),
           reason: `استرجاع (Void) - ${reason}`, userId: req.user.id, idempotencyKey: `order-void-${order.id}`,
         });
       }
@@ -1582,7 +1583,7 @@ router.put(
       );
       if (originalEntry.rows.length > 0) {
         await reverseJournalEntry(client, {
-          originalEntryId: originalEntry.rows[0].id, entryDate: new Date().toISOString().slice(0, 10),
+          originalEntryId: originalEntry.rows[0].id, entryDate: getCairoBusinessDate(),
           reason: "تعديل الطلب", userId: req.user.id,
         });
       }
@@ -1897,7 +1898,7 @@ router.put(
         }
 
         await postJournalEntry(client, {
-          entryDate: new Date().toISOString().slice(0, 10), description: `بيع (بعد تعديل) - طلب #${order.id}`,
+          entryDate: getCairoBusinessDate(), description: `بيع (بعد تعديل) - طلب #${order.id}`,
           sourceType: "order_sale", sourceId: order.id, branchId: order.branch_id,
           lines: revenueLines, userId: req.user.id,
         });

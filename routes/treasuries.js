@@ -10,6 +10,7 @@ const { requireAuth, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { postJournalEntry } = require("../db/accounting-engine");
 const { logAudit } = require("../db/audit");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 // GET /api/treasuries?branchId= - قايمة خزائن فرع معيّن (رئيسية + دروج الكاشيرية النشطة/التاريخية) +
 // خزائن البنوك (مشتركة، مفيش branch_id). مدير الفرع/المحاسب لفرعهم بس، أدمن لأي فرع أو كل الفروع
@@ -72,7 +73,7 @@ router.post("/:id/transfer", requireAuth, requirePermission("treasuries.transfer
     }
 
     const je = await postJournalEntry(client, {
-      entryDate: new Date().toISOString().slice(0, 10),
+      entryDate: getCairoBusinessDate(),
       description: `تحويل من ${from.name} لـ${to.name}${notes ? " - " + notes : ""}`,
       sourceType: "treasury_transfer", sourceId: from.id, branchId: from.branch_id || to.branch_id,
       lines: [

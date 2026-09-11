@@ -13,6 +13,7 @@ const { requireAuth, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postJournalEntry, reverseJournalEntry, getAccountByCode } = require("../db/accounting-engine");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 const VARIANCE_TOLERANCE = 0.01; // نفس سماحية التقريب المستخدمة في باقي القيود المالية بالمشروع
 const CANCELLABLE_STATUSES = ["DRAFT", "MATCHED", "VARIANCE_PENDING", "APPROVED"];
@@ -265,7 +266,7 @@ router.post("/:id/approve", requireAuth, requirePermission("purchasing.approve")
             { accountId: inventoryAccount.id, credit: -varianceAmount, description: `فرق فاتورة مورد #${invoice.rows[0].id} عن قيمة الاستلام` },
           ];
       const je = await postJournalEntry(client, {
-        entryDate: new Date().toISOString().slice(0, 10),
+        entryDate: getCairoBusinessDate(),
         description: `فرق فاتورة مورد #${invoice.rows[0].id} (${invoice.rows[0].supplier_invoice_number})`,
         sourceType: "supplier_invoice_variance", sourceId: invoice.rows[0].id, branchId: invoice.rows[0].branch_id,
         lines, idempotencyKey: `supplier-invoice-variance-${invoice.rows[0].id}`, userId: req.user.id,
@@ -324,7 +325,7 @@ router.post("/:id/cancel", requireAuth, requirePermission("purchasing.cancel"), 
 
     if (invoice.rows[0].variance_journal_entry_id) {
       await reverseJournalEntry(client, {
-        originalEntryId: invoice.rows[0].variance_journal_entry_id, entryDate: new Date().toISOString().slice(0, 10),
+        originalEntryId: invoice.rows[0].variance_journal_entry_id, entryDate: getCairoBusinessDate(),
         reason: `إلغاء فاتورة مورد - ${reason || ""}`, userId: req.user.id,
         idempotencyKey: `supplier-invoice-variance-cancel-${invoice.rows[0].id}`,
       });

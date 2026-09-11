@@ -7,6 +7,7 @@ const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { postJournalEntry, getAccountByCode, resolveCashCreditAccount } = require("../db/accounting-engine");
 const { validateIdParam } = require("../middleware/validate-id-param");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 const canManage = requireRole("admin", "accountant", "branch_manager");
 
@@ -44,7 +45,7 @@ async function postPurchaseToInventory(client, purchase, userId, req) {
     const inventoryAccount = await getAccountByCode(client, "1400");
     const cashAccount = await resolveCashCreditAccount(client, { branchId: purchase.branch_id, createdByUserId: purchase.created_by });
     await postJournalEntry(client, {
-      entryDate: new Date().toISOString().slice(0, 10), description: `مشترى نقدي - فاتورة #${purchase.id}`,
+      entryDate: getCairoBusinessDate(), description: `مشترى نقدي - فاتورة #${purchase.id}`,
       sourceType: "purchase", sourceId: purchase.id, branchId: purchase.branch_id,
       lines: [
         { accountId: inventoryAccount.id, debit: totalValue },
@@ -137,7 +138,7 @@ router.post(
 
     if (isCashierDaily) {
       branchId = req.user.branchId;
-      businessDate = new Date().toISOString().slice(0, 10);
+      businessDate = getCairoBusinessDate();
       fromKitchen = false;
     }
 
