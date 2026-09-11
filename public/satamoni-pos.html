@@ -1274,8 +1274,12 @@ document.getElementById("discountInput").addEventListener("input", () => {
 });
 
 // ---------------- مودال موافقة PIN (خصومات كبيرة / استرجاع طلبات) ----------------
+// المرحلة 9A-1: لازم تحدد صراحة عايز توافق على إيه بالظبط (approvalMeta: {actionType, targetType,
+// targetId}) - التوكن اللي هيرجع من الـPIN مش هيشتغل إلا لنفس العملية دي بالظبط، مش قابل لإعادة الاستخدام
 let pinModalResolve = null;
-function openPinModal(msg) {
+let pinModalApprovalMeta = null;
+function openPinModal(msg, approvalMeta) {
+  pinModalApprovalMeta = approvalMeta;
   document.getElementById("pinModalMsg").textContent = msg;
   document.getElementById("pinInput").value = "";
   document.getElementById("pinModalErr").textContent = "";
@@ -1326,7 +1330,7 @@ document.getElementById("pinModalSubmit").onclick = async () => {
     const res = await fetch(`${API_BASE_URL}/api/auth/verify-override-pin`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
-      body: JSON.stringify({ pin, branchId: state.selectedBranchId }),
+      body: JSON.stringify({ pin, branchId: state.selectedBranchId, ...pinModalApprovalMeta }),
     });
     const data = await res.json();
     if (!res.ok) { errBox.textContent = data.error || "PIN غير صحيح"; return; }
@@ -2461,7 +2465,10 @@ document.getElementById("submitBtn").onclick = async () => {
   errBox.textContent = "";
 
   if (discountNeedsApproval() && !state.discountApproval) {
-    const approval = await openPinModal("الخصم ده فوق الحد المسموح - دخّل PIN مدير الفرع أو الأدمن للموافقة:");
+    const approval = await openPinModal(
+      "الخصم ده فوق الحد المسموح - دخّل PIN مدير الفرع أو الأدمن للموافقة:",
+      { actionType: "ORDER_DISCOUNT", targetType: "order_attempt", targetId: getOrderAttemptKey() }
+    );
     if (!approval) return;
     state.discountApproval = approval;
     updateDiscountNote();
@@ -2487,7 +2494,7 @@ document.getElementById("submitBtn").onclick = async () => {
       paymentMethodId: state.selectedPaymentId,
       deliveryFee: currentDeliveryFee(),
       discount: isTalabat ? 0 : currentDiscount(),
-      discountApprovedBy: !isTalabat && state.discountApproval ? state.discountApproval.approverId : null,
+      discountApprovalToken: !isTalabat && state.discountApproval ? state.discountApproval.token : null,
       items: Object.values(state.cart).map(v => v.comboId
         ? { comboId: v.comboId, unitPrice: v.price, quantity: v.qty }
         : {
@@ -2940,9 +2947,12 @@ async function handleOrderAction(order, act) {
           // المرحلة 8.51: فرق بين المبلغ المُدخل والإجمالي - محتاج موافقة مدير الفرع/الأدمن (نفس نمط الاسترجاع)
           const variance = Math.round((collectedAmount - Number(order.total)) * 100) / 100;
           if (variance !== 0 && auth.user.role !== "admin" && auth.user.role !== "branch_manager") {
-            const approval = await openPinModal(`في فرق ${Math.abs(variance)} ج.م بين المبلغ ده وإجمالي الطلب - محتاج موافقة مدير الفرع أو الأدمن. دخّل الـ PIN:`);
+            const approval = await openPinModal(
+              `في فرق ${Math.abs(variance)} ج.م بين المبلغ ده وإجمالي الطلب - محتاج موافقة مدير الفرع أو الأدمن. دخّل الـ PIN:`,
+              { actionType: "DELIVERY_COLLECTION_VARIANCE", targetType: "order", targetId: order.id }
+            );
             if (!approval) return;
-            body.approverId = approval.approverId;
+            body.approvalToken = approval.token;
           }
         }
         await ordersApi(`/api/deliveries/${order.id}/delivered`, { method: "POST", body: JSON.stringify(body) });
@@ -2963,25 +2973,31 @@ async function handleOrderAction(order, act) {
       // /status بدون أي موافقة مدير ولا عكس مخزون/قيد محاسبي، ثغرة حقيقية اتكشفت من بلاغ كاشير حقيقي
       const reason = prompt(`سبب إلغاء الطلب #${order.id}:`);
       if (!reason) return;
-      let approverId = null;
+      let approvalToken = null;
       if (auth.user.role !== "admin" && auth.user.role !== "branch_manager") {
-        const approval = await openPinModal("إلغاء الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:");
+        const approval = await openPinModal(
+          "إلغاء الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:",
+          { actionType: "ORDER_VOID", targetType: "order", targetId: order.id }
+        );
         if (!approval) return;
-        approverId = approval.approverId;
+        approvalToken = approval.token;
       }
-      await ordersApi(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approverId }) });
+      await ordersApi(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approvalToken }) });
     } else if (act === "collect") {
       await ordersApi(`/api/orders/${order.id}/payment-status`, { method: "PATCH", body: JSON.stringify({ paymentStatus: "collected" }) });
     } else if (act === "void") {
       const reason = prompt(`سبب استرجاع الطلب #${order.id} (Void):`);
       if (!reason) return;
-      let approverId = null;
+      let approvalToken = null;
       if (auth.user.role !== "admin" && auth.user.role !== "branch_manager") {
-        const approval = await openPinModal("استرجاع الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:");
+        const approval = await openPinModal(
+          "استرجاع الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:",
+          { actionType: "ORDER_VOID", targetType: "order", targetId: order.id }
+        );
         if (!approval) return;
-        approverId = approval.approverId;
+        approvalToken = approval.token;
       }
-      await ordersApi(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approverId }) });
+      await ordersApi(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approvalToken }) });
     }
     loadActiveOrders();
   } catch (e) { alert(e.message); }

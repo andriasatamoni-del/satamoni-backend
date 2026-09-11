@@ -466,9 +466,12 @@ async function handleAction(order, act) {
           // المرحلة 8.51: فرق بين المبلغ المُدخل والإجمالي - محتاج موافقة مدير الفرع/الأدمن (نفس نمط الاسترجاع)
           const variance = Math.round((collectedAmount - Number(order.total)) * 100) / 100;
           if (variance !== 0 && auth.user.role !== "admin" && auth.user.role !== "branch_manager") {
-            const approval = await openPinModal(`في فرق ${Math.abs(variance)} ج.م بين المبلغ ده وإجمالي الطلب - محتاج موافقة مدير الفرع أو الأدمن. دخّل الـ PIN:`, order.branch_id);
+            const approval = await openPinModal(
+              `في فرق ${Math.abs(variance)} ج.م بين المبلغ ده وإجمالي الطلب - محتاج موافقة مدير الفرع أو الأدمن. دخّل الـ PIN:`,
+              order.branch_id, { actionType: "DELIVERY_COLLECTION_VARIANCE", targetType: "order", targetId: order.id }
+            );
             if (!approval) return;
-            body.approverId = approval.approverId;
+            body.approvalToken = approval.token;
           }
         }
         await api(`/api/deliveries/${order.id}/delivered`, { method: "POST", body: JSON.stringify(body) });
@@ -489,35 +492,44 @@ async function handleAction(order, act) {
       // /status بدون أي موافقة مدير ولا عكس مخزون/قيد محاسبي، ثغرة حقيقية اتكشفت من بلاغ كاشير حقيقي
       const reason = prompt(`سبب إلغاء الطلب #${order.id}:`);
       if (!reason) return;
-      let approverId = null;
+      let approvalToken = null;
       if (auth.user.role !== "admin" && auth.user.role !== "branch_manager") {
-        const approval = await openPinModal("إلغاء الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:", order.branch_id);
+        const approval = await openPinModal(
+          "إلغاء الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:",
+          order.branch_id, { actionType: "ORDER_VOID", targetType: "order", targetId: order.id }
+        );
         if (!approval) return;
-        approverId = approval.approverId;
+        approvalToken = approval.token;
       }
-      await api(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approverId }) });
+      await api(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approvalToken }) });
     } else if (act === "collect") {
       await api(`/api/orders/${order.id}/payment-status`, { method: "PATCH", body: JSON.stringify({ paymentStatus: "collected" }) });
     } else if (act === "void") {
       const reason = prompt(`سبب استرجاع الطلب #${order.id} (Void):`);
       if (!reason) return;
-      let approverId = null;
+      let approvalToken = null;
       if (auth.user.role !== "admin" && auth.user.role !== "branch_manager") {
-        const approval = await openPinModal("استرجاع الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:", order.branch_id);
+        const approval = await openPinModal(
+          "استرجاع الطلب محتاج موافقة مدير الفرع أو الأدمن - دخّل الـ PIN:",
+          order.branch_id, { actionType: "ORDER_VOID", targetType: "order", targetId: order.id }
+        );
         if (!approval) return;
-        approverId = approval.approverId;
+        approvalToken = approval.token;
       }
-      await api(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approverId }) });
+      await api(`/api/orders/${order.id}/void`, { method: "POST", body: JSON.stringify({ reason, approvalToken }) });
     }
     loadOrders();
   } catch (e) { alert(e.message); }
 }
 
 // ---------------- مودال موافقة PIN (استرجاع الطلبات) ----------------
+// المرحلة 9A-1: approvalMeta: {actionType, targetType, targetId} - التوكن مربوط بالعملية دي بس
 let pinModalResolve = null;
 let pinModalBranchId = null;
-function openPinModal(msg, branchId) {
+let pinModalApprovalMeta = null;
+function openPinModal(msg, branchId, approvalMeta) {
   pinModalBranchId = branchId || null;
+  pinModalApprovalMeta = approvalMeta;
   document.getElementById("pinModalMsg").textContent = msg;
   document.getElementById("pinInput").value = "";
   document.getElementById("pinModalErr").textContent = "";
@@ -566,7 +578,7 @@ document.getElementById("pinModalSubmit").onclick = async () => {
   try {
     const data = await api("/api/auth/verify-override-pin", {
       method: "POST",
-      body: JSON.stringify({ pin, branchId: pinModalBranchId }),
+      body: JSON.stringify({ pin, branchId: pinModalBranchId, ...pinModalApprovalMeta }),
     });
     closePinModal(data);
   } catch (e) {

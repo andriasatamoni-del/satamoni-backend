@@ -18,9 +18,9 @@ beforeAll(async () => {
   const bB = await pool.query("INSERT INTO branches (name) VALUES ('فرع توصيل-B-جست') RETURNING id");
   branchB = bB.rows[0].id;
 
-  managerAId = await seedUser({ branchId: branchA, name: "مدير-توصيل-A", email: "managerA-delivery@jest.test", role: "branch_manager" });
+  managerAId = await seedUser({ branchId: branchA, name: "مدير-توصيل-A", email: "managerA-delivery@jest.test", role: "branch_manager", pin: "2468" });
   await seedUser({ branchId: branchA, name: "كاشير-توصيل-A", email: "cashierA-delivery@jest.test", role: "cashier" });
-  await seedUser({ branchId: branchB, name: "مدير-توصيل-B", email: "managerB-delivery@jest.test", role: "branch_manager" });
+  await seedUser({ branchId: branchB, name: "مدير-توصيل-B", email: "managerB-delivery@jest.test", role: "branch_manager", pin: "1122" });
   await seedUser({ name: "أدمن-توصيل", email: "admin-delivery@jest.test", role: "admin" });
 
   managerAToken = await login("managerA-delivery@jest.test");
@@ -261,8 +261,8 @@ describe("فروق تحصيل الكاش عند التسليم (عجز/زياد�
 
 // المرحلة 8.51: قبل كده أي فرق بين المبلغ المُدخل والإجمالي (حتى صفر بدل الإجمالي كامل) كان بيتسجل
 // "اتحصّل" أوتوماتيك من غير أي مراجعة، لو اللي بيسجّل التسليم مش السائق نفسه. دلوقتي محتاج موافقة مدير
-// الفرع/الأدمن (approverId) - نفس نمط استرجاع الطلب (Void) بالظبط. السائق نفسه (isDriverSelf) مستثنى
-// عمدًا - الاختبارات فوق (فروق تحصيل الكاش) أصلًا بتستخدم driverA1Token وبتنجح من غير approverId، وده
+// الفرع/الأدمن (approvalToken) - نفس نمط استرجاع الطلب (Void) بالظبط. السائق نفسه (isDriverSelf) مستثنى
+// عمدًا - الاختبارات فوق (فروق تحصيل الكاش) أصلًا بتستخدم driverA1Token وبتنجح من غير approvalToken، وده
 // بيغطي حالة الاستثناء ده بالفعل
 describe("موافقة فرق التحصيل عند التسليم (8.51)", () => {
   async function dispatchOrder(collectorToken) {
@@ -273,7 +273,7 @@ describe("موافقة فرق التحصيل عند التسليم (8.51)", () =
     return orderId;
   }
 
-  test("كاشير بيسجّل التسليم بمبلغ مختلف عن الإجمالي من غير approverId - بيترفض", async () => {
+  test("كاشير بيسجّل التسليم بمبلغ مختلف عن الإجمالي من غير approvalToken - بيترفض", async () => {
     const orderId = await dispatchOrder();
     const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 0 });
     expect(res.status).toBe(400);
@@ -283,9 +283,15 @@ describe("موافقة فرق التحصيل عند التسليم (8.51)", () =
     expect(row.rows[0].dispatch_status).toBe("OUT_FOR_DELIVERY"); // فضل معلّق، مفيش تحصيل اتسجّل بالغلط
   });
 
-  test("كاشير بيسجّل نفس الحالة مع approverId صحيح (مدير الفرع) - بينجح", async () => {
+  test("كاشير بيسجّل نفس الحالة مع approvalToken صحيح (مدير الفرع، عن طريق verify-override-pin) - بينجح", async () => {
     const orderId = await dispatchOrder();
-    const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 0, approverId: managerAId });
+    const pinRes = await request(app).post("/api/auth/verify-override-pin").set(authed(cashierAToken)).send({
+      pin: "2468", branchId: branchA, actionType: "DELIVERY_COLLECTION_VARIANCE", targetType: "order", targetId: orderId,
+    });
+    expect(pinRes.status).toBe(200);
+    expect(pinRes.body.approverId).toBe(managerAId);
+
+    const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 0, approvalToken: pinRes.body.token });
     expect(res.status).toBe(200);
     expect(res.body.dispatch_status).toBe("DELIVERED");
     expect(Number(res.body.collection_variance)).toBe(-500);
@@ -296,15 +302,39 @@ describe("موافقة فرق التحصيل عند التسليم (8.51)", () =
     expect(audit.rows[0].metadata.approverId).toBe(managerAId);
   });
 
-  test("approverId من فرع تاني - بيترفض برضو", async () => {
-    const bId = await seedUser({ branchId: branchB, name: "مدير-فرع-تاني-approver", email: "managerB-approver@jest.test", role: "branch_manager" });
+  test("توكن موافقة مستخدم قبل كده (replay) - بيترفض تاني في نفس الطلب", async () => {
     const orderId = await dispatchOrder();
-    const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 0, approverId: bId });
+    const pinRes = await request(app).post("/api/auth/verify-override-pin").set(authed(cashierAToken)).send({
+      pin: "2468", branchId: branchA, actionType: "DELIVERY_COLLECTION_VARIANCE", targetType: "order", targetId: orderId,
+    });
+    expect(pinRes.status).toBe(200);
+    const first = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 0, approvalToken: pinRes.body.token });
+    expect(first.status).toBe(200);
+
+    const orderId2 = await dispatchOrder();
+    const replay = await request(app).post(`/api/deliveries/${orderId2}/delivered`).set(authed(cashierAToken)).send({ collectedAmount: 0, approvalToken: pinRes.body.token });
+    expect(replay.status).toBe(400);
+    expect(replay.body.code).toBe("COLLECTION_VARIANCE_APPROVAL_REQUIRED");
+  });
+
+  test("مدير من فرع تاني معندوش صلاحية يطلب موافقة لطلب فرع مختلف - verify-override-pin بيرفض", async () => {
+    const orderId = await dispatchOrder();
+    const pinRes = await request(app).post("/api/auth/verify-override-pin").set(authed(cashierAToken)).send({
+      pin: "1122", branchId: branchA, actionType: "DELIVERY_COLLECTION_VARIANCE", targetType: "order", targetId: orderId,
+    });
+    expect(pinRes.status).toBe(401);
+  });
+
+  test("توكن موافقة مزوّر/مش موجود خالص - بيترفض برضو", async () => {
+    const orderId = await dispatchOrder();
+    const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(cashierAToken)).send({
+      collectedAmount: 0, approvalToken: "forged-" + require("crypto").randomBytes(24).toString("hex"),
+    });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("COLLECTION_VARIANCE_APPROVAL_REQUIRED");
   });
 
-  test("مدير الفرع نفسه بيسجّل فرق تحصيل - بيوافق بحسابه على طول من غير approverId", async () => {
+  test("مدير الفرع نفسه بيسجّل فرق تحصيل - بيوافق بحسابه على طول من غير approvalToken", async () => {
     const orderId = await dispatchOrder();
     const res = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(managerAToken)).send({ collectedAmount: 480 });
     expect(res.status).toBe(200);

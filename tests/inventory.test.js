@@ -252,13 +252,20 @@ describe("Negative stock policy: STRICT vs ALLOW_WITH_APPROVAL", () => {
   });
 
   test("ALLOW_WITH_APPROVAL: بموافقة مدير صحيحة البيع بينجح ويتسجل Audit", async () => {
+    const idempotencyKey = require("crypto").randomUUID();
+    const pinRes = await request(app).post("/api/auth/verify-override-pin").set(authed(cashierToken)).send({
+      pin: "1234", branchId, actionType: "INVENTORY_OVERRIDE", targetType: "order_attempt", targetId: idempotencyKey,
+    });
+    expect(pinRes.status).toBe(200);
+    expect(pinRes.body.approverId).toBe(managerId);
+
     const res = await request(app)
       .post("/api/orders")
       .set(authed(cashierToken))
       .send({
         branchId, source: "pos", orderType: "takeaway",
         items: [{ itemId: strictItem.rows[0].id, variantId: strictVariant.rows[0].id, quantity: 1 }],
-        inventoryOverrideApprovedBy: managerId,
+        idempotencyKey, inventoryOverrideApprovalToken: pinRes.body.token,
       });
     expect(res.status).toBe(201);
 

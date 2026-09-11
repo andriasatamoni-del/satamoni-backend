@@ -2211,6 +2211,32 @@ CREATE TABLE approval_requests (
 CREATE INDEX idx_approval_requests_status ON approval_requests(status);
 CREATE INDEX idx_approval_requests_branch ON approval_requests(branch_id);
 
+-- المرحلة 9A-1: موافقة PIN مدير/أدمن اللحظية (خصم كبير/استرجاع طلب/فرق تحصيل سائق) كانت قبل كده بترجع
+-- هوية المدير نفسها (approverId) كدليل الموافقة - أي حد يعرف الـID ده (رقم صغير متسلسل) يقدر يعيد
+-- استخدامه لأي عدد من العمليات الحساسة تانية من غير ما المدير يدخل الـPIN تاني خالص (ثغرة احتيال حقيقية
+-- اتكشفت في تدقيق PHASE 9). دلوقتي verify-override-pin بيرجّع توكن عشوائي غير قابل للتخمين (approval
+-- grant) مربوط صراحة بـ: نوع الإجراء (action_type) + الكيان المستهدف بالظبط (target_type/target_id) +
+-- الفرع - وبيستهلكه (status='USED') مرة واحدة بس بعملية atomic UPDATE...WHERE status='ACTIVE' (نفس نمط
+-- "claim" طابور الطباعة بالظبط - db/print-queue.js) بحيث لو 5 طلبات متزامنة حاولوا يستهلكوا نفس التوكن،
+-- واحد بس ينجح. صالح لمدة قصيرة (10 دقايق افتراضيًا) وبعدين مبيتقبلش. راجع db/approval-engine.js
+CREATE TABLE approval_grants (
+  id            SERIAL PRIMARY KEY,
+  token         TEXT NOT NULL UNIQUE,
+  action_type   TEXT NOT NULL,   -- ORDER_VOID / ORDER_DISCOUNT / INVENTORY_OVERRIDE / DELIVERY_COLLECTION_VARIANCE / EMERGENCY_PURCHASE_DUPLICATE_OVERRIDE
+  target_type   TEXT NOT NULL,   -- order / order_attempt (idempotencyKey - الطلب لسه مش اتسجل وقت طلب الموافقة) / purchase_attempt
+  target_id     TEXT NOT NULL,
+  branch_id     INTEGER REFERENCES branches(id),
+  approved_by   INTEGER NOT NULL REFERENCES users(id),
+  requested_by  INTEGER REFERENCES users(id),
+  status        TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'USED', 'EXPIRED', 'REVOKED')),
+  used_by       INTEGER REFERENCES users(id),
+  used_at       TIMESTAMPTZ,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_approval_grants_token ON approval_grants(token);
+CREATE INDEX idx_approval_grants_lookup ON approval_grants(action_type, target_type, target_id, status);
+
 -- ---------------- نظام الطباعة (طابعات فرع + محطات تحضير + طابور طباعة) ----------------
 -- راجع db/migrations/0015_printing.js للشرح الكامل للفلسفة (فشل الطباعة ميوقفش الطلب أبدًا، التوجيه
 -- Menu Item/Category -> Station -> Printer مش هارد كودد)

@@ -16,7 +16,7 @@ let menuItemId, variantId, inventoryItemId, paymentMethodId;
 beforeAll(async () => {
   const b = await pool.query("INSERT INTO branches (name) VALUES ('فرع 8.57-جست') RETURNING id");
   branchId = b.rows[0].id;
-  await seedUser({ branchId, name: "مدير-8.57", email: "manager-857@jest.test", role: "branch_manager" });
+  await seedUser({ branchId, name: "مدير-8.57", email: "manager-857@jest.test", role: "branch_manager", pin: "1357" });
   managerToken = await login("manager-857@jest.test");
   await seedUser({ name: "أدمن-8.57", email: "admin-857@jest.test", role: "admin" });
   adminToken = await login("admin-857@jest.test");
@@ -73,7 +73,7 @@ describe("PATCH /:id/status مبقاش بيقبل status=cancelled خالص (8.5
 });
 
 describe("إلغاء طلب لسه تحت التحضير/في الطريق بقى لازم يعدّي بـPOST /:id/void (8.57)", () => {
-  test("كاشير من غير approverId - مرفوض 400 (محتاج موافقة مدير الفرع أو الأدمن)", async () => {
+  test("كاشير من غير approvalToken - مرفوض 400 (محتاج موافقة مدير الفرع أو الأدمن)", async () => {
     const orderId = await makeDeliveryOrder(cashierToken);
     const res = await request(app).post(`/api/orders/${orderId}/void`).set(authed(cashierToken)).send({ reason: "عميل غيّر رأيه" });
     expect(res.status).toBe(400);
@@ -84,7 +84,7 @@ describe("إلغاء طلب لسه تحت التحضير/في الطريق بق�
     expect(check.rows[0].voided).toBe(false);
   });
 
-  test("كاشير بموافقة approverId صحيحة (مدير الفرع) - ينجح ويرجّع المخزون والقيد", async () => {
+  test("كاشير بموافقة approvalToken صحيحة (مدير الفرع، عن طريق verify-override-pin) - ينجح ويرجّع المخزون والقيد", async () => {
     const stockBefore = await pool.query(
       "SELECT quantity FROM branch_inventory_stock WHERE branch_id = $1 AND inventory_item_id = $2",
       [branchId, inventoryItemId]
@@ -104,17 +104,22 @@ describe("إلغاء طلب لسه تحت التحضير/في الطريق بق�
     expect(originalEntry.rows.length).toBe(1);
 
     const res = await request(app).post(`/api/orders/${orderId}/void`).set(authed(cashierToken)).send({
-      reason: "عميل غيّر رأيه", approverId: null,
+      reason: "عميل غيّر رأيه", approvalToken: null,
     });
-    // approverId null لازم يترفض برضو - نتأكد الأول من رفض approverId فاضي صراحة
+    // approvalToken null لازم يترفض برضو - نتأكد الأول من رفض approvalToken فاضي صراحة
     expect(res.status).toBe(400);
 
-    // نستخدم مدير الفرع نفسه كـapprover مباشرة (verify-override-pin endpoint اللي بيولّد الـapproverId
-    // ده فعليًا في الاستخدام الحقيقي مختبَر بمكان تاني - هنا بنركّز على إن الـvoid endpoint نفسه بيتحقق
-    // من صحة approverId، مش بس وجوده)
+    // المسار الحقيقي: الكاشير بيطلب موافقة عن طريق verify-override-pin (PIN مدير الفرع)، ده بيرجّع
+    // approval-grant توكن مربوط بالإجراء/الطلب ده بالظبط (single-use) - مش مجرد id مدير قابل لإعادة الاستخدام
     const managerRow = await pool.query("SELECT id FROM users WHERE email = $1", ["manager-857@jest.test"]);
+    const pinRes = await request(app).post("/api/auth/verify-override-pin").set(authed(cashierToken)).send({
+      pin: "1357", branchId, actionType: "ORDER_VOID", targetType: "order", targetId: orderId,
+    });
+    expect(pinRes.status).toBe(200);
+    expect(pinRes.body.approverId).toBe(managerRow.rows[0].id);
+
     const res2 = await request(app).post(`/api/orders/${orderId}/void`).set(authed(cashierToken)).send({
-      reason: "عميل غيّر رأيه", approverId: managerRow.rows[0].id,
+      reason: "عميل غيّر رأيه", approvalToken: pinRes.body.token,
     });
     expect(res2.status).toBe(200);
 
@@ -135,7 +140,7 @@ describe("إلغاء طلب لسه تحت التحضير/في الطريق بق�
     expect(reversalEntry.rows.length).toBe(1);
   });
 
-  test("مدير الفرع بيوافق بحسابه على طول - من غير PIN/approverId خالص", async () => {
+  test("مدير الفرع بيوافق بحسابه على طول - من غير PIN/approvalToken خالص", async () => {
     const orderId = await makeDeliveryOrder(managerToken);
     const res = await request(app).post(`/api/orders/${orderId}/void`).set(authed(managerToken)).send({ reason: "خطأ في التسجيل" });
     expect(res.status).toBe(200);

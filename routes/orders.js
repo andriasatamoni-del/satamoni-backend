@@ -2,7 +2,8 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
-const { requirePermission } = require("../middleware/permissions");
+const { requirePermission, hasPermission } = require("../middleware/permissions");
+const { consumeApprovalGrant } = require("../db/approval-engine");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { postJournalEntry, reverseJournalEntry, resolveCashDestinationAccount, getAccountByCode } = require("../db/accounting-engine");
@@ -145,7 +146,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       source, orderType, tableNumber,
       deliveryAreaId, addressDetails, customerName, customerPhone, customerPhone2,
       distinguishingMark, paymentMethodId, items: rawItems, deliveryFee = 0, discount = 0,
-      discountApprovedBy, idempotencyKey, inventoryOverrideApprovedBy,
+      discountApprovalToken, idempotencyKey, inventoryOverrideApprovalToken,
       loyaltyPointsRedeemed = 0, talabatOrderId, talabatCashCollected = 0,
     } = req.body;
     let branchId = req.body.branchId;
@@ -224,8 +225,9 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
     }
 
     // خصم فوق النسبة المسموحة للكاشير لوحده لازم يبقى معاه موافقة مدير/أدمن اتاكدنا منها بـ PIN
-    // (verify-override-pin) - بنتأكد من صحتها تاني هنا من السيرفر، مش بس بنصدّق الفرونت إند.
-    // فوق حد تاني (discount_manager_max_percent) الموافقة لازم تبقى أدمن بس، مدير الفرع مبيكفيش.
+    // (verify-override-pin) - المرحلة 9A-1: مش بنصدّق هوية حد بعتها بس، التوكن نفسه لازم يكون اتصدر
+    // صراحة لنفس محاولة الطلب دي بالظبط (targetType='order_attempt', targetId=idempotencyKey) وميتستخدمش
+    // مرتين. فوق حد تاني (discount_manager_max_percent) الموافقة لازم تبقى أدمن بس، مدير الفرع مبيكفيش.
     let discountApprover = null;
     if (discount > 0 && subtotal > 0) {
       const settings = await client.query(
@@ -235,47 +237,50 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       const managerMax = Number(settings.rows[0]?.discount_manager_max_percent ?? 0.15);
       const discountRatio = discount / subtotal;
       if (discountRatio > maxUnapproved) {
-        if (!discountApprovedBy) {
+        if (!discountApprovalToken || !idempotencyKey) {
           return res.status(400).json({ error: "الخصم ده محتاج موافقة مدير الفرع أو الأدمن" });
         }
-        const requiresAdminOnly = discountRatio > managerMax;
-        const approver = await client.query(
-          `SELECT id, name, role FROM users
-           WHERE id = $1 AND is_active = TRUE
-             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2 AND NOT $3))`,
-          [discountApprovedBy, branchId, requiresAdminOnly]
-        );
-        if (approver.rows.length === 0) {
-          return res.status(400).json({
-            error: requiresAdminOnly
-              ? "الخصم ده كبير جدًا، محتاج موافقة الأدمن بس"
-              : "الموافقة على الخصم غير صالحة",
+        try {
+          const { approver } = await consumeApprovalGrant(client, {
+            token: discountApprovalToken, actionType: "ORDER_DISCOUNT", targetType: "order_attempt",
+            targetId: idempotencyKey, branchId, usedByUserId: req.user.id,
           });
+          const requiresAdminOnly = discountRatio > managerMax;
+          if (requiresAdminOnly && approver.role !== "admin") {
+            return res.status(400).json({ error: "الخصم ده كبير جدًا، محتاج موافقة الأدمن بس" });
+          }
+          discountApprover = approver;
+        } catch (err) {
+          if (err.code === "APPROVAL_INVALID" || err.code === "APPROVAL_REQUIRED") {
+            return res.status(400).json({ error: err.message });
+          }
+          throw err;
         }
-        discountApprover = approver.rows[0];
       }
     }
 
-    // موافقة تجاوز نقص المخزون (لأصناف سياستها ALLOW_WITH_APPROVAL بس) - نفس نمط موافقة الخصم بالظبط:
-    // اتاكدنا منها هنا كمان (مش بس صدّقنا approverId من الفرونت إند). لو مش موجودة، الطلب لسه ممكن ينجح
-    // عادي طالما مفيش صنف فيه هينزل تحت صفر - هنعرف ده بس لما نحاول الخصم فعليًا تحت
+    // موافقة تجاوز نقص المخزون (لأصناف سياستها ALLOW_WITH_APPROVAL بس) - نفس نمط موافقة الخصم بالظبط
+    // (توكن مربوط بمحاولة الطلب دي بس). لو مش موجودة، الطلب لسه ممكن ينجح عادي طالما مفيش صنف فيه
+    // هينزل تحت صفر - هنعرف ده بس لما نحاول الخصم فعليًا تحت
     let inventoryOverrideApprover = null;
-    if (inventoryOverrideApprovedBy) {
-      const overrideApprover = await client.query(
-        `SELECT id, name FROM users
-         WHERE id = $1 AND is_active = TRUE
-           AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
-        [inventoryOverrideApprovedBy, branchId]
-      );
-      if (overrideApprover.rows.length === 0) {
-        return res.status(400).json({ error: "الموافقة على تجاوز نقص المخزون غير صالحة" });
+    if (inventoryOverrideApprovalToken && idempotencyKey) {
+      try {
+        const { approver } = await consumeApprovalGrant(client, {
+          token: inventoryOverrideApprovalToken, actionType: "INVENTORY_OVERRIDE", targetType: "order_attempt",
+          targetId: idempotencyKey, branchId, usedByUserId: req.user.id,
+        });
+        inventoryOverrideApprover = approver;
+      } catch (err) {
+        if (err.code === "APPROVAL_INVALID" || err.code === "APPROVAL_REQUIRED") {
+          return res.status(400).json({ error: err.message });
+        }
+        throw err;
       }
-      inventoryOverrideApprover = overrideApprover.rows[0];
     }
 
     // المرحلة 8.7: paymentMethodId وهمي (مش موجود في payment_methods) كان بيوصل لحد INSERT ويرمي خطأ
     // FK خام (23503) كـ500 بدل رسالة واضحة - اتكشف بهجوم عدائي حي على /api/orders. نفس نمط التحقق من
-    // discountApprovedBy/inventoryOverrideApprovedBy فوق بالظبط: نتأكد هنا قبل أي حاجة تانية
+    // discountApprovalToken/inventoryOverrideApprovalToken فوق بالظبط: نتأكد هنا قبل أي حاجة تانية
     if (paymentMethodId) {
       const pm = await client.query("SELECT id FROM payment_methods WHERE id = $1", [paymentMethodId]);
       if (pm.rows.length === 0) {
@@ -386,7 +391,7 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
        RETURNING id`,
       [branchId, source || "website", orderType, tableNumber, deliveryAreaId,
        addressDetails, orderType === "delivery" ? (distinguishingMark || null) : null, customerName, customerPhone, paymentMethodId,
-       createdBy, subtotal, deliveryFee, discount, discountApprovedBy || null, total, initialStatus, initialPaymentStatus,
+       createdBy, subtotal, deliveryFee, discount, discountApprover ? discountApprover.id : null, total, initialStatus, initialPaymentStatus,
        loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, idempotencyKey || null, shiftId,
        initialDispatchStatus, vatAmount, source === "talabat" ? (talabatOrderId || null) : null, talabatCashCollectedFinal]
     );
@@ -1213,7 +1218,8 @@ router.post(
 // POST /api/orders/:id/void - إلغاء/استرجاع أي طلب لسه شغال (تحت التحضير/في الطريق) أو مكتمل اتسجل
 // بالغلط - بيرجّعه لحالة "ملغي" (يستبعده من الإيرادات في التقارير زي أي إلغاء) وبيرجّع المخزون اللي كان
 // اتخصم وقته + يعكس قيد البيع المحاسبي. لازم موافقة مدير الفرع/الأدمن دايمًا: لو اللي بيسترجع نفسه مدير
-// فرع/أدمن بيوافق بحسابه على طول، غيره لازم PIN معتمد (approverId من verify-override-pin). حالة التحصيل
+// فرع/أدمن بيوافق بحسابه على طول، غيره لازم توكن موافقة معتمد (approvalToken من verify-override-pin،
+// مربوط بالطلب ده بالظبط - راجع db/approval-engine.js). حالة التحصيل
 // (اتحصّل الفلوس فعليًا ولا لأ) مبتتغيّرش أوتوماتيك هنا - لو الفلوس كانت اتحصّلت فعلاً، ده محتاج تسوية
 // كاش يدوية منفصلة، مش جزء من الاسترجاع نفسه.
 //
@@ -1225,9 +1231,13 @@ router.post(
 router.post(
   "/:id/void",
   requireAuth,
-  requireRole("cashier", "branch_manager", "admin", "callcenter"),
+  // المرحلة 9A-2: requireRole هنا كان معناه إن "orders.cancel"/"orders.void.approve"/"orders.void.request"
+  // (المتاحين للأدمن يمنحهم/يلغيهم فرديًا لأي موظف من شاشة الصلاحيات - المرحلة 8.58) شكلية بالكامل،
+  // مبتأثرش على أي حد فعليًا يقدر يسترجع طلب - أي حد من الأدوار التلاتة كان يقدر يعدّي هنا بغض النظر
+  // عن أي إلغاء فردي. دلوقتي لازم يملك واحدة من الصلاحيات التلاتة دي فعليًا (زي ما بيتوقّع تمامًا)
+  requirePermission("orders.void.request", "orders.cancel", "orders.void.approve"),
   async (req, res) => {
-    const { reason, approverId } = req.body;
+    const { reason, approvalToken } = req.body;
     if (!reason) return res.status(400).json({ error: "لازم سبب الاسترجاع" });
 
     const client = await pool.connect();
@@ -1253,19 +1263,27 @@ router.post(
         return res.status(400).json({ error: "الطلب ده اتلغى أو اتسترجع بالفعل" });
       }
 
+      // المرحلة 9A-2: الموافقة الذاتية (من غير PIN) بقت مربوطة بصلاحية orders.cancel الفعلية (مش دور
+      // "admin"/"branch_manager" مباشرة) - لو أدمن لغى الصلاحية دي عن مدير فرع بعينه، دلوقتي فعليًا
+      // بيتمنع من الاسترجاع الذاتي ولازم يجيب موافقة من مدير/أدمن تاني معاه الصلاحية دي، بالظبط زي ما
+      // شاشة الصلاحيات كانت بتوعد بيه من غير ما تنفّذه فعليًا
       let finalApproverId;
-      if (req.user.role === "admin" || req.user.role === "branch_manager") {
+      if (hasPermission(req.user, "orders.cancel")) {
         finalApproverId = req.user.id;
       } else {
-        if (!approverId) { await client.query("ROLLBACK"); return res.status(400).json({ error: "استرجاع الطلب محتاج موافقة مدير الفرع أو الأدمن" }); }
-        const approver = await client.query(
-          `SELECT id FROM users
-           WHERE id = $1 AND is_active = TRUE
-             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
-          [approverId, order.branch_id]
-        );
-        if (approver.rows.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ error: "الموافقة على الاسترجاع غير صالحة" }); }
-        finalApproverId = approverId;
+        try {
+          const { approver } = await consumeApprovalGrant(client, {
+            token: approvalToken, actionType: "ORDER_VOID", targetType: "order",
+            targetId: order.id, branchId: order.branch_id, usedByUserId: req.user.id,
+          });
+          finalApproverId = approver.id;
+        } catch (err) {
+          await client.query("ROLLBACK");
+          if (err.code === "APPROVAL_INVALID" || err.code === "APPROVAL_REQUIRED") {
+            return res.status(400).json({ error: err.message });
+          }
+          throw err;
+        }
       }
 
       // synced_at بيترجع NULL عمدًا - لو الطلب ده كان اتبعت للمركزي قبل الاسترجاع، لازم يترفع تاني
@@ -1383,7 +1401,7 @@ router.put(
       deliveryAreaId, addressDetails, distinguishingMark,
       customerName, customerPhone, customerPhone2,
       paymentMethodId, items: rawItems,
-      discountApprovedBy, inventoryOverrideApprovedBy, tableNumber,
+      discountApprovalToken, inventoryOverrideApprovalToken, tableNumber,
     } = req.body;
 
     const client = await pool.connect();
@@ -1434,7 +1452,8 @@ router.put(
 
       const subtotal = items.reduce((s, it) => s + it.lineTotal, 0);
 
-      // نفس فحص موافقة الخصم بالظبط زي POST / - مبني على القيم الجديدة بعد التعديل
+      // نفس فحص موافقة الخصم بالظبط زي POST / - مبني على القيم الجديدة بعد التعديل. المرحلة 9A-1:
+      // هنا الطلب أصلًا موجود، فالتوكن بيتربط بمعرّف الطلب نفسه (target_type='order') مش idempotencyKey
       let discountApprover = null;
       if (discount > 0 && subtotal > 0) {
         const settings = await client.query(
@@ -1444,40 +1463,46 @@ router.put(
         const managerMax = Number(settings.rows[0]?.discount_manager_max_percent ?? 0.15);
         const discountRatio = discount / subtotal;
         if (discountRatio > maxUnapproved) {
-          if (!discountApprovedBy) {
+          if (!discountApprovalToken) {
             await client.query("ROLLBACK");
             return res.status(400).json({ error: "الخصم ده محتاج موافقة مدير الفرع أو الأدمن" });
           }
-          const requiresAdminOnly = discountRatio > managerMax;
-          const approver = await client.query(
-            `SELECT id, name, role FROM users
-             WHERE id = $1 AND is_active = TRUE
-               AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2 AND NOT $3))`,
-            [discountApprovedBy, order.branch_id, requiresAdminOnly]
-          );
-          if (approver.rows.length === 0) {
-            await client.query("ROLLBACK");
-            return res.status(400).json({
-              error: requiresAdminOnly ? "الخصم ده كبير جدًا، محتاج موافقة الأدمن بس" : "الموافقة على الخصم غير صالحة",
+          try {
+            const { approver } = await consumeApprovalGrant(client, {
+              token: discountApprovalToken, actionType: "ORDER_DISCOUNT", targetType: "order",
+              targetId: order.id, branchId: order.branch_id, usedByUserId: req.user.id,
             });
+            const requiresAdminOnly = discountRatio > managerMax;
+            if (requiresAdminOnly && approver.role !== "admin") {
+              await client.query("ROLLBACK");
+              return res.status(400).json({ error: "الخصم ده كبير جدًا، محتاج موافقة الأدمن بس" });
+            }
+            discountApprover = approver;
+          } catch (err) {
+            await client.query("ROLLBACK");
+            if (err.code === "APPROVAL_INVALID" || err.code === "APPROVAL_REQUIRED") {
+              return res.status(400).json({ error: err.message });
+            }
+            throw err;
           }
-          discountApprover = approver.rows[0];
         }
       }
 
       let inventoryOverrideApprover = null;
-      if (inventoryOverrideApprovedBy) {
-        const overrideApprover = await client.query(
-          `SELECT id, name FROM users
-           WHERE id = $1 AND is_active = TRUE
-             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
-          [inventoryOverrideApprovedBy, order.branch_id]
-        );
-        if (overrideApprover.rows.length === 0) {
+      if (inventoryOverrideApprovalToken) {
+        try {
+          const { approver } = await consumeApprovalGrant(client, {
+            token: inventoryOverrideApprovalToken, actionType: "INVENTORY_OVERRIDE", targetType: "order",
+            targetId: order.id, branchId: order.branch_id, usedByUserId: req.user.id,
+          });
+          inventoryOverrideApprover = approver;
+        } catch (err) {
           await client.query("ROLLBACK");
-          return res.status(400).json({ error: "الموافقة على تجاوز نقص المخزون غير صالحة" });
+          if (err.code === "APPROVAL_INVALID" || err.code === "APPROVAL_REQUIRED") {
+            return res.status(400).json({ error: err.message });
+          }
+          throw err;
         }
-        inventoryOverrideApprover = overrideApprover.rows[0];
       }
 
       // ---- رجوع أثر الطلب القديم بالكامل (مخزون + نقاط ولاء + قيد محاسبي) - نفس منطق POST /:id/void ----
@@ -1765,7 +1790,7 @@ router.put(
           finalTableNumber, finalDeliveryAreaId, finalAddressDetails,
           order.order_type === "delivery" ? finalDistinguishingMark : null,
           finalCustomerName, finalCustomerPhone,
-          finalPaymentMethodId, subtotal, deliveryFee, discount, discountApprovedBy || null,
+          finalPaymentMethodId, subtotal, deliveryFee, discount, discountApprover ? discountApprover.id : null,
           total, loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, vatAmount, order.id,
         ]
       );
