@@ -41,19 +41,64 @@ async function setDefaultPrinter(osPrinterName) {
   await execAsync(cmd);
 }
 
-// {html, paperWidthMm, osPrinterName} - بيرمي استثناء لو فشلت الطباعة (الـcaller في index.js مسؤول عن
+// المرحلة 9A-10: قبل كده markPrinted() في index.js كان بيتنادى بمجرد ما window.print() يرجع من غير
+// استثناء - يعني بمجرد ما Chromium يسلّم أمر الطباعة لطابور ويندوز، مش بمجرد ما الورقة تخرج فعليًا من
+// الطابعة. لو الطابعة كانت أوفلاين/الورق خلص/الكابل اتقطع لحظة الإرسال، Chromium برضو بيرجّع نجاح عادي
+// (هو مسؤوليته تسليم الأمر للسبولر بس، مش تأكيد الطباعة الفعلية) - فالـjob كان بيتسجل PRINTED في
+// القاعدة رغم إن مفيش ورقة خرجت خالص، ومحدش كان هيعرف غير لو الكاشير لاحظ بنفسه.
+//
+// الحل جزئين: (1) فحص حالة الطابعة نفسها قبل الإرسال - لو أوفلاين/فيها مشكلة معروفة بالفعل، نرفض
+// المحاولة من الأساس برسالة واضحة بدل فشل غامض بعدين. (2) فحص طابور السبولر بعد الإرسال - لو الـjob
+// لسه عالق فيه بحالة خطأ (ورق خلص أثناء الطباعة، الطابعة اتفصلت لحظة الإرسال...) ده أقرب دليل فعلي
+// متاح لنا إن الطباعة الحقيقية فشلت رغم إن window.print() رجع من غير استثناء. الاتنين بيستخدموا
+// PrintManagement module (Get-Printer/Get-PrintJob) الموجود افتراضيًا في ويندوز 10/11 - مفيش تثبيت إضافي
+async function getPrinterStatus(osPrinterName) {
+  const escaped = osPrinterName.replace(/'/g, "''");
+  const cmd = `powershell -NoProfile -Command "Get-Printer -Name '${escaped}' | Select-Object PrinterStatus, WorkOffline | ConvertTo-Json -Compress"`;
+  const { stdout } = await execAsync(cmd);
+  const trimmed = stdout.trim();
+  return trimmed ? JSON.parse(trimmed) : {};
+}
+
+async function getStuckSpoolerJobs(osPrinterName) {
+  const escaped = osPrinterName.replace(/'/g, "''");
+  const cmd =
+    `powershell -NoProfile -Command "Get-PrintJob -PrinterName '${escaped}' -ErrorAction SilentlyContinue | ` +
+    `Where-Object { $_.JobStatus -match 'Error|PaperOut|PrinterOffline|UserIntervention|Blocked|PaperProblem' } | ` +
+    `Select-Object Id, JobStatus | ConvertTo-Json -Compress"`;
+  const { stdout } = await execAsync(cmd);
+  const trimmed = stdout.trim();
+  if (!trimmed) return [];
+  const parsed = JSON.parse(trimmed);
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+// {html, osPrinterName} - بيرمي استثناء لو فشلت الطباعة فعليًا (الـcaller في index.js مسؤول عن
 // تبليغ الباك إند FAILED وعدم إيقاف باقي الطابور)
 async function printJobContent({ html, osPrinterName }) {
   if (!osPrinterName) throw new Error("الطابعة دي معندهاش اسم نظام تشغيل (os_printer_name) مسجّل - ظبّطها من إعدادات الطباعة");
+
+  const statusBefore = await getPrinterStatus(osPrinterName);
+  if (statusBefore.WorkOffline || (statusBefore.PrinterStatus && statusBefore.PrinterStatus !== "Normal")) {
+    throw new Error(`الطابعة ${osPrinterName} مش جاهزة حاليًا (${statusBefore.PrinterStatus || "أوفلاين"}) - راجعها (ورق/كابل/تشغيل) قبل المحاولة تاني`);
+  }
+
   await setDefaultPrinter(osPrinterName);
   const browser = await getBrowser();
   const page = await browser.newPage();
   try {
     await page.setContent(html, { waitUntil: "load" });
     await page.evaluate(() => window.print());
-    // مفيش dialog نستنى قفوله (kiosk-printing بيطبع صامت فورًا) - بس محتاجين نسيب وقت كافي قبل ما نقفل
-    // الصفحة عشان نضمن إن أمر الطباعة اتبعت فعليًا لطابور ويندوز قبل ما ننتقل للـjob اللي بعده
+    // مفيش dialog نستنى قفوله (kiosk-printing بيطبع صامت فورًا) - بس محتاجين نسيب وقت كافي قبل ما نتحقق
+    // من السبولر عشان نضمن إن أمر الطباعة اتسلّم فعليًا لطابور ويندوز الأول
     await new Promise((r) => setTimeout(r, 2000));
+
+    const stuckJobs = await getStuckSpoolerJobs(osPrinterName);
+    if (stuckJobs.length > 0) {
+      throw new Error(
+        `أمر الطباعة عالق في طابور ${osPrinterName} بحالة خطأ (${stuckJobs.map((j) => j.JobStatus).join(", ")}) - الورقة متأكدناش إنها خرجت فعليًا`
+      );
+    }
   } finally {
     await page.close();
   }
