@@ -97,7 +97,7 @@ router.post("/preview", requirePermission("inventory.count"), async (req, res) =
 // فعليًا. سطور الفرق = صفر بتتجاهل تمامًا (مش بتتسجل). chargeType='employee' مسموح للعجز بس - الزيادة
 // مالهاش "مسؤول" يتحمّلها، دايمًا بترحّل لحساب محاسبي (زيادة تخصم 5300/تزوّد 1400 - نفس منطق reconcile)
 router.post("/", requirePermission("inventory.count"), async (req, res) => {
-  const { branchId, notes, lines } = req.body;
+  const { branchId, notes, lines, idempotencyKey } = req.body;
   if (!branchId || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ error: "بيانات ناقصة" });
   }
@@ -119,9 +119,27 @@ router.post("/", requirePermission("inventory.count"), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // المرحلة 9A-6: لو العميل بعت نفس الطلب مرتين (retry شبكة/دبل كليك) بنفس المفتاح، بيرجّع نفس جلسة
+    // الجرد الأصلية بسطورها من غير ما يعيد التسجيل (فرق مضاعف + قيد محاسبي مضاعف). الفحص هنا قبل أي
+    // شغل تاني عشان الطلب المكرر يترد بسرعة من غير ما يعيد قفل/معالجة كل سطر تاني
+    if (idempotencyKey) {
+      const existing = await client.query("SELECT id FROM stocktakes WHERE idempotency_key = $1", [idempotencyKey]);
+      if (existing.rows.length > 0) {
+        await client.query("ROLLBACK");
+        const existingId = existing.rows[0].id;
+        const headerRes = await pool.query("SELECT * FROM stocktakes WHERE id = $1", [existingId]);
+        const linesRes = await pool.query("SELECT * FROM stocktake_lines WHERE stocktake_id = $1 ORDER BY id", [existingId]);
+        return res.status(200).json({
+          id: existingId, branchId: headerRes.rows[0].branch_id,
+          totalVarianceValue: Number(headerRes.rows[0].total_variance_value), lines: linesRes.rows, duplicate: true,
+        });
+      }
+    }
+
     const stocktakeRes = await client.query(
-      `INSERT INTO stocktakes (branch_id, created_by, notes) VALUES ($1, $2, $3) RETURNING id`,
-      [branchId, req.user.id, notes || null]
+      `INSERT INTO stocktakes (branch_id, created_by, notes, idempotency_key) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [branchId, req.user.id, notes || null, idempotencyKey || null]
     );
     const stocktakeId = stocktakeRes.rows[0].id;
 
@@ -323,7 +341,7 @@ router.get("/:id", requirePermission("inventory.view"), async (req, res) => {
 // (delta) بين آخر كمية فعلية معتمدة والكمية الصح الجديدة، وبيترحّل بحركة مخزون وقيد محاسبي مستقلين خاصين
 // بيه. ممكن تعمل أكتر من تصحيح لنفس السطر بمرور الوقت لو لزم الأمر
 router.post("/:id/lines/:lineId/correct", requirePermission("inventory.count"), async (req, res) => {
-  const { correctedActualQuantity, reason, chargeType, chargeAccountCode, chargeEmployeeId } = req.body;
+  const { correctedActualQuantity, reason, chargeType, chargeAccountCode, chargeEmployeeId, idempotencyKey } = req.body;
   if (correctedActualQuantity === undefined || correctedActualQuantity === null || Number(correctedActualQuantity) < 0) {
     return res.status(400).json({ error: "الكمية الصح مطلوبة ولازم تكون رقم موجب" });
   }
@@ -334,6 +352,19 @@ router.post("/:id/lines/:lineId/correct", requirePermission("inventory.count"), 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // المرحلة 9A-6: نفس فكرة idempotency جلسة الجرد فوق - retry شبكة/دبل كليك بنفس المفتاح بيرجّع
+    // نفس سجل التصحيح الأصلي من غير ما يسجّل delta تاني فوقه غلط
+    if (idempotencyKey) {
+      const existingCorrection = await client.query(
+        "SELECT * FROM stocktake_line_corrections WHERE idempotency_key = $1", [idempotencyKey]
+      );
+      if (existingCorrection.rows.length > 0) {
+        await client.query("ROLLBACK");
+        return res.status(200).json({ ...existingCorrection.rows[0], duplicate: true });
+      }
+    }
+
     const lineRes = await client.query(
       `SELECT l.*, s.branch_id FROM stocktake_lines l JOIN stocktakes s ON s.id = l.stocktake_id
        WHERE l.id = $1 AND l.stocktake_id = $2 FOR UPDATE OF l`,
@@ -437,11 +468,12 @@ router.post("/:id/lines/:lineId/correct", requirePermission("inventory.count"), 
     const correctionRes = await client.query(
       `INSERT INTO stocktake_line_corrections
         (stocktake_line_id, previous_actual_quantity, corrected_actual_quantity, delta_quantity,
-         unit_cost, delta_value, reason, charge_type, charge_account_code, charge_employee_id, inventory_movement_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+         unit_cost, delta_value, reason, charge_type, charge_account_code, charge_employee_id, inventory_movement_id, created_by, idempotency_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [
         line.id, previousActualQuantity, newActual, deltaQuantity,
         unitCost, deltaValue, reason || null, effectiveChargeType, resolvedAccountCode, resolvedEmployeeId, movement.id, req.user.id,
+        idempotencyKey || null,
       ]
     );
 

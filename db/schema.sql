@@ -1699,9 +1699,14 @@ CREATE TABLE stocktakes (
   -- مجموع قيمة كل الفروق (سالب = عجز صافي، موجب = زيادة صافية) - لقطة وقت الجرد، مش محسوبة لحظيًا،
   -- عشان شاشة السجل تعرضها بسرعة من غير ما تجمّع كل السطور في كل مرة
   total_variance_value  NUMERIC NOT NULL DEFAULT 0,
-  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- المرحلة 9A-6: لو العميل بعت نفس الطلب مرتين (retry شبكة/دبل كليك) بنفس المفتاح، بيرجّع نفس جلسة
+  -- الجرد الأصلية من غير ما يسجّلها تاني (فرق مضاعف + قيد محاسبي مضاعف) - نفس نمط idempotency_key
+  -- الموجود أصلًا في purchase_orders/goods_receipts
+  idempotency_key       TEXT
 );
 CREATE INDEX idx_stocktakes_branch ON stocktakes(branch_id, created_at DESC);
+CREATE UNIQUE INDEX idx_stocktakes_idempotency ON stocktakes(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE stocktake_lines (
   id                     SERIAL PRIMARY KEY,
@@ -1742,9 +1747,12 @@ CREATE TABLE stocktake_line_corrections (
   charge_employee_id        INTEGER REFERENCES employees(id),
   inventory_movement_id     INTEGER REFERENCES inventory_movements(id),
   created_by                INTEGER REFERENCES users(id),
-  created_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- المرحلة 9A-6: نفس فكرة stocktakes.idempotency_key فوق - لتصحيح سطر بدل جلسة كاملة
+  idempotency_key           TEXT
 );
 CREATE INDEX idx_stocktake_line_corrections_line ON stocktake_line_corrections(stocktake_line_id);
+CREATE UNIQUE INDEX idx_stocktake_line_corrections_idempotency ON stocktake_line_corrections(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE payroll_adjustments (
   id              SERIAL PRIMARY KEY,

@@ -304,9 +304,13 @@ router.patch("/stock-thresholds", requireAuth, stockManagers, async (req, res) =
 
 // POST /api/inventory/reconcile - جرد فعلي: تدخل الكمية الحقيقية اللي عددتها، والسيستم
 // بيحسب الفرق عن رصيده الحالي ويسجله تلقائي (بدل ما تحسب الفرق بنفسك)
-// {branchId, inventoryItemId, actualQuantity, notes}
+// {branchId, inventoryItemId, actualQuantity, notes, idempotencyKey?}
+//
+// المرحلة 9A-6: idempotencyKey اختياري - نفس نمط /waste بالظبط (بتمرّره لـpostInventoryMovement اللي
+// أصلًا بيتحقق منه قبل أي كتابة - راجع db/inventory-ledger.js). retry شبكة/دبل كليك بنفس المفتاح
+// بيرجّع نفس الحركة الأصلية من غير ما يسجّل فرق مضاعف + قيد محاسبي مضاعف
 router.post("/reconcile", requireAuth, stockManagers, async (req, res) => {
-  const { branchId, inventoryItemId, actualQuantity, notes } = req.body;
+  const { branchId, inventoryItemId, actualQuantity, notes, idempotencyKey } = req.body;
   if (!branchId || !inventoryItemId || actualQuantity === undefined) {
     return res.status(400).json({ error: "بيانات ناقصة" });
   }
@@ -335,35 +339,42 @@ router.post("/reconcile", requireAuth, stockManagers, async (req, res) => {
     const previousQuantity = current.rows.length > 0 ? Number(current.rows[0].quantity) : 0;
     const variance = Number(actualQuantity) - previousQuantity;
 
+    let duplicate = false;
     if (variance !== 0) {
       const reconcileNote = `جرد: كان ${previousQuantity}، الفعلي ${actualQuantity}` + (notes ? ` - ${notes}` : "");
-      const { movement } = await postInventoryMovement(client, {
+      const movementResult = await postInventoryMovement(client, {
         branchId, inventoryItemId, quantity: variance, movementType: "STOCK_COUNT",
-        notes: reconcileNote, userId: req.user.id, negativeStockOverrideApproved: true,
+        notes: reconcileNote, userId: req.user.id, negativeStockOverrideApproved: true, idempotencyKey,
       });
+      const { movement } = movementResult;
+      duplicate = movementResult.duplicate;
       // المرحلة 4B: فرق الجرد الفعلي بيترحّل بنفس منطق التسوية اليدوية (5300/1400) - عجز (سالب)
       // بيزوّد 5300، وجود زيادة فعلية عن المسجّل (موجب) بيقلل 5300
-      if (movement.total_cost != null && Number(movement.total_cost) > 0) {
-        const adjustmentAccount = await getAccountByCode(client, "5300");
-        const inventoryAccount = await getAccountByCode(client, "1400");
-        const isIncrease = variance > 0;
-        await postJournalEntry(client, {
-          entryDate: movement.business_date, description: "فرق جرد فعلي",
-          sourceType: "stock_count", sourceId: movement.id, branchId,
-          lines: isIncrease
-            ? [{ accountId: inventoryAccount.id, debit: Number(movement.total_cost) }, { accountId: adjustmentAccount.id, credit: Number(movement.total_cost) }]
-            : [{ accountId: adjustmentAccount.id, debit: Number(movement.total_cost) }, { accountId: inventoryAccount.id, credit: Number(movement.total_cost) }],
-          idempotencyKey: `stock-count-${movement.id}`, userId: req.user.id,
+      // المرحلة 9A-6: لو الحركة دي تكرار (idempotencyKey اتكرر) القيد المحاسبي واللوج اتسجلوا بالفعل
+      // مع المحاولة الأصلية - مش بنعيدهم تاني
+      if (!duplicate) {
+        if (movement.total_cost != null && Number(movement.total_cost) > 0) {
+          const adjustmentAccount = await getAccountByCode(client, "5300");
+          const inventoryAccount = await getAccountByCode(client, "1400");
+          const isIncrease = variance > 0;
+          await postJournalEntry(client, {
+            entryDate: movement.business_date, description: "فرق جرد فعلي",
+            sourceType: "stock_count", sourceId: movement.id, branchId,
+            lines: isIncrease
+              ? [{ accountId: inventoryAccount.id, debit: Number(movement.total_cost) }, { accountId: adjustmentAccount.id, credit: Number(movement.total_cost) }]
+              : [{ accountId: adjustmentAccount.id, debit: Number(movement.total_cost) }, { accountId: inventoryAccount.id, credit: Number(movement.total_cost) }],
+            idempotencyKey: `stock-count-${movement.id}`, userId: req.user.id,
+          });
+        }
+        await logAudit(client, {
+          branchId, userId: req.user.id, action: "INVENTORY_COUNT", entityType: "inventory_item", entityId: inventoryItemId,
+          oldValues: { quantity: previousQuantity }, newValues: { quantity: Number(actualQuantity) },
+          metadata: { variance, notes }, req,
         });
       }
-      await logAudit(client, {
-        branchId, userId: req.user.id, action: "INVENTORY_COUNT", entityType: "inventory_item", entityId: inventoryItemId,
-        oldValues: { quantity: previousQuantity }, newValues: { quantity: Number(actualQuantity) },
-        metadata: { variance, notes }, req,
-      });
     }
     await client.query("COMMIT");
-    res.status(201).json({ previousQuantity, actualQuantity: Number(actualQuantity), variance });
+    res.status(duplicate ? 200 : 201).json({ previousQuantity, actualQuantity: Number(actualQuantity), variance, duplicate });
   } catch (err) {
     await client.query("ROLLBACK");
     if (err.code === "INSUFFICIENT_STOCK") return res.status(400).json({ error: err.message });
