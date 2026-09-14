@@ -8,6 +8,7 @@ const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, get
 const { computePayrollSummary, toCents } = require("../services/payroll-engine");
 const { recordEmployeeHistoryChanges } = require("../db/employee-history");
 const { parsePayrollWorkbook, normalizeArabicName } = require("../db/payroll-excel-import");
+const { checkTerminationBlockers, applyTerminationCascade } = require("../db/employee-termination");
 
 // ملف الرواتب الشهري نفسه محدود الحجم جدًا (ملف Excel واحد لكل شهر) - 20MB سقف سخي كفاية ومانع لأي حمل زيادة
 const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -137,6 +138,9 @@ router.post("/employees", async (req, res) => {
 // المرحلة 4D: isActive القديم لسه شغال (توافق رجعي) - بيتترجم لـstatus داخليًا لو status مش متبعت صراحة
 // معاه؛ status بقى مصدر الحقيقة الفعلي (trigger على مستوى القاعدة بيشتق is_active منه دايمًا - انظر
 // db/schema.sql). أي تغيير على department/jobTitle/restrictedBranchId/status بيتسجل في employee_history
+// المرحلة 9A-4: نفس كاسكيد الإنهاء بالظبط اللي في routes/hr.js PATCH /employees/:id - المسار ده
+// (isActive:false -> status='terminated') بوابة تانية لنفس الفعل (توافق رجعي - راجع تعليق 4D فوق)،
+// فكان لازم يتغطى بنفس الفحص/التعطيل، وإلا حد يقدر يتفادى كل ضمانات 9A-4 لو استخدم المسار ده بدل hr.js
 router.patch("/employees/:id", async (req, res) => {
   const { id } = req.params;
   const before = await pool.query("SELECT * FROM employees WHERE id = $1", [id]);
@@ -167,6 +171,23 @@ router.patch("/employees/:id", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const lockedBefore = await client.query("SELECT * FROM employees WHERE id = $1 FOR UPDATE", [id]);
+    const isTerminating = body.status === "terminated" && lockedBefore.rows[0].status !== "terminated";
+    let terminationCascade = null;
+    let acknowledgedBlockers = null;
+    if (isTerminating) {
+      const { blockers, driver } = await checkTerminationBlockers(client, lockedBefore.rows[0]);
+      if (blockers.length > 0 && body.acknowledgeBlockers !== true) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "فيه بنود معلّقة لازم تراجعها قبل إنهاء خدمة الموظف - لو متأكد، ابعت الطلب تاني مع acknowledgeBlockers:true",
+          blockers,
+        });
+      }
+      acknowledgedBlockers = blockers;
+      terminationCascade = await applyTerminationCascade(client, { employee: lockedBefore.rows[0], driver, actorUserId: req.user.id });
+    }
+
     const result = await client.query(`UPDATE employees SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`, values);
     if (result.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الموظف مش موجود" }); }
     await recordEmployeeHistoryChanges(client, {
@@ -178,8 +199,16 @@ router.patch("/employees/:id", async (req, res) => {
       userId: req.user.id, action: "EMPLOYEE_UPDATED", entityType: "employee", entityId: Number(id),
       oldValues: before.rows[0], newValues: result.rows[0], req,
     });
+    if (isTerminating) {
+      await logAudit(client, {
+        userId: req.user.id, action: "EMPLOYEE_TERMINATION_CASCADE", entityType: "employee", entityId: Number(id),
+        newValues: terminationCascade,
+        metadata: { acknowledgedBlockerCodes: acknowledgedBlockers.map((b) => b.code), blockersFound: acknowledgedBlockers.length },
+        req,
+      });
+    }
     await client.query("COMMIT");
-    res.json(result.rows[0]);
+    res.json({ ...result.rows[0], terminationCascade: terminationCascade || undefined });
   } catch (err) {
     await client.query("ROLLBACK");
     if (err.code === "23505") return res.status(409).json({ error: "كود الموظف ده مستخدم بالفعل" });

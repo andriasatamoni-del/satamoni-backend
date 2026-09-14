@@ -56,7 +56,7 @@ describe("عدائي: التلاعب بالسعر - العميل بيبعت unit
 });
 
 describe("عدائي: تخطي حد الخصم غير المعتمد بدون موافقة صحيحة", () => {
-  test("خصم كبير (>10% الافتراضي) من غير discountApprovedBy - مرفوض", async () => {
+  test("خصم كبير (>10% الافتراضي) من غير discountApprovalToken - مرفوض", async () => {
     const res = await request(app).post("/api/orders").set(authed(cashierToken)).send({
       branchId: branchA, source: "pos", orderType: "takeaway", paymentMethodId: cashPmId,
       customerPhone: uniquePhone("031"),
@@ -66,25 +66,33 @@ describe("عدائي: تخطي حد الخصم غير المعتمد بدون م
     expect(res.status).toBe(400);
   });
 
-  test("محاولة تمرير discountApprovedBy = الكاشير نفسه (بدل مدير/أدمن حقيقي) - مرفوضة", async () => {
-    const cashierRow = await pool.query("SELECT id FROM users WHERE email = 'cashier87adv@jest.test'");
+  test("توكن موافقة مزوّر (مش صادر من verify-override-pin أصلاً) - مرفوضة", async () => {
+    const idempotencyKey = require("crypto").randomUUID();
     const res = await request(app).post("/api/orders").set(authed(cashierToken)).send({
       branchId: branchA, source: "pos", orderType: "takeaway", paymentMethodId: cashPmId,
       customerPhone: uniquePhone("032"),
       items: [{ itemId: pizzaItemId, variantId: pizzaVariantId, quantity: 1, modifiers: [] }],
-      discount: 50, discountApprovedBy: cashierRow.rows[0].id,
+      discount: 50, idempotencyKey,
+      discountApprovalToken: "forged-" + require("crypto").randomBytes(24).toString("hex"),
     });
     expect(res.status).toBe(400);
   });
 
-  test("موافقة مدير فرع تاني (مش فرع الطلب) - مرفوضة", async () => {
+  test("موافقة مدير فرع تاني (مش فرع الطلب) - مرفوضة حتى بتوكن حقيقي صادر لفرعه هو", async () => {
     const branchB = (await pool.query("INSERT INTO branches (name) VALUES ('فرع-8.7-عدائي-B') RETURNING id")).rows[0];
-    const managerBId = await seedUser({ branchId: branchB.id, name: "مدير-فرع-تاني-8.7", email: "managerB87adv@jest.test", role: "branch_manager" });
+    await seedUser({ branchId: branchB.id, name: "مدير-فرع-تاني-8.7", email: "managerB87adv@jest.test", role: "branch_manager", pin: "7799" });
+    const idempotencyKey = require("crypto").randomUUID();
+    // مدير فرع B بيطلب موافقة موصوفة على إنها لفرعه هو (B) - التوكن هيتربط بفرع B مش A
+    const pinRes = await request(app).post("/api/auth/verify-override-pin").set(authed(cashierToken)).send({
+      pin: "7799", branchId: branchB.id, actionType: "ORDER_DISCOUNT", targetType: "order_attempt", targetId: idempotencyKey,
+    });
+    expect(pinRes.status).toBe(200);
+    // بنحاول نستخدم نفس التوكن ده في طلب فرع A - لازم يترفض لأنه مربوط بفرع مختلف
     const res = await request(app).post("/api/orders").set(authed(cashierToken)).send({
       branchId: branchA, source: "pos", orderType: "takeaway", paymentMethodId: cashPmId,
       customerPhone: uniquePhone("033"),
       items: [{ itemId: pizzaItemId, variantId: pizzaVariantId, quantity: 1, modifiers: [] }],
-      discount: 50, discountApprovedBy: managerBId,
+      discount: 50, idempotencyKey, discountApprovalToken: pinRes.body.token,
     });
     expect(res.status).toBe(400);
   });
@@ -110,7 +118,7 @@ describe("عدائي: طريقة دفع غير موجودة/مزوّرة", () =>
   // المرحلة 8.7: باج حقيقي اتكشف هنا - paymentMethodId وهمي كان بيوصل لـINSERT ويرمي خطأ FK خام
   // (23503 - foreign key violation) كـ500 بدل رسالة عربي واضحة (400). الإصلاح في routes/orders.js:
   // تحقق صريح إن paymentMethodId موجود فعلاً في payment_methods قبل أي BEGIN/INSERT، بنفس نمط التحقق
-  // من discountApprovedBy/inventoryOverrideApprovedBy الموجود أصلًا فوقه مباشرة
+  // من discountApprovalToken/inventoryOverrideApprovalToken الموجود أصلًا فوقه مباشرة
   test("paymentMethodId لـID مش موجود في الجدول - 400 واضح، مش 500 خام، ومفيش أي طلب اتسجل جزئيًا", async () => {
     const phone = uniquePhone("035");
     const res = await request(app).post("/api/orders").set(authed(cashierToken)).send({

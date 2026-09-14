@@ -8,6 +8,7 @@ const { postInventoryMovement, consumeFromBatches } = require("../db/inventory-l
 const { explodeRecipeConsumption, computeRecipeCost } = require("../db/recipe-engine");
 const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
 const { generateBatchNumber } = require("../db/batch-numbering");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 // POST /api/production - أمر تصنيع جديد (DRAFT) - بياخد الوصفة من النسخة النشطة حاليًا للصنف الناتج
 // {branchId, recipeId, plannedQuantity, productionDate?, batchNumber?, expiryDate?, notes?}
@@ -351,7 +352,7 @@ router.post("/:id/complete", requireAuth, requirePermission("production.complete
         entryLines.push({ accountId: varianceAccount.id, debit: -varianceAmount, description: `فرق تكلفة إنتاج${incompleteNote}` });
       }
       await postJournalEntry(client, {
-        entryDate: new Date().toISOString().slice(0, 10), description: `تصنيع - أمر #${order.id}`,
+        entryDate: getCairoBusinessDate(), description: `تصنيع - أمر #${order.id}`,
         sourceType: "production_order", sourceId: order.id, branchId: order.branch_id,
         lines: entryLines, idempotencyKey: `production-complete-${order.id}`, userId: req.user.id,
       });

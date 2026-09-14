@@ -8,6 +8,7 @@
 //   UNASSIGNED -> ASSIGNED -> OUT_FOR_DELIVERY -> DELIVERED
 //                                            \-> FAILED -> (UNASSIGNED لإعادة الجدولة) أو RETURNED (عن طريق POST /:id/void الموسّع)
 const { logAudit } = require("./audit");
+const { getCairoBusinessDate } = require("./business-date");
 const {
   postJournalEntry, getOrCreateBranchCashAccount, getOrCreateDriverCustodyAccount, getAccountByCode,
 } = require("./accounting-engine");
@@ -178,7 +179,7 @@ async function markDelivered(client, { order, actorUserId, collectedAmount, isDr
       lines.push({ accountId: otherExpense.id, debit: -gap, branchId: order.branch_id, description: "عجز كاش عند التسليم" });
     }
     await postJournalEntry(client, {
-      entryDate: new Date().toISOString().slice(0, 10),
+      entryDate: getCairoBusinessDate(),
       description: `تحصيل دليفري كاش - طلب #${order.id}`,
       sourceType: "delivery_collection", sourceId: order.id, branchId: order.branch_id,
       lines, idempotencyKey: `delivery-collection-${order.id}`, userId: actorUserId,
@@ -379,7 +380,7 @@ async function createSettlement(client, { driverId, branchId, settledByUserId, a
     lines.push({ accountId: otherExpense.id, debit: -handoverVariance, branchId, description: "عجز كاش عند تسليم السائق" });
   }
   await postJournalEntry(client, {
-    entryDate: new Date().toISOString().slice(0, 10),
+    entryDate: getCairoBusinessDate(),
     description: `تسوية كاش سائق - ${summary.orderCount} طلب`,
     sourceType: "driver_settlement", sourceId: settlement.id, branchId,
     lines, idempotencyKey: `driver-settlement-${settlement.id}`, userId: settledByUserId,

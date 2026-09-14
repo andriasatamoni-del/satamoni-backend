@@ -4,6 +4,7 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { computeConsumptionBreakdown, aggregateBreakdown } = require("../db/food-cost-engine");
+const { getCairoBusinessDate } = require("../db/business-date");
 const { convertQuantity } = require("../db/unit-conversion");
 const { computeProductionPlan, computeRawMaterialRequirement } = require("../db/production-planning");
 const {
@@ -678,8 +679,8 @@ router.get("/item-performance", requireAuth, canSeeReports, async (req, res) => 
 // للتغيير صراحة بـfrom/to لمراجعة أوسع)
 router.get("/catalog", requireAuth, canSeeReports, async (req, res) => {
   const range = resolveDateRange(req.query) || {
-    from: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-    to: new Date().toISOString().slice(0, 10),
+    from: getCairoBusinessDate(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)),
+    to: getCairoBusinessDate(),
   };
   let branchId = req.query.branchId ? Number(req.query.branchId) : null;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
@@ -2125,7 +2126,7 @@ router.get("/vat-summary", requireAuth, canSeeAccounting, async (req, res) => {
 
 // GET /api/reports/trial-balance?asOf=&branchId= - ميزان المراجعة: كل حساب ورصيده حتى تاريخ معيّن
 router.get("/trial-balance", requireAuth, canSeeAccounting, async (req, res) => {
-  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const asOf = req.query.asOf || getCairoBusinessDate();
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
   try {
     const result = await pool.query(
@@ -2170,7 +2171,7 @@ router.get("/trial-balance", requireAuth, canSeeAccounting, async (req, res) => 
 // المستحقة 2400 اللي بيترحّل بقيد واحد مجمّع مش مقسّم على الفروع من المرحلة 4C) - فلترة الميزانية على
 // فرع واحد هتوريه "غير متزنة" غلط لأسباب مالها علاقة بأي خطأ فعلي، ده هيلخبط مدير الفرع من غير داعي
 router.get("/balance-sheet", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
-  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const asOf = req.query.asOf || getCairoBusinessDate();
   const branchId = req.query.branchId ? Number(req.query.branchId) : null;
   try {
     const balancesRes = await pool.query(
@@ -2239,7 +2240,7 @@ router.get("/general-ledger", requireAuth, canSeeAccounting, async (req, res) =>
   if (!from) {
     const defaultFrom = to ? new Date(to) : new Date();
     defaultFrom.setFullYear(defaultFrom.getFullYear() - 1);
-    from = defaultFrom.toISOString().slice(0, 10);
+    from = getCairoBusinessDate(defaultFrom);
   }
   try {
     const accountRes = await pool.query("SELECT * FROM accounts WHERE id = $1", [accountId]);
@@ -2402,7 +2403,7 @@ router.get("/opex-by-branch", requireAuth, requireRole("admin", "accountant"), m
 
 // GET /api/reports/cash-report?asOf=&branchId= - أرصدة حسابات الكاش (المركزي + كل فرع) حتى تاريخ معيّن
 router.get("/cash-report", requireAuth, canSeeAccounting, async (req, res) => {
-  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const asOf = req.query.asOf || getCairoBusinessDate();
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
   try {
     const accountsRes = await pool.query(
@@ -2460,7 +2461,7 @@ router.get("/supplier-balances", requireAuth, canSeeSupplierAccounting, async (r
 // GET /api/reports/ap-aging?asOf= - أعمار ديون الموردين (Accounts Payable Aging) - FIFO بين
 // الفواتير (GRN) والسدادات لكل مورد، مقسّمة على 0-30/31-60/61-90/90+ يوم
 router.get("/ap-aging", requireAuth, canSeeSupplierAccounting, async (req, res) => {
-  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const asOf = req.query.asOf || getCairoBusinessDate();
   try {
     const result = await pool.query(
       `SELECT jel.reference_id AS supplier_id, s.name AS supplier_name, je.entry_date, jel.debit, jel.credit
@@ -2491,7 +2492,7 @@ router.get("/ap-aging", requireAuth, canSeeSupplierAccounting, async (req, res) 
 router.get("/supplier-statement", requireAuth, canSeeSupplierAccounting, async (req, res) => {
   const supplierId = Number(req.query.supplierId);
   if (!supplierId) return res.status(400).json({ error: "لازم تحدد supplierId", code: "INVALID_PARAMETER" });
-  const to = req.query.to || new Date().toISOString().slice(0, 10);
+  const to = req.query.to || getCairoBusinessDate();
   const from = req.query.from || "1970-01-01";
   try {
     const supplierRes = await pool.query("SELECT id, name FROM suppliers WHERE id = $1", [supplierId]);

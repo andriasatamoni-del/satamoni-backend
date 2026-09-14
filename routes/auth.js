@@ -6,6 +6,7 @@ const pool = require("../db/pool");
 const { requireAuth } = require("../middleware/auth");
 const { ROLE_PERMISSIONS } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
+const { issueApprovalGrant, APPROVER_PERMISSION_BY_ACTION } = require("../db/approval-engine");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_TTL = "12h";
@@ -129,13 +130,23 @@ function recordPinSuccess(userId) {
   pinAttempts.delete(userId);
 }
 
-// POST /api/auth/verify-override-pin - {pin, branchId?} -> {approverId, approverName}
-// موافقة مدير الفرع/الأدمن بـ PIN من غير ما يسجل خروج ودخول تاني على جهاز الكاشير - مستخدمة
-// للخصومات اللي فوق الحد المسموح واسترجاع الطلبات المكتملة (Void). أي موظف مسجل دخول يقدر يطلبها،
-// بس بترجع موافقة صحيحة بس لو الـ PIN فعلاً بتاع مدير فرع (نفس الفرع) أو أدمن.
+// POST /api/auth/verify-override-pin - {pin, branchId?, actionType, targetType, targetId} ->
+// {token, approverId, approverName, expiresAt}
+// المرحلة 9A-1: كانت قبل كده بترجّع هوية المدير (approverId) بس - أي حد يعرفها يقدر يعيد استخدامها
+// لأي عملية حساسة تانية من غير ما المدير يدخل الـPIN تاني خالص (ثغرة احتيال حقيقية). دلوقتي لازم تحدد
+// صراحة عايز توافق على إيه بالظبط (actionType) ولإيه (targetType/targetId - مثلًا رقم الطلب، أو
+// idempotencyKey الطلب لو لسه مش اتسجل) - والتوكن اللي بيرجع مش بيشتغل إلا لنفس العملية دي بالظبط،
+// مرة واحدة بس. راجع db/approval-engine.js. أي موظف مسجل دخول يقدر يطلبها، بس بترجع توكن صالح بس لو
+// الـPIN فعلاً بتاع مدير فرع (نفس الفرع) أو أدمن معاه صلاحية الموافقة على actionType ده تحديدًا.
 router.post("/verify-override-pin", requireAuth, async (req, res) => {
-  const { pin, branchId } = req.body;
+  const { pin, branchId, actionType, targetType, targetId } = req.body;
   if (!pin) return res.status(400).json({ error: "لازم تدخل PIN" });
+  if (!actionType || !APPROVER_PERMISSION_BY_ACTION.hasOwnProperty(actionType)) {
+    return res.status(400).json({ error: "نوع الإجراء المطلوب موافقة عليه غير معروف" });
+  }
+  if (!targetType || targetId === undefined || targetId === null || targetId === "") {
+    return res.status(400).json({ error: "لازم تحدد العملية المطلوب الموافقة عليها بالظبط" });
+  }
 
   const lockedSeconds = getPinLockoutSeconds(req.user.id);
   if (lockedSeconds > 0) {
@@ -143,20 +154,19 @@ router.post("/verify-override-pin", requireAuth, async (req, res) => {
   }
 
   try {
-    const candidates = await pool.query(
-      `SELECT id, name, pin_hash FROM users
-       WHERE is_active = TRUE AND pin_hash IS NOT NULL
-         AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $1))`,
-      [branchId || null]
-    );
-    for (const candidate of candidates.rows) {
-      if (await bcrypt.compare(pin, candidate.pin_hash)) {
-        recordPinSuccess(req.user.id);
-        return res.json({ approverId: candidate.id, approverName: candidate.name });
-      }
+    const result = await issueApprovalGrant(pool, {
+      pin, branchId, actionType, targetType, targetId, requestedByUserId: req.user.id,
+    });
+    if (result.error === "PIN_INVALID") {
+      recordPinFailure(req.user.id);
+      return res.status(401).json({ error: "PIN غير صحيح" });
     }
-    recordPinFailure(req.user.id);
-    res.status(401).json({ error: "PIN غير صحيح" });
+    if (result.error === "PERMISSION_DENIED") {
+      recordPinFailure(req.user.id);
+      return res.status(403).json({ error: `${result.approverName} معندوش صلاحية يوافق على الإجراء ده` });
+    }
+    recordPinSuccess(req.user.id);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

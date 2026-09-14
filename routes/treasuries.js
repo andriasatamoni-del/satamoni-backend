@@ -10,6 +10,7 @@ const { requireAuth, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { postJournalEntry } = require("../db/accounting-engine");
 const { logAudit } = require("../db/audit");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 // GET /api/treasuries?branchId= - قايمة خزائن فرع معيّن (رئيسية + دروج الكاشيرية النشطة/التاريخية) +
 // خزائن البنوك (مشتركة، مفيش branch_id). مدير الفرع/المحاسب لفرعهم بس، أدمن لأي فرع أو كل الفروع
@@ -45,10 +46,15 @@ router.get("/", requireAuth, requirePermission("treasuries.view"), async (req, r
 });
 
 // POST /api/treasuries/:id/transfer - تحويل مبلغ من خزينة لخزينة تانية (خزينة رئيسية -> بنك، أو أي
-// اتجاه تاني) - {toTreasuryId, amount, notes?}. مالي بحت (treasuries.transfer)، مش متاح لمدير الفرع
+// اتجاه تاني) - {toTreasuryId, amount, notes?, idempotencyKey?}. مالي بحت (treasuries.transfer)، مش
+// متاح لمدير الفرع
+//
+// المرحلة 9A-6: idempotencyKey اختياري - بيتمرّر مباشرة لـpostJournalEntry اللي أصلًا بيدعمه بالكامل
+// (بيتحقق قبل أي كتابة، وبيرجّع القيد الأصلي لو اتكرر - راجع db/accounting-engine.js). مفيش عمود جديد
+// محتاج هنا، journal_entries.idempotency_key موجود من زمان
 router.post("/:id/transfer", requireAuth, requirePermission("treasuries.transfer"), async (req, res) => {
   const fromId = Number(req.params.id);
-  const { toTreasuryId, amount, notes } = req.body;
+  const { toTreasuryId, amount, notes, idempotencyKey } = req.body;
   if (!toTreasuryId || !amount || Number(amount) <= 0) {
     return res.status(400).json({ error: "لازم خزينة وجهة ومبلغ أكبر من صفر" });
   }
@@ -72,22 +78,25 @@ router.post("/:id/transfer", requireAuth, requirePermission("treasuries.transfer
     }
 
     const je = await postJournalEntry(client, {
-      entryDate: new Date().toISOString().slice(0, 10),
+      entryDate: getCairoBusinessDate(),
       description: `تحويل من ${from.name} لـ${to.name}${notes ? " - " + notes : ""}`,
       sourceType: "treasury_transfer", sourceId: from.id, branchId: from.branch_id || to.branch_id,
       lines: [
         { accountId: to.account_id, debit: Number(amount) },
         { accountId: from.account_id, credit: Number(amount) },
       ],
-      userId: req.user.id,
+      userId: req.user.id, idempotencyKey,
     });
-    await logAudit(client, {
-      branchId: from.branch_id || to.branch_id, userId: req.user.id, action: "TREASURY_TRANSFER",
-      entityType: "treasury", entityId: from.id,
-      newValues: { fromTreasuryId: from.id, toTreasuryId: to.id, amount: Number(amount), notes: notes || null },
-    });
+    // المرحلة 9A-6: قيد مكرر (idempotencyKey اتكرر) - اللوج اتسجل بالفعل مع المحاولة الأصلية
+    if (!je.duplicate) {
+      await logAudit(client, {
+        branchId: from.branch_id || to.branch_id, userId: req.user.id, action: "TREASURY_TRANSFER",
+        entityType: "treasury", entityId: from.id,
+        newValues: { fromTreasuryId: from.id, toTreasuryId: to.id, amount: Number(amount), notes: notes || null },
+      });
+    }
     await client.query("COMMIT");
-    res.status(201).json({ journalEntry: je.entry });
+    res.status(je.duplicate ? 200 : 201).json({ journalEntry: je.entry, duplicate: je.duplicate || false });
   } catch (err) {
     await client.query("ROLLBACK");
     if (err.code === "PERIOD_CLOSED") return res.status(400).json({ error: err.message });

@@ -177,15 +177,18 @@ router.get("/payment-methods", requireAuth, requireRole("admin"), async (req, re
 // POST /api/config/payment-methods - إضافة طريقة دفع جديدة
 // kind: 'cash' (بيتحصّل لحظيًا) | 'card_or_wallet' (فيزا/محفظة/إنستاباي، بيفضل تحت التحصيل) | 'credit' (آجل، تسوية شهرية)
 router.post("/payment-methods", requireAuth, requireRole("admin"), async (req, res) => {
-  const { name, note, kind = "cash", enabled = true } = req.body;
+  const { name, note, kind = "cash", enabled = true, settlementChannel } = req.body;
   if (!name) return res.status(400).json({ error: "لازم اسم طريقة الدفع" });
   if (!["cash", "card_or_wallet", "credit"].includes(kind)) {
     return res.status(400).json({ error: "نوع طريقة دفع غير معروف" });
   }
+  if (settlementChannel && !["visa_pos", "instapay", "orange_cash", "vodafone_cash", "other"].includes(settlementChannel)) {
+    return res.status(400).json({ error: "قناة تسوية غير معروفة" });
+  }
   try {
     const result = await pool.query(
-      "INSERT INTO payment_methods (name, note, kind, enabled) VALUES ($1, $2, $3, $4) RETURNING *",
-      [name, note || null, kind, enabled]
+      "INSERT INTO payment_methods (name, note, kind, enabled, settlement_channel) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+      [name, note || null, kind, enabled, settlementChannel || null]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -196,9 +199,12 @@ router.post("/payment-methods", requireAuth, requireRole("admin"), async (req, r
 // PATCH /api/config/payment-methods/:id - تعديل أو تفعيل/تعطيل طريقة دفع
 router.patch("/payment-methods/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { name, note, kind, enabled } = req.body;
+  const { name, note, kind, enabled, settlementChannel } = req.body;
   if (kind !== undefined && !["cash", "card_or_wallet", "credit"].includes(kind)) {
     return res.status(400).json({ error: "نوع طريقة دفع غير معروف" });
+  }
+  if (settlementChannel !== undefined && settlementChannel !== null && !["visa_pos", "instapay", "orange_cash", "vodafone_cash", "other"].includes(settlementChannel)) {
+    return res.status(400).json({ error: "قناة تسوية غير معروفة" });
   }
   const fields = [];
   const values = [];
@@ -207,6 +213,7 @@ router.patch("/payment-methods/:id", requireAuth, requireRole("admin"), async (r
   if (note !== undefined) { fields.push(`note = $${i++}`); values.push(note); }
   if (kind !== undefined) { fields.push(`kind = $${i++}`); values.push(kind); }
   if (enabled !== undefined) { fields.push(`enabled = $${i++}`); values.push(enabled); }
+  if (settlementChannel !== undefined) { fields.push(`settlement_channel = $${i++}`); values.push(settlementChannel); }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
 
   values.push(id);

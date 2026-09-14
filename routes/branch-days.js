@@ -11,15 +11,13 @@ const pool = require("../db/pool");
 const { requireAuth, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
+const { getCairoBusinessDate } = require("../db/business-date");
 
-// المرحلة 8.41: توقيت الجلسة الافتراضي في Postgres على استضافة سحابية زي Render بيبقى UTC، ومصر
-// UTC+2/+3 - يعني أي طلب اتسجل في أول 2-3 ساعات بعد نص الليل بتوقيت القاهرة كان لسه بيتحسب "إمبارح"
-// في المقارنات المعتمدة على UTC (زي new Date().toISOString() هنا، أو DATE(created_at) تحت في
-// buildChecklist/الاستعلامات) - فطلب اتحصّل فعليًا النهاردة كان بيختفي من "مبيعات اليوم" ويقفل قايمة
-// تقفيل اليوم غلط. الحل: توقيت القاهرة صراحة في كل مقارنة تاريخ هنا، مش توقيت السيرفر الافتراضي
-function todayDate() {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
-}
+// المرحلة 8.41 (والمرحلة 9A-8 عمّمت نفس الدالة db/business-date.js لباقي النظام): توقيت الجلسة الافتراضي
+// في Postgres على استضافة سحابية زي Render بيبقى UTC، ومصر UTC+2/+3 - يعني أي طلب اتسجل في أول 2-3
+// ساعات بعد نص الليل بتوقيت القاهرة كان لسه بيتحسب "إمبارح" في المقارنات المعتمدة على UTC - فطلب اتحصّل
+// فعليًا النهاردة كان بيختفي من "مبيعات اليوم" ويقفل قايمة تقفيل اليوم غلط
+const todayDate = getCairoBusinessDate;
 
 async function buildChecklist(executor, branchId) {
   const activeShifts = await executor.query(
@@ -45,6 +43,31 @@ async function buildChecklist(executor, branchId) {
        AND closed_at >= now() - interval '24 hours'`,
     [branchId]
   );
+  // المرحلة 9A-7: لو سائق لسه شايل كاش أوردرات اتسلّمت ومتسوتش (تسوية = تسليم الكاش للكاشير/الفرع)،
+  // إقفال اليوم كان بيعدّي عادي من غيرها - يعني ممكن يقفل اليوم واليوم اللي بعده يجي من غير أي حد واخد
+  // باله إن السائق لسه معاه كاش الفرع فعليًا. نفس استعلام /pending-drivers بالظبط (8.46) بس هنا فلتر
+  // على pending_cash > 0 بس (سائق عنده بونص/دفع إلكتروني معلّق بس مفيش كاش فعليًا - مش حرج لإقفال اليوم)
+  const unsettledDriverCash = await executor.query(
+    `SELECT d.id AS driver_id, d.name AS driver_name, d.driver_code,
+            COUNT(o.id)::int AS pending_order_count, COALESCE(SUM(o.collected_amount), 0) AS amount
+     FROM drivers d
+     JOIN orders o ON o.driver_id = d.id
+     JOIN payment_methods pm ON pm.id = o.payment_method_id
+     WHERE d.branch_id = $1 AND o.dispatch_status = 'DELIVERED' AND o.driver_settlement_id IS NULL
+       AND pm.kind = 'cash'
+     GROUP BY d.id, d.name, d.driver_code
+     HAVING COALESCE(SUM(o.collected_amount), 0) > 0
+     ORDER BY d.name`,
+    [branchId]
+  );
+  // المرحلة 9A-7: مشترى نقدي كاشير (زي "شراء طارئ" وقت نقص خامة - راجع routes/purchases.js، المرحلة
+  // 7K) status='PENDING' يعني لسه محتاج مراجعة مدير الفرع/المحاسب قبل ما يترحّل محاسبيًا رسميًا - إقفال
+  // اليوم من غيرها كان معناه مشترى نقدي حقيقي (كاش خرج من الدرج فعليًا) يفضل معلّق من غير مراجعة حتى بعد
+  // إقفال يوم الفرع اللي حصل فيه
+  const pendingPurchaseReviews = await executor.query(
+    `SELECT id, amount, category, created_by FROM purchases WHERE branch_id = $1 AND status = 'PENDING'`,
+    [branchId]
+  );
 
   const redItems = [];
   if (activeShifts.rows.length > 0) {
@@ -55,6 +78,24 @@ async function buildChecklist(executor, branchId) {
   }
   if (openOrders.rows.length > 0) {
     redItems.push({ code: "OPEN_ORDERS", message: `${openOrders.rows.length} طلب لسه مفتوح (تحت التحضير أو في الطريق)`, orders: openOrders.rows });
+  }
+  if (unsettledDriverCash.rows.length > 0) {
+    const totalCash = unsettledDriverCash.rows.reduce((s, r) => s + Number(r.amount), 0);
+    redItems.push({
+      code: "UNSETTLED_DRIVER_CASH",
+      message: `${unsettledDriverCash.rows.length} سائق لسه شايل كاش فرع متسواش (${totalCash.toFixed(2)} ج.م إجمالي) - لازم تحصيل مجمع الأول`,
+      drivers: unsettledDriverCash.rows.map((r) => ({
+        driverId: r.driver_id, driverName: r.driver_name, driverCode: r.driver_code,
+        pendingOrderCount: r.pending_order_count, amount: Number(r.amount),
+      })),
+    });
+  }
+  if (pendingPurchaseReviews.rows.length > 0) {
+    redItems.push({
+      code: "PENDING_PURCHASE_REVIEW",
+      message: `${pendingPurchaseReviews.rows.length} مشترى نقدي (شراء طارئ) لسه محتاج مراجعة مدير الفرع/المحاسب`,
+      purchases: pendingPurchaseReviews.rows,
+    });
   }
 
   const yellowItems = [];

@@ -6,6 +6,7 @@ const pool = require("../db/pool");
 const { requireAuth, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission, hasPermission } = require("../middleware/permissions");
 const { computeDriverUnsettledSummary, createSettlement, reviewSettlement, calcDriverOrderBonus } = require("../db/delivery-engine");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 router.use(requireAuth);
 
@@ -148,7 +149,7 @@ router.get("/driver-orders", async (req, res) => {
     const cashOrders = orders.filter((o) => o.payment_kind === "cash");
     res.json({
       driverId: Number(driverId), driverName: driver.name, driverCode: driver.driver_code,
-      date: date || new Date().toISOString().slice(0, 10),
+      date: date || getCairoBusinessDate(),
       orders,
       orderCount: orders.length,
       deliveryFeesTotal: orders.reduce((s, o) => s + Number(o.delivery_fee || 0), 0),

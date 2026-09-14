@@ -98,7 +98,16 @@ CREATE TABLE pos_settings (
   whatsapp_bot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   -- المرحلة 8.48: أجر ساعة السائق (عمالة خارجية) - بيتجمّد في driver_shifts.hourly_rate وقت تسجيل
   -- الدخول، فتغيير الرقم هنا بعد كده ميأثرش على شيفتات شغالة/مقفولة بالفعل - راجع db/driver-shift-engine.js
-  driver_hourly_rate_egp NUMERIC NOT NULL DEFAULT 33
+  driver_hourly_rate_egp NUMERIC NOT NULL DEFAULT 33,
+  -- Payment Control & Reconciliation: السقف اللي فوقه طلب تعديل دفع محتاج اعتماد محاسب/أدمن (مش مشرف
+  -- فرع بس) - نفس فلسفة discount_manager_max_percent بالظبط، رقم مطلق بالجنيه مش نسبة هنا
+  payment_adjustment_high_threshold_egp NUMERIC NOT NULL DEFAULT 500,
+  -- التقرير اليومي للمالك (استثناءات المدفوعات) - إرسال تلقائي عبر db/sms-provider.js (نفس بوابة
+  -- SMS_WEBHOOK_URL بتاعة تأكيد الطلبات، بدون بوابة إضافية). معطّل افتراضيًا لحد ما رقم المالك يتسجّل
+  payment_daily_report_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  owner_report_phone TEXT,
+  -- الساعة (0-23) بتوقيت القاهرة اللي التقرير بيتبعت فيها يوميًا - افتراضيًا 9 مساءً (نهاية يوم تشغيل نموذجي)
+  payment_daily_report_hour SMALLINT NOT NULL DEFAULT 21 CHECK (payment_daily_report_hour BETWEEN 0 AND 23)
 );
 INSERT INTO pos_settings (id) VALUES (1);
 
@@ -125,6 +134,7 @@ INSERT INTO home_tiles (tile_key, href, icon, title, description, display_order)
   ('dashboard', 'satamoni-dashboard.html', '📊', 'داش بورد المالك', 'كل تفاصيل الشغل في شاشة واحدة: مبيعات، أصناف وفروع ومناطق الأكثر مبيعًا، تكلفة، ربحية', 40),
   ('items', 'satamoni-items.html', '🗂️', 'الأصناف', 'كتالوج شامل للمواد الخام والمصنّعة وأصناف المنيو - بحث سريع وتفاصيل كل صنف في مكان واحد', 45),
   ('accounting', 'satamoni-accounting.html', '💰', 'الحسابات', 'مصروفات، مشتريات، تقفيل كاش، كشف حساب المخزن', 50),
+  ('payment-control', 'satamoni-payment-control.html', '💳', 'التحكم في المدفوعات والمطابقة', 'كشف فروق طرق الدفع، مطابقة طلبات/فيزا/إنستاباي/أورانج كاش، طلبات تعديل الدفع', 55),
   ('reports', 'satamoni-reports.html', '📈', 'مركز التقارير', 'مبيعات، هالك، ملغي، تأخيرات، أداء الأصناف، مصروفات ومشتريات، مناطق وطيارين، خدمة الدليفري', 60),
   ('customers', 'satamoni-customers.html', '👥', 'بيانات العملاء', 'دليل العملاء وبحث برقم التليفون، نقاط الولاء، والعملاء اللي مطلبوش بقالهم فترة', 70),
   ('audit', 'satamoni-audit.html', '🛡️', 'سجل التدقيق والموافقات', 'كل عملية حساسة اتسجلت مين وامتى، وطلبات موافقة على تسوية المخزون', 80),
@@ -246,7 +256,11 @@ CREATE TABLE payment_methods (
   kind      TEXT NOT NULL DEFAULT 'cash' CHECK (kind IN ('cash', 'card_or_wallet', 'credit')),
   -- cash: كاش، بيتحصّل لحظة البيع أوتوماتيك. card_or_wallet: فيزا/محفظة/إنستاباي، بيفضل "تحت التحصيل"
   -- لحد ما يتأكد وصول الفلوس فعليًا. credit: آجل (زي طلبات آجل)، بيتحصّل في تسوية شهرية.
-  enabled   BOOLEAN DEFAULT TRUE
+  enabled   BOOLEAN DEFAULT TRUE,
+  -- Payment Control & Reconciliation (المرحلة الأولى): kind='card_or_wallet' وحدها مش كفاية عشان نعرف
+  -- نطابق مع أي كشف حساب خارجي (فيزا POS مختلف عن إنستاباي مختلف عن أورانج كاش). NULL لغير card_or_wallet
+  -- (كاش/آجل مالهمش كشف خارجي يتطابق معاه في هذا النطاق)
+  settlement_channel TEXT CHECK (settlement_channel IN ('visa_pos', 'instapay', 'orange_cash', 'vodafone_cash', 'other'))
 );
 
 -- ---------------- الطلبات (من الموقع أو الكاشير) ----------------
@@ -822,6 +836,14 @@ CREATE TABLE suppliers (
 
 -- expenses.supplier_id اتعرّف قبل كدة في الملف (expenses جاي قبل suppliers) - الـFK بيتضاف هنا
 ALTER TABLE expenses ADD CONSTRAINT fk_expenses_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id);
+
+-- المرحلة 9A-3: ربط اختياري بين مشترى الكاشير الطارئ (purchases) ومورد رسمي + رقم مستنده (فاتورة/إذن
+-- تسليم) - لو اتحدد، بيتفحص مقابل GRN الرسمي (وGRN التانية) بنفس المورد ونفس رقم المستند عشان يمنع
+-- تسجيل نفس التوريدة الحقيقية مرتين (مرة كمشترى نقدي سريع ومرة تانية كـGRN رسمي). راجع
+-- db/purchase-duplicate-check.js. اختياري بالكامل - مشترى نقدي بسيط من غير مورد محدد لسه شغال زي الأول
+ALTER TABLE purchases ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id);
+ALTER TABLE purchases ADD COLUMN supplier_document_number TEXT;
+CREATE INDEX idx_purchases_supplier_doc ON purchases(supplier_id, supplier_document_number) WHERE supplier_id IS NOT NULL;
 
 -- سعر كل مكوّن عند كل مورد بيبيعه (لمقارنة الأسعار واختيار الأرخص) - جدول قديم بيتحدّث بالسعر الأحدث
 -- بس (ON CONFLICT DO UPDATE)، مالوش تاريخ. لسه شغال زي ما هو لأي كود قديم بيقرأه - مش متضاف عليه أي حاجة
@@ -1696,9 +1718,14 @@ CREATE TABLE stocktakes (
   -- مجموع قيمة كل الفروق (سالب = عجز صافي، موجب = زيادة صافية) - لقطة وقت الجرد، مش محسوبة لحظيًا،
   -- عشان شاشة السجل تعرضها بسرعة من غير ما تجمّع كل السطور في كل مرة
   total_variance_value  NUMERIC NOT NULL DEFAULT 0,
-  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- المرحلة 9A-6: لو العميل بعت نفس الطلب مرتين (retry شبكة/دبل كليك) بنفس المفتاح، بيرجّع نفس جلسة
+  -- الجرد الأصلية من غير ما يسجّلها تاني (فرق مضاعف + قيد محاسبي مضاعف) - نفس نمط idempotency_key
+  -- الموجود أصلًا في purchase_orders/goods_receipts
+  idempotency_key       TEXT
 );
 CREATE INDEX idx_stocktakes_branch ON stocktakes(branch_id, created_at DESC);
+CREATE UNIQUE INDEX idx_stocktakes_idempotency ON stocktakes(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE stocktake_lines (
   id                     SERIAL PRIMARY KEY,
@@ -1739,9 +1766,12 @@ CREATE TABLE stocktake_line_corrections (
   charge_employee_id        INTEGER REFERENCES employees(id),
   inventory_movement_id     INTEGER REFERENCES inventory_movements(id),
   created_by                INTEGER REFERENCES users(id),
-  created_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- المرحلة 9A-6: نفس فكرة stocktakes.idempotency_key فوق - لتصحيح سطر بدل جلسة كاملة
+  idempotency_key           TEXT
 );
 CREATE INDEX idx_stocktake_line_corrections_line ON stocktake_line_corrections(stocktake_line_id);
+CREATE UNIQUE INDEX idx_stocktake_line_corrections_idempotency ON stocktake_line_corrections(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE payroll_adjustments (
   id              SERIAL PRIMARY KEY,
@@ -2216,6 +2246,32 @@ CREATE TABLE approval_requests (
 CREATE INDEX idx_approval_requests_status ON approval_requests(status);
 CREATE INDEX idx_approval_requests_branch ON approval_requests(branch_id);
 
+-- المرحلة 9A-1: موافقة PIN مدير/أدمن اللحظية (خصم كبير/استرجاع طلب/فرق تحصيل سائق) كانت قبل كده بترجع
+-- هوية المدير نفسها (approverId) كدليل الموافقة - أي حد يعرف الـID ده (رقم صغير متسلسل) يقدر يعيد
+-- استخدامه لأي عدد من العمليات الحساسة تانية من غير ما المدير يدخل الـPIN تاني خالص (ثغرة احتيال حقيقية
+-- اتكشفت في تدقيق PHASE 9). دلوقتي verify-override-pin بيرجّع توكن عشوائي غير قابل للتخمين (approval
+-- grant) مربوط صراحة بـ: نوع الإجراء (action_type) + الكيان المستهدف بالظبط (target_type/target_id) +
+-- الفرع - وبيستهلكه (status='USED') مرة واحدة بس بعملية atomic UPDATE...WHERE status='ACTIVE' (نفس نمط
+-- "claim" طابور الطباعة بالظبط - db/print-queue.js) بحيث لو 5 طلبات متزامنة حاولوا يستهلكوا نفس التوكن،
+-- واحد بس ينجح. صالح لمدة قصيرة (10 دقايق افتراضيًا) وبعدين مبيتقبلش. راجع db/approval-engine.js
+CREATE TABLE approval_grants (
+  id            SERIAL PRIMARY KEY,
+  token         TEXT NOT NULL UNIQUE,
+  action_type   TEXT NOT NULL,   -- ORDER_VOID / ORDER_DISCOUNT / INVENTORY_OVERRIDE / DELIVERY_COLLECTION_VARIANCE / EMERGENCY_PURCHASE_DUPLICATE_OVERRIDE
+  target_type   TEXT NOT NULL,   -- order / order_attempt (idempotencyKey - الطلب لسه مش اتسجل وقت طلب الموافقة) / purchase_attempt
+  target_id     TEXT NOT NULL,
+  branch_id     INTEGER REFERENCES branches(id),
+  approved_by   INTEGER NOT NULL REFERENCES users(id),
+  requested_by  INTEGER REFERENCES users(id),
+  status        TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'USED', 'EXPIRED', 'REVOKED')),
+  used_by       INTEGER REFERENCES users(id),
+  used_at       TIMESTAMPTZ,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_approval_grants_token ON approval_grants(token);
+CREATE INDEX idx_approval_grants_lookup ON approval_grants(action_type, target_type, target_id, status);
+
 -- ---------------- نظام الطباعة (طابعات فرع + محطات تحضير + طابور طباعة) ----------------
 -- راجع db/migrations/0015_printing.js للشرح الكامل للفلسفة (فشل الطباعة ميوقفش الطلب أبدًا، التوجيه
 -- Menu Item/Category -> Station -> Printer مش هارد كودد)
@@ -2490,6 +2546,104 @@ CREATE TABLE packaging_order_batches (
 );
 CREATE INDEX idx_packaging_order_batches_order ON packaging_order_batches(packaging_order_id);
 CREATE INDEX idx_packaging_order_batches_batch ON packaging_order_batches(batch_id);
+
+-- ==================================================================================
+-- Payment Control & Reconciliation
+-- ==================================================================================
+-- الهدف: كشف تلاعب/فروق طريقة الدفع (كاش طلبات مقابل فيزا POS، معاملات إنستاباي/أورانج كاش
+-- من غير مطابقة، فروق تسوية فيزا) - قفل طريقة الدفع فور اختيارها + أي تعديل بعد كده لازم
+-- Payment Adjustment Request معتمد. المطابقة (Reconciliation) في المرحلة الأولى يدوية بالكامل:
+-- المحاسب بيدخل أرقام كشوف الحساب الخارجية، والنظام بيقارنها بسجلات الدفع الداخلية - نفس فلسفة
+-- accounting-reconciliation الحالية بالظبط: "يقارن، مايوحّدش تلقائي". نقاط المخاطر بتتحسب لحظيًا
+-- وقت عرض التقرير (مش عمود مخزّن) لنفس السبب - راجع db/payment-control-engine.js.
+
+-- سجل دفع مستقل لكل طلب (1:1 - مفيش split payments، برّه النطاق) - مقفول فور الإنشاء
+CREATE TABLE payments (
+  id                      SERIAL PRIMARY KEY,
+  order_id                INTEGER NOT NULL UNIQUE REFERENCES orders(id),
+  branch_id               INTEGER REFERENCES branches(id),
+  payment_method_id       INTEGER NOT NULL REFERENCES payment_methods(id),
+  -- نسخة مجمّدة وقت القفل - لو حد غيّر kind/settlement_channel بتاع طريقة الدفع نفسها بعد كده،
+  -- سجلات الدفع القديمة تفضل صحيحة تاريخيًا (نفس فلسفة cost_at_sale)
+  method_kind             TEXT NOT NULL,
+  settlement_channel      TEXT,
+  channel                 TEXT NOT NULL, -- نسخة من orders.source وقت القفل (pos/talabat/website/callcenter)
+  amount                  NUMERIC NOT NULL,
+  talabat_cash_collected  NUMERIC NOT NULL DEFAULT 0,
+  status                  TEXT NOT NULL DEFAULT 'LOCKED' CHECK (status IN ('LOCKED', 'ADJUSTED')),
+  locked_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locked_by               INTEGER REFERENCES users(id),
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_payments_branch_created ON payments(branch_id, created_at);
+CREATE INDEX idx_payments_channel ON payments(channel);
+CREATE INDEX idx_payments_settlement_channel ON payments(settlement_channel) WHERE settlement_channel IS NOT NULL;
+
+-- طلب تعديل دفع بعد القفل - لازم approval_grants (actionType='PAYMENT_ADJUSTMENT') من مشرف فرع
+-- (أي مبلغ) أو محاسب/أدمن (لو amount_delta >= pos_settings.payment_adjustment_high_threshold_egp)
+CREATE TABLE payment_adjustment_requests (
+  id                        SERIAL PRIMARY KEY,
+  payment_id                INTEGER NOT NULL REFERENCES payments(id),
+  requested_by              INTEGER REFERENCES users(id),
+  requested_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reason                    TEXT NOT NULL,
+  proposed_payment_method_id INTEGER REFERENCES payment_methods(id),
+  proposed_amount           NUMERIC,
+  amount_delta              NUMERIC NOT NULL DEFAULT 0,
+  status                    TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  approval_grant_token      TEXT,
+  decided_by                INTEGER REFERENCES users(id),
+  decided_at                TIMESTAMPTZ
+);
+CREATE INDEX idx_payment_adjustment_requests_payment ON payment_adjustment_requests(payment_id);
+CREATE INDEX idx_payment_adjustment_requests_status ON payment_adjustment_requests(status);
+
+-- إدخال يدوي لسطور كشوف حساب خارجية (طلبات/فيزا/إنستاباي/أورانج كاش) - المصدر التاني المستقل
+-- اللي بيتقارن مع payments/orders (المصدر الداخلي)، نفس فلسفة GET /api/reports/accounting-reconciliation
+CREATE TABLE payment_reconciliation_records (
+  id                  SERIAL PRIMARY KEY,
+  branch_id           INTEGER REFERENCES branches(id),
+  source              TEXT NOT NULL CHECK (source IN ('talabat_statement', 'visa_settlement', 'instapay', 'orange_cash')),
+  external_reference  TEXT,
+  external_amount     NUMERIC NOT NULL,
+  external_date       DATE NOT NULL,
+  matched_payment_id  INTEGER REFERENCES payments(id),
+  match_status        TEXT NOT NULL DEFAULT 'UNMATCHED' CHECK (match_status IN ('UNMATCHED', 'MATCHED', 'DISPUTED')),
+  notes               TEXT,
+  entered_by          INTEGER REFERENCES users(id),
+  entered_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_payment_reconciliation_branch_date ON payment_reconciliation_records(branch_id, source, external_date);
+CREATE INDEX idx_payment_reconciliation_match_status ON payment_reconciliation_records(match_status);
+
+-- سجل تدقيق مخصص للمدفوعات (منفصل عن audit_logs العام، تفاصيل أدق: before/after كاملة) - append-only
+-- بالفعل (مفيش UPDATE/DELETE route ليه)، نفس فلسفة audit_logs العام تمامًا
+CREATE TABLE payment_audit_logs (
+  id            SERIAL PRIMARY KEY,
+  payment_id    INTEGER REFERENCES payments(id),
+  order_id      INTEGER REFERENCES orders(id),
+  branch_id     INTEGER REFERENCES branches(id),
+  actor_id      INTEGER REFERENCES users(id),
+  actor_role    TEXT,
+  action_type   TEXT NOT NULL, -- LOCK | ADJUSTMENT_REQUESTED | ADJUSTMENT_APPROVED | ADJUSTMENT_REJECTED |
+                                -- RECONCILIATION_ENTERED | EXCEPTION_RESOLVED
+  before_state  JSONB,
+  after_state   JSONB,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_payment_audit_logs_payment ON payment_audit_logs(payment_id);
+CREATE INDEX idx_payment_audit_logs_branch_created ON payment_audit_logs(branch_id, created_at);
+
+-- منع إرسال التقرير اليومي أكتر من مرة لنفس اليوم (idempotency - نفس فلسفة كل idempotency_key
+-- تانية في المشروع، بس هنا باليوم مش بمفتاح صريح من الطلب لأنه مجدول مش مبني على طلب مستخدم)
+CREATE TABLE payment_daily_report_log (
+  id          SERIAL PRIMARY KEY,
+  report_date DATE NOT NULL UNIQUE,
+  phone       TEXT,
+  status      TEXT NOT NULL,
+  error       TEXT,
+  sent_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- ---------------- المرحلة 8.43: أتمتة واتساب (رد آلي بذكاء اصطناعي على استفسارات العملاء وتسجيل
 -- طلبات/شكاوى) ----------------

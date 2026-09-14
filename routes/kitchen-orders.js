@@ -4,6 +4,7 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
 const { generateSuggestedRequisition } = require("../db/requisition-suggestion");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 // GET /api/kitchen-orders?branchId=&status=&from=&to=&createdBy=&page=&limit= - طلبيات الفروع للسنتر كيتشن
 // مدير الفرع/الكاشير يشوفوا طلبيات فرعهم بس، الأدمن/السنتر كيتشن يشوفوا كل حاجة (قايمة تنفيذ السنتر كيتشن)
@@ -583,7 +584,7 @@ router.get("/suggested", requireAuth, requireRole("admin", "branch_manager", "ca
     return res.status(403).json({ error: "معندكش صلاحية تشوف اقتراح فرع تاني" });
   }
   if (!branchId) return res.status(400).json({ error: "لازم فرع" });
-  if (!targetDate) targetDate = new Date().toISOString().slice(0, 10);
+  if (!targetDate) targetDate = getCairoBusinessDate();
   try {
     const suggestions = await generateSuggestedRequisition(pool, {
       branchId, targetDate, lookbackWeeks: lookbackWeeks ? Number(lookbackWeeks) : 8,

@@ -9,6 +9,7 @@ const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postInventoryMovement } = require("../db/inventory-ledger");
 const { postJournalEntry, getAccountByCode } = require("../db/accounting-engine");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 // POST /api/purchase-returns - {branchId, supplierId?, goodsReceiptId?, reason, notes?,
 //  items:[{inventoryItemId, batchId?, quantity, unit, unitCost?}]}
@@ -175,7 +176,7 @@ router.post("/:id/post", requireAuth, requirePermission("purchasing.create", "pu
       const inventoryAccount = await getAccountByCode(client, "1400");
       const apAccount = await getAccountByCode(client, "2100");
       await postJournalEntry(client, {
-        entryDate: new Date().toISOString().slice(0, 10), description: `مرتجع مشتريات #${ret.rows[0].id}`,
+        entryDate: getCairoBusinessDate(), description: `مرتجع مشتريات #${ret.rows[0].id}`,
         sourceType: "purchase_return", sourceId: ret.rows[0].id, branchId: ret.rows[0].branch_id,
         lines: [
           { accountId: apAccount.id, debit: totalCost, referenceType: "supplier", referenceId: ret.rows[0].supplier_id },

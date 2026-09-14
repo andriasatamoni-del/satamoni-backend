@@ -512,6 +512,67 @@ describe("تقفيل يوم الفرع", () => {
     await pool.query("UPDATE orders SET status = 'completed' WHERE id = $1", [order.body.orderId]);
   });
 
+  test("سائق لسه شايل كاش فرع متسواش بيمنع القفل (أحمر) - 9A-7", async () => {
+    const driverRes = await request(app).post("/api/drivers").set(authed(dedicatedManagerToken)).send({ name: "سائق-تقفيل-يوم-9A7" });
+    expect(driverRes.status).toBe(201);
+    const driverId = driverRes.body.id;
+
+    const order = await request(app).post("/api/orders").set(authed(dedicatedManagerToken)).send({
+      branchId: dedicatedBranch, source: "pos", orderType: "delivery", customerPhone: "01000000098",
+      addressDetails: "عنوان اختبار 9A-7", paymentMethodId: cashPmId,
+      items: [{ itemId: itemBigId, variantId: variantSmall, quantity: 1 }],
+    });
+    expect(order.status).toBe(201);
+    const orderId = order.body.orderId;
+
+    const assign = await request(app).post(`/api/deliveries/${orderId}/assign`).set(authed(dedicatedManagerToken)).send({ driverId });
+    expect(assign.status).toBe(200);
+    const outForDelivery = await request(app).post(`/api/deliveries/${orderId}/out-for-delivery`).set(authed(dedicatedManagerToken));
+    expect(outForDelivery.status).toBe(200);
+    const delivered = await request(app).post(`/api/deliveries/${orderId}/delivered`).set(authed(dedicatedManagerToken)).send({ collectedAmount: 200 });
+    expect(delivered.status).toBe(200);
+    // السائق دلوقتي شايل كاش الطلب ده فعليًا (اتسلّم، بس لسه ماتسواش) - ده بالظبط السيناريو اللي 9A-7 بيغطيه
+
+    const status = await request(app).get(`/api/branch-days/${dedicatedBranch}/status`).set(authed(dedicatedManagerToken));
+    expect(status.body.color).toBe("RED");
+    expect(status.body.canClose).toBe(false);
+    const item = status.body.redItems.find((i) => i.code === "UNSETTLED_DRIVER_CASH");
+    expect(item).toBeTruthy();
+    expect(item.drivers.some((d) => d.driverId === driverId)).toBe(true);
+
+    const closeAttempt = await request(app).post(`/api/branch-days/${dedicatedBranch}/close`).set(authed(dedicatedManagerToken)).send({ businessDate });
+    expect(closeAttempt.status).toBe(400);
+    expect(closeAttempt.body.redItems.some((i) => i.code === "UNSETTLED_DRIVER_CASH")).toBe(true);
+
+    // بعد ما الكاشير بيحصّل الكاش من السائق (تسوية) - البند بيختفي ويرجع القفل ممكن
+    const settle = await request(app).post("/api/driver-settlements").set(authed(dedicatedManagerToken)).send({ driverId, actualHandover: 200 });
+    expect(settle.status).toBe(201);
+
+    const statusAfter = await request(app).get(`/api/branch-days/${dedicatedBranch}/status`).set(authed(dedicatedManagerToken));
+    expect(statusAfter.body.redItems.some((i) => i.code === "UNSETTLED_DRIVER_CASH")).toBe(false);
+  });
+
+  test("مشترى نقدي كاشير (شراء طارئ) لسه محتاج مراجعة بيمنع القفل (أحمر) - 9A-7", async () => {
+    const purchase = await request(app).post("/api/purchases").set(authed(dedicatedCashierToken)).send({
+      category: "مشترى طارئ 9A-7", amount: 75, notes: "زيت نفد فجأة",
+    });
+    expect(purchase.status).toBe(201);
+    expect(purchase.body.status).toBe("PENDING");
+
+    const status = await request(app).get(`/api/branch-days/${dedicatedBranch}/status`).set(authed(dedicatedManagerToken));
+    expect(status.body.color).toBe("RED");
+    expect(status.body.redItems.some((i) => i.code === "PENDING_PURCHASE_REVIEW")).toBe(true);
+
+    const closeAttempt = await request(app).post(`/api/branch-days/${dedicatedBranch}/close`).set(authed(dedicatedManagerToken)).send({ businessDate });
+    expect(closeAttempt.status).toBe(400);
+
+    const confirm = await request(app).post(`/api/purchases/${purchase.body.id}/confirm`).set(authed(dedicatedManagerToken));
+    expect(confirm.status).toBe(200);
+
+    const statusAfter = await request(app).get(`/api/branch-days/${dedicatedBranch}/status`).set(authed(dedicatedManagerToken));
+    expect(statusAfter.body.redItems.some((i) => i.code === "PENDING_PURCHASE_REVIEW")).toBe(false);
+  });
+
   test("بعد ما كل حاجة اتقفلت/اكتملت - القفل بينجح ويتسجل في branch_days", async () => {
     const res = await request(app).post(`/api/branch-days/${dedicatedBranch}/close`).set(authed(dedicatedManagerToken)).send({ businessDate, managerNotes: "يوم عادي" });
     expect(res.status).toBe(201);

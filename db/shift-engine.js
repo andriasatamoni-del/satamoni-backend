@@ -5,6 +5,7 @@
 // بس، مش عن طريق عدّادات بتتحدّث مع كل طلب (ده بيتجنّب أي سباق تحديث عداد، وبيخلي أي رقم قابل لإعادة
 // الحساب والتدقيق في أي وقت من مصدره الأصلي).
 const { logAudit } = require("./audit");
+const { getCairoBusinessDate } = require("./business-date");
 const {
   postJournalEntry, getOrCreateBranchCashAccount, getOrCreateEmployeeReceivableAccount, getAccountByCode,
   getOrCreateCashierTreasuryAccount,
@@ -205,7 +206,7 @@ async function closeShift(client, { shift, actualCash, closingNotes, closedBy, t
     const mainAccount = await getOrCreateBranchCashAccount(client, shift.branch_id);
     const cashierAccount = await getOrCreateCashierTreasuryAccount(client, { branchId: shift.branch_id, userId: shift.user_id });
     await postJournalEntry(client, {
-      entryDate: closedAt.toISOString().slice(0, 10),
+      entryDate: getCairoBusinessDate(closedAt),
       description: `تسليم درج شيفت #${shift.id}`,
       sourceType: "shift_handover", sourceId: shift.id, branchId: shift.branch_id,
       lines: [
@@ -240,7 +241,7 @@ async function postVarianceWriteoffEntry(client, { shift, cashVariance, actorId 
     ? [{ accountId: writeoffAccount.id, debit: amount }, { accountId: cashierAccount.id, credit: amount }]
     : [{ accountId: cashierAccount.id, debit: amount }, { accountId: writeoffAccount.id, credit: amount }];
   return postJournalEntry(client, {
-    entryDate: new Date().toISOString().slice(0, 10),
+    entryDate: getCairoBusinessDate(),
     description: `فرق كاش شيفت #${shift.id} - ${cashVariance < 0 ? "عجز" : "زيادة"} مقبول`,
     sourceType: "shift_variance_writeoff", sourceId: shift.id, branchId: shift.branch_id,
     lines, idempotencyKey: `shift-variance-writeoff-${shift.id}`, userId: actorId,
@@ -310,7 +311,7 @@ async function reviewShiftVariance(client, { shift, reviewerId, decision, notes 
         const receivableAccount = await getOrCreateEmployeeReceivableAccount(client, employee.id);
         const shortage = Math.round(Math.abs(cashVariance) * 100) / 100;
         await postJournalEntry(client, {
-          entryDate: new Date().toISOString().slice(0, 10),
+          entryDate: getCairoBusinessDate(),
           description: `عجز كاش شيفت #${shift.id} - ${employee.name}`,
           sourceType: "shift_variance_debt", sourceId: shift.id, branchId: shift.branch_id,
           lines: [
@@ -335,7 +336,7 @@ async function reviewShiftVariance(client, { shift, reviewerId, decision, notes 
       const otherRevenue = await getAccountByCode(client, "4300");
       const surplus = Math.round(cashVariance * 100) / 100;
       await postJournalEntry(client, {
-        entryDate: new Date().toISOString().slice(0, 10),
+        entryDate: getCairoBusinessDate(),
         description: `زيادة كاش شيفت #${shift.id}`,
         sourceType: "shift_variance_surplus", sourceId: shift.id, branchId: shift.branch_id,
         lines: [
@@ -406,7 +407,7 @@ async function forceCloseShift(client, { shift, actualCash, closingNotes, closed
     const mainAccount = await getOrCreateBranchCashAccount(client, shift.branch_id);
     const cashierAccount = await getOrCreateCashierTreasuryAccount(client, { branchId: shift.branch_id, userId: shift.user_id });
     await postJournalEntry(client, {
-      entryDate: closedAt.toISOString().slice(0, 10),
+      entryDate: getCairoBusinessDate(closedAt),
       description: `تسليم درج شيفت #${shift.id} (قفل قسري)`,
       sourceType: "shift_handover", sourceId: shift.id, branchId: shift.branch_id,
       lines: [
@@ -454,7 +455,7 @@ async function addMissedCashEntryAndRecalculate(client, { shift, entryType, amou
   }
 
   const backdatedAt = new Date(shift.closed_at);
-  const businessDate = backdatedAt.toISOString().slice(0, 10);
+  const businessDate = getCairoBusinessDate(backdatedAt);
   const cashierAccount = await getOrCreateCashierTreasuryAccount(client, { branchId: shift.branch_id, userId: shift.user_id });
 
   let createdEntry;

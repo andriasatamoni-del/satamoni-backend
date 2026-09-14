@@ -5,6 +5,7 @@ const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/aut
 const { requirePermission, hasPermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { postJournalEntry, reverseJournalEntry, getAccountByCode, resolveCashCreditAccount } = require("../db/accounting-engine");
+const { getCairoBusinessDate } = require("../db/business-date");
 
 const canManage = requireRole("admin", "accountant", "branch_manager");
 
@@ -180,7 +181,7 @@ router.post("/", requireAuth, requirePermission("expenses.create", "expenses.cre
   try {
     if (isCashierDaily) {
       branchId = req.user.branchId;
-      businessDate = new Date().toISOString().slice(0, 10);
+      businessDate = getCairoBusinessDate();
       supplierId = null;
       status = "SUBMITTED";
       const cashPm = await client.query(
@@ -434,7 +435,7 @@ router.post("/:id/cancel", requireAuth, canManage, async (req, res) => {
       }
       if (expense.journal_entry_id) {
         await reverseJournalEntry(client, {
-          originalEntryId: expense.journal_entry_id, entryDate: new Date().toISOString().slice(0, 10),
+          originalEntryId: expense.journal_entry_id, entryDate: getCairoBusinessDate(),
           reason: reason || "إلغاء مصروف", userId: req.user.id, idempotencyKey: `expense-cancel-${expense.id}`,
         });
       }

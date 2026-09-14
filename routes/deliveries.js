@@ -10,6 +10,7 @@ const {
   assignDriver, unassignDriver, markOutForDelivery, markDelivered, markFailed, rescheduleFailed,
 } = require("../db/delivery-engine");
 const { queueDeliveryHandoverPrintJobs } = require("../db/print-queue");
+const { consumeApprovalGrant } = require("../db/approval-engine");
 
 router.use(requireAuth);
 
@@ -211,12 +212,13 @@ router.post("/:orderId/out-for-delivery", async (req, res) => {
   }
 });
 
-// POST /api/deliveries/:orderId/delivered - {collectedAmount?, approverId?} - السائق نفسه أو مدير الفرع
-// المرحلة 8.51: approverId مطلوب بس لو (أ) اللي بيسجّل مش السائق نفسه (كاشير/كول سنتر بيسجّل بالنيابة
-// عنه لما يرجع الفرع)، و(ب) فيه فرق بين المبلغ المُدخل وإجمالي الطلب - نفس نمط استرجاع الطلب (Void)
-// بالظبط: مدير الفرع/الأدمن بيوافق بحسابه على طول، غيره لازم PIN معتمد
+// POST /api/deliveries/:orderId/delivered - {collectedAmount?, approvalToken?} - السائق نفسه أو مدير الفرع
+// المرحلة 8.51/9A-1: approvalToken مطلوب بس لو (أ) اللي بيسجّل مش السائق نفسه (كاشير/كول سنتر بيسجّل
+// بالنيابة عنه لما يرجع الفرع)، و(ب) فيه فرق بين المبلغ المُدخل وإجمالي الطلب - نفس نمط استرجاع الطلب
+// (Void) بالظبط: مدير الفرع/الأدمن بيوافق بحسابه على طول، غيره لازم توكن موافقة PIN مربوط بالطلب ده
+// بالظبط (مش هوية مدير قابلة لإعادة الاستخدام - راجع db/approval-engine.js)
 router.post("/:orderId/delivered", async (req, res) => {
-  const { collectedAmount, approverId } = req.body;
+  const { collectedAmount, approvalToken } = req.body;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -230,14 +232,17 @@ router.post("/:orderId/delivered", async (req, res) => {
     if (!auth.isDriverSelf) {
       if (req.user.role === "admin" || req.user.role === "branch_manager") {
         finalApproverId = req.user.id;
-      } else if (approverId) {
-        const approver = await client.query(
-          `SELECT id FROM users
-           WHERE id = $1 AND is_active = TRUE
-             AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $2))`,
-          [approverId, order.branch_id]
-        );
-        if (approver.rows.length > 0) finalApproverId = approverId;
+      } else if (approvalToken) {
+        try {
+          const { approver } = await consumeApprovalGrant(client, {
+            token: approvalToken, actionType: "DELIVERY_COLLECTION_VARIANCE", targetType: "order",
+            targetId: order.id, branchId: order.branch_id, usedByUserId: req.user.id,
+          });
+          finalApproverId = approver.id;
+        } catch (err) {
+          // نسيبها finalApproverId=null هنا زي قبل كده بالظبط - markDelivered تحت هي اللي بترفض الطلب
+          // لو الفرق محتاج موافقة ومفيش approverId صالح (COLLECTION_VARIANCE_APPROVAL_REQUIRED)
+        }
       }
     }
 

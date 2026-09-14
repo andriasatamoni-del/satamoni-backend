@@ -4,6 +4,8 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole, assertOwnBranch } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
 const { recordEmployeeHistoryChanges } = require("../db/employee-history");
+const { getCairoBusinessDate } = require("../db/business-date");
+const { checkTerminationBlockers, applyTerminationCascade } = require("../db/employee-termination");
 
 const canManageStaff = requireRole("admin", "branch_manager");
 const anyStaff = requireRole("admin", "branch_manager", "accountant", "cashier", "callcenter");
@@ -195,10 +197,22 @@ router.get("/employees/:id", requireAuth, canManageStaff, async (req, res) => {
 
 // PATCH /api/hr/employees/:id - تعديل بيانات HR بس (مش راتب) - {department?, jobTitle?, status?,
 // restrictedBranchId? (أدمن بس - نقل موظف بين الفروع قرار أدمن)، terminationDate?, terminationReason?,
-// reason?, effectiveDate?}
+// reason?, effectiveDate?, acknowledgeBlockers? (لازم بس لو status='terminated' وفيه معلّقات - راجع
+// تعليق 9A-4 تحت)}
+// المرحلة 9A-4: إنهاء خدمة موظف (status -> 'terminated') قبل كده كان مجرد تحديث عمود - حساب الدخول
+// المرتبط فاضل شغال (والتوكن الحالي بتاعه لو عنده هيفضل شغال لحد ما ينتهي)، وسجل السائق المرتبط (لو
+// موجود) فاضل قابل للتعيين لطلبات جديدة، من غير أي تنبيه لأي حاجة معلّقة (شيفت شغال، كاش سائق لسه
+// معاه، فرق تسوية محتاج مراجعة، ذمم مديون بيها، راتب معتمد لسه ماتصرفش). الإصلاح: db/employee-termination.js
+// بيتحقق ويرجّع المعلّقات دي صراحة (مش بيخفيها) - لو فيه معلّقات ومفيش acknowledgeBlockers:true صريح في
+// الطلب، الـPATCH بيترفض 409 مع تفاصيل المعلّقات (زي checklist إقفال يوم الفرع 9A-7 بالظبط) عشان اللي
+// بينهي الخدمة يشوفها ويقرر بوعي - مش قفل صارم يمنع إنهاء موظف لازم يتفصل فورًا حتى لو معاه معلّقات.
+// بعد التأكيد (أو لو مفيش معلّقات أصلًا)، التعطيل الفعلي بيحصل ذرّيًا مع نفس الـUPDATE.
 router.patch("/employees/:id", requireAuth, canManageStaff, async (req, res) => {
   const { id } = req.params;
-  const { department, jobTitle, status, restrictedBranchId, terminationDate, terminationReason, reason, effectiveDate } = req.body;
+  const {
+    department, jobTitle, status, restrictedBranchId, terminationDate, terminationReason,
+    reason, effectiveDate, acknowledgeBlockers,
+  } = req.body;
   if (restrictedBranchId !== undefined && req.user.role !== "admin") {
     return res.status(403).json({ error: "نقل موظف بين الفروع أدمن بس" });
   }
@@ -211,6 +225,23 @@ router.patch("/employees/:id", requireAuth, canManageStaff, async (req, res) => 
       await client.query("ROLLBACK");
       return res.status(403).json({ error: "معندكش صلاحية تعدّل موظف فرع تاني" });
     }
+
+    const isTerminating = status === "terminated" && before.rows[0].status !== "terminated";
+    let terminationCascade = null;
+    let acknowledgedBlockers = null;
+    if (isTerminating) {
+      const { blockers, driver } = await checkTerminationBlockers(client, before.rows[0]);
+      if (blockers.length > 0 && acknowledgeBlockers !== true) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "فيه بنود معلّقة لازم تراجعها قبل إنهاء خدمة الموظف - لو متأكد، ابعت الطلب تاني مع acknowledgeBlockers:true",
+          blockers,
+        });
+      }
+      acknowledgedBlockers = blockers;
+      terminationCascade = await applyTerminationCascade(client, { employee: before.rows[0], driver, actorUserId: req.user.id });
+    }
+
     const fields = [];
     const values = [];
     let i = 1;
@@ -234,8 +265,20 @@ router.patch("/employees/:id", requireAuth, canManageStaff, async (req, res) => 
       entityType: "employee", entityId: Number(id), oldValues: before.rows[0], newValues: result.rows[0],
       metadata: reason ? { reason } : null, req,
     });
+    if (isTerminating) {
+      await logAudit(client, {
+        branchId: before.rows[0].restricted_branch_id, userId: req.user.id, action: "EMPLOYEE_TERMINATION_CASCADE",
+        entityType: "employee", entityId: Number(id),
+        newValues: terminationCascade,
+        metadata: {
+          acknowledgedBlockerCodes: acknowledgedBlockers.map((b) => b.code),
+          blockersFound: acknowledgedBlockers.length,
+        },
+        req,
+      });
+    }
     await client.query("COMMIT");
-    res.json(result.rows[0]);
+    res.json({ ...result.rows[0], terminationCascade: terminationCascade || undefined });
   } catch (err) {
     await client.query("ROLLBACK");
     if (err.code === "23514") return res.status(400).json({ error: "قيمة غير صحيحة (تحقق من status)" });
@@ -598,7 +641,7 @@ router.get("/reports/employee-status", requireAuth, canManageStaff, async (req, 
 router.get("/reports/average-tenure", requireAuth, canManageStaff, async (req, res) => {
   let { branchId, department, status } = req.query;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
-  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const asOf = req.query.asOf || getCairoBusinessDate();
   try {
     const result = await pool.query(
       `SELECT AVG((COALESCE(termination_date, $4::date) - hire_date) / 30.44) AS avg_months,
@@ -626,7 +669,7 @@ router.get("/reports/average-tenure", requireAuth, canManageStaff, async (req, r
 router.get("/reports/turnover", requireAuth, canManageStaff, async (req, res) => {
   let { branchId, department } = req.query;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
-  const to = req.query.to || new Date().toISOString().slice(0, 10);
+  const to = req.query.to || getCairoBusinessDate();
   const from = req.query.from || `${new Date(to).getFullYear()}-01-01`;
   try {
     const departuresRes = await pool.query(
@@ -705,7 +748,7 @@ router.get("/reports/terminations", requireAuth, canManageStaff, async (req, res
 router.get("/reports/leave-balance", requireAuth, canManageStaff, async (req, res) => {
   let { branchId, department, status, employeeId } = req.query;
   if (req.user.role === "branch_manager") branchId = req.user.branchId;
-  const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+  const asOf = req.query.asOf || getCairoBusinessDate();
   try {
     const settings = await pool.query("SELECT paid_leave_days_per_month FROM payroll_settings WHERE id = 1");
     const perMonth = Number(settings.rows[0]?.paid_leave_days_per_month || 0);
