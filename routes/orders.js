@@ -12,6 +12,7 @@ const { maybeSendOrderConfirmation, maybeSendRatingRequest } = require("../db/or
 const { validateIdParam } = require("../middleware/validate-id-param");
 const { queueOrderCreationPrintJobs, queueDineInPreparingPrintJobs, queueDineInBillPrintJob } = require("../db/print-queue");
 const { getCairoBusinessDate } = require("../db/business-date");
+const { lockPaymentForOrder } = require("../db/payment-control-engine");
 
 // المرحلة 8B: :id لازم يكون رقم صحيح قبل ما يوصل لأي راوت هنا - غير كده Postgres بيرمي خطأ cast خام
 // كـ500 بدل 400 واضح (اتكشف بهجوم أمني حي - راجع middleware/validate-id-param.js)
@@ -420,6 +421,16 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       `INSERT INTO order_status_log (order_id, status, changed_by, notes) VALUES ($1, $2, $3, 'إنشاء الطلب')`,
       [orderId, initialStatus, createdBy]
     );
+
+    // Payment Control & Reconciliation: القفل فوري فور اختيار الكاشير لطريقة الدفع - لو paymentMethodId
+    // متحدد وقت الإنشاء، سجل الدفع بيتقفل هنا على طول. لو مش متحدد (ممكن يتحدد بعدين في تعديل الطلب)،
+    // القفل بيحصل ساعتها بدل كده - راجع PUT /:id تحت
+    if (paymentMethodId && branchId) {
+      await lockPaymentForOrder(client, {
+        orderId, branchId, paymentMethodId, amount: total, channel: source || "website",
+        talabatCashCollected: talabatCashCollectedFinal, userId: createdBy,
+      });
+    }
 
     if (discountApprover) {
       await logAudit(client, {
@@ -1773,6 +1784,18 @@ router.put(
         }
       }
 
+      // Payment Control & Reconciliation: طريقة الدفع مقفولة فور أول اختيار ليها (راجع POST / فوق) -
+      // أي محاولة تغيير بعد القفل لازم تعدّي على Payment Adjustment Request (routes/payment-control.js)
+      // مش تعديل مباشر هنا. وجود سجل payments للطلب ده هو مؤشر القفل نفسه
+      const existingPayment = await client.query("SELECT id FROM payments WHERE order_id = $1", [order.id]);
+      const paymentAlreadyLocked = existingPayment.rows.length > 0;
+      if (paymentAlreadyLocked && finalPaymentMethodId !== order.payment_method_id) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          error: "طريقة الدفع مقفولة على الطلب ده - استخدم طلب تعديل الدفع (Payment Adjustment Request) بدل التعديل المباشر",
+        });
+      }
+
       // إعادة حساب خصم نقاط الولاء على رصيد العميل الحالي - بعد ما رجّعنا صافي أثر الطلب القديم فوق،
       // الرصيد ده بقى معبّر عن الحقيقة (مش شايل رصيد الطلب اللي بنعدّله ده تحديدًا)
       let loyaltyRedeemValue = 0;
@@ -1818,6 +1841,16 @@ router.put(
           total, loyaltyPointsEarned, loyaltyPointsRedeemed, loyaltyRedeemValue, vatAmount, order.id,
         ]
       );
+
+      // Payment Control & Reconciliation: أول مرة طريقة الدفع بتتحدد فعليًا (كانت NULL وقت الإنشاء) -
+      // القفل بيحصل دلوقتي، مش قبل كده (زي طلب اتسجّل من الكول سنتر من غير طريقة دفع، وبعدين اتحددت
+      // في تعديل تاني). لو كانت متحددة بالفعل، paymentAlreadyLocked فوق يكون true والقفل يكون حصل أصلًا
+      if (!paymentAlreadyLocked && finalPaymentMethodId) {
+        await lockPaymentForOrder(client, {
+          orderId: order.id, branchId: order.branch_id, paymentMethodId: finalPaymentMethodId, amount: total,
+          channel: order.source || "website", talabatCashCollected: order.talabat_cash_collected || 0, userId: req.user.id,
+        });
+      }
 
       if (discountApprover) {
         await logAudit(client, {

@@ -17,6 +17,12 @@ const APPROVER_PERMISSION_BY_ACTION = {
   INVENTORY_OVERRIDE: null,
   DELIVERY_COLLECTION_VARIANCE: null,
   EMERGENCY_PURCHASE_DUPLICATE_OVERRIDE: null,
+  // Payment Control & Reconciliation: مشرف فرع (branch_manager) يقدر يوافق على أي تعديل دفع (أي مبلغ)،
+  // بس السقف العالي (pos_settings.payment_adjustment_high_threshold_egp) بيتحقق بعد الاستهلاك في
+  // routes/payment-control.js (نفس نمط requiresAdminOnly بتاع خصم الأوردر بالظبط) - محتاج مفتاح صلاحية
+  // منفصل (payment_control.adjustment.approve_high) بدل مقارنة role نصية مباشرة عشان يشتغل صح مع
+  // استثناءات الصلاحيات الفردية (8.58)
+  PAYMENT_ADJUSTMENT: "payment_control.adjustment.approve",
 };
 
 // POST /api/auth/verify-override-pin بينادي الدالة دي: بيدور على مدير فرع (نفس الفرع) أو أدمن معاه
@@ -26,11 +32,18 @@ async function issueApprovalGrant(client, { pin, branchId, actionType, targetTyp
   if (!APPROVER_PERMISSION_BY_ACTION.hasOwnProperty(actionType)) {
     return { error: "ACTION_TYPE_UNKNOWN" };
   }
+  // Payment Control & Reconciliation: accountant مرشّح صالح كمان، بس لـPAYMENT_ADJUSTMENT بس (مش
+  // ORDER_VOID/ORDER_DISCOUNT - ده هيفضل مدير فرع/أدمن بس زي ما هو بالظبط، عشان التوسيع ده يفضل مقصور
+  // على الإجراء الجديد ومايأثرش على أي سلوك موافقة قديم). محاسب مش مربوط بفرع واحد بالضرورة في هذا
+  // النظام (accountant.branch_id ممكن يكون NULL = صلاحية على كل الفروع، زي admin تمامًا)
+  const allowAccountant = actionType === "PAYMENT_ADJUSTMENT";
   const candidates = await client.query(
     `SELECT id, name, role, branch_id, pin_hash, permission_grants, permission_revokes FROM users
      WHERE is_active = TRUE AND pin_hash IS NOT NULL
-       AND (role = 'admin' OR (role = 'branch_manager' AND branch_id = $1))`,
-    [branchId || null]
+       AND (role = 'admin'
+            OR (role = 'branch_manager' AND branch_id = $1)
+            OR ($2 AND role = 'accountant' AND (branch_id IS NULL OR branch_id = $1)))`,
+    [branchId || null, allowAccountant]
   );
   let matched = null;
   for (const candidate of candidates.rows) {

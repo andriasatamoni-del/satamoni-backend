@@ -10,4 +10,11 @@ function getCairoBusinessDate(date = new Date()) {
   return date.toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
 }
 
-module.exports = { getCairoBusinessDate };
+// Payment Control & Reconciliation: الساعة الحالية بتوقيت القاهرة (0-23) - مستخدمة في
+// db/payment-report-scheduler.js عشان تقرر إمتى تبعت التقرير اليومي، بنفس منطق getCairoBusinessDate
+// بالظبط (توقيت السيرفر مش موثوق فيه لوحده)
+function getCairoHour(date = new Date()) {
+  return Number(date.toLocaleString("en-US", { timeZone: "Africa/Cairo", hour: "2-digit", hour12: false }));
+}
+
+module.exports = { getCairoBusinessDate, getCairoHour };

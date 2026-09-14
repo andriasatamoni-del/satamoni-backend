@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ستاموني — التحكم في المدفوعات والمطابقة</title>
+<style>
+  :root {
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --err: #F08A83;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  :root:not([data-theme="dark"]) #topbar {
+    background: #1B5FA8; border-bottom: 1px solid #164E8A; --ink: #FFFFFF; --faint: rgba(255,255,255,.82);
+    --line: rgba(255,255,255,.45); --green: #6FCF7A; --red: #FF6B60; --err: #FF8A80;
+  }
+  :root:not([data-theme="dark"]) #topbar .brand { color: #FFFFFF; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  #tabs { display: flex; gap: 6px; margin: 0 0 16px; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .formbox button.secondary { background: transparent; border: 1px solid var(--line); color: var(--faint); }
+  .formbox label.small { flex: 0; white-space: nowrap; font-size: 12px; color: var(--faint); }
+  .err { color: var(--err); font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .tablewrap { overflow-x: auto; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .pill.PENDING, .pill.LOCKED, .pill.UNMATCHED { background: rgba(203,161,53,.15); color: var(--gold-bright); }
+  .pill.APPROVED, .pill.MATCHED, .pill.LOW { background: rgba(63,163,77,.15); color: var(--green); }
+  .pill.REJECTED, .pill.DISPUTED, .pill.HIGH { background: rgba(194,42,36,.15); color: var(--err); }
+  .pill.ADJUSTED, .pill.MEDIUM { background: rgba(168,124,31,.15); color: var(--gold); }
+  .smallbtn { padding: 5px 10px; border: none; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 11px; margin-inline-end: 4px; }
+  .smallbtn.approve { background: var(--green); color: #fff; }
+  .smallbtn.reject { background: var(--red); color: #fff; }
+
+  .statcards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .statcard { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; min-width: 160px; flex: 1; }
+  .statcard .num { font-size: 26px; font-weight: 800; color: var(--gold-bright); }
+  .statcard .label { font-size: 12px; color: var(--faint); margin-top: 4px; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+
+  #pinOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 70; }
+  #pinOverlay.show { display: flex; }
+  #pinBox { width: 280px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; text-align: center; }
+  #pinBox input { width: 100%; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 18px; text-align: center; letter-spacing: 4px; margin: 12px 0; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">💳 التحكم في المدفوعات والمطابقة</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>💳 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="pinOverlay">
+  <div id="pinBox">
+    <div style="font-weight:800;margin-bottom:4px">تأكيد بـ PIN</div>
+    <div style="font-size:12px;color:var(--faint)" id="pinContext"></div>
+    <input id="pinInput" type="password" inputmode="numeric" maxlength="6" placeholder="PIN" />
+    <div class="err" id="pinErr"></div>
+    <button id="pinSubmitBtn" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--red);color:#fff;font-weight:800;cursor:pointer">تأكيد</button>
+    <button id="pinCancelBtn" style="width:100%;padding:10px;margin-top:6px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--faint);cursor:pointer">إلغاء</button>
+  </div>
+</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="overview">نظرة عامة</div>
+    <div class="tabbtn" data-tab="payments">سجل المدفوعات</div>
+    <div class="tabbtn" data-tab="adjustments">طلبات تعديل الدفع</div>
+    <div class="tabbtn" data-tab="talabat">مطابقة طلبات</div>
+    <div class="tabbtn" data-tab="instapay">إنستاباي/أورانج كاش</div>
+    <div class="tabbtn" data-tab="visa">تسوية فيزا</div>
+    <div class="tabbtn" data-tab="exceptions">الاستثناءات والمخاطر</div>
+    <div class="tabbtn" id="auditTabBtn" data-tab="audit" style="display:none">سجل التدقيق</div>
+  </div>
+
+  <!-- 1: نظرة عامة -->
+  <div class="panel active" id="panel-overview">
+    <div class="statcards">
+      <div class="statcard"><div class="num" id="ovPoints">—</div><div class="label">إجمالي نقاط المخاطر (اليوم)</div></div>
+      <div class="statcard"><div class="num" id="ovTier">—</div><div class="label">مستوى الخطر</div></div>
+      <div class="statcard"><div class="num" id="ovExceptions">—</div><div class="label">عدد الاستثناءات (اليوم)</div></div>
+      <div class="statcard"><div class="num" id="ovPending">—</div><div class="label">طلبات تعديل دفع معلّقة</div></div>
+    </div>
+    <div class="formbox">
+      <div style="font-size:12px;color:var(--faint)">رسالة التقرير اليومي (نفس محتوى الإرسال التلقائي لو مفعّل):</div>
+      <pre id="ovMessage" style="white-space:pre-wrap;font-size:12px;margin-top:8px"></pre>
+    </div>
+  </div>
+
+  <!-- 2: سجل المدفوعات -->
+  <div class="panel" id="panel-payments">
+    <div class="formbox">
+      <div class="row">
+        <label class="small">من</label><input id="payFrom" type="date" />
+        <label class="small">إلى</label><input id="payTo" type="date" />
+        <select id="payChannel"><option value="">كل القنوات</option><option value="pos">كاشير</option><option value="talabat">طلبات</option><option value="website">الموقع</option><option value="callcenter">كول سنتر</option></select>
+        <select id="payStatus"><option value="">كل الحالات</option><option value="LOCKED">مقفول</option><option value="ADJUSTED">اتعدّل</option></select>
+        <button id="payFilterBtn">فلترة</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الوقت</th><th>الطلب</th><th>طريقة الدفع</th><th>القناة</th><th>المبلغ</th><th>الحالة</th><th>سجّلها</th></tr></thead>
+      <tbody id="paymentsBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 3: طلبات تعديل الدفع -->
+  <div class="panel" id="panel-adjustments">
+    <h1>طلب تعديل جديد</h1>
+    <div class="formbox">
+      <div class="row">
+        <label class="small">رقم سجل الدفع (payment id)</label>
+        <input id="adjPaymentId" type="number" style="max-width:120px" />
+        <label class="small">طريقة الدفع المقترحة (اختياري)</label>
+        <select id="adjProposedMethod"><option value="">بدون تغيير</option></select>
+        <label class="small">المبلغ المقترح (اختياري)</label>
+        <input id="adjProposedAmount" type="number" step="0.01" style="max-width:120px" />
+      </div>
+      <div class="row"><input id="adjReason" placeholder="سبب التعديل (إلزامي)" /></div>
+      <button id="adjSubmitBtn">ابعت الطلب</button>
+      <div class="err" id="adjErr"></div>
+      <div class="ok" id="adjOk"></div>
+    </div>
+    <h1>الطلبات</h1>
+    <div class="formbox">
+      <div class="row">
+        <select id="adjStatusFilter"><option value="PENDING">قيد الانتظار</option><option value="">الكل</option><option value="APPROVED">اتوافق عليها</option><option value="REJECTED">اترفضت</option></select>
+        <button id="adjRefreshBtn">تحديث</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الوقت</th><th>الطلب</th><th>الدفعة</th><th>فرق المبلغ</th><th>السبب</th><th>مين طلب</th><th>الحالة</th><th></th></tr></thead>
+      <tbody id="adjustmentsBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 4: مطابقة طلبات -->
+  <div class="panel" id="panel-talabat">
+    <div class="formbox" id="talabatEntryBox">
+      <h1 style="margin-top:0">إدخال كشف طلبات (كاش محصّل)</h1>
+      <div class="row">
+        <label class="small">الفرع</label><select id="talBranch"></select>
+        <label class="small">التاريخ</label><input id="talDate" type="date" />
+        <label class="small">المبلغ</label><input id="talAmount" type="number" step="0.01" style="max-width:120px" />
+        <label class="small">مرجع</label><input id="talRef" placeholder="رقم الكشف" style="max-width:140px" />
+      </div>
+      <button id="talSubmitBtn">حفظ</button>
+      <div class="err" id="talErr"></div><div class="ok" id="talOk"></div>
+    </div>
+    <h1>فروق الكاش (محسوبة)</h1>
+    <div class="tablewrap"><table>
+      <thead><tr><th>اليوم</th><th>الفرع</th><th>داخلي</th><th>كشف طلبات</th><th>الفرق</th><th>نقاط</th></tr></thead>
+      <tbody id="talExceptionsBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 5: إنستاباي/أورانج كاش -->
+  <div class="panel" id="panel-instapay">
+    <div class="formbox" id="instaEntryBox">
+      <h1 style="margin-top:0">إدخال سطر كشف</h1>
+      <div class="row">
+        <select id="instaSource"><option value="instapay">إنستاباي</option><option value="orange_cash">أورانج كاش</option></select>
+        <label class="small">الفرع</label><select id="instaBranch"></select>
+        <label class="small">التاريخ</label><input id="instaDate" type="date" />
+        <label class="small">المبلغ</label><input id="instaAmount" type="number" step="0.01" style="max-width:120px" />
+        <label class="small">مرجع</label><input id="instaRef" placeholder="رقم المعاملة" style="max-width:140px" />
+      </div>
+      <button id="instaSubmitBtn">حفظ</button>
+      <div class="err" id="instaErr"></div><div class="ok" id="instaOk"></div>
+    </div>
+    <h1>سطور غير مطابقة</h1>
+    <div class="tablewrap"><table>
+      <thead><tr><th>المصدر</th><th>التاريخ</th><th>مرجع/طلب</th><th>المبلغ</th><th>النوع</th></tr></thead>
+      <tbody id="instaExceptionsBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 6: تسوية فيزا -->
+  <div class="panel" id="panel-visa">
+    <div class="formbox" id="visaEntryBox">
+      <h1 style="margin-top:0">إدخال كشف تسوية فيزا</h1>
+      <div class="row">
+        <label class="small">الفرع</label><select id="visaBranch"></select>
+        <label class="small">التاريخ</label><input id="visaDate" type="date" />
+        <label class="small">المبلغ</label><input id="visaAmount" type="number" step="0.01" style="max-width:120px" />
+        <label class="small">مرجع</label><input id="visaRef" placeholder="رقم الدفعة" style="max-width:140px" />
+      </div>
+      <button id="visaSubmitBtn">حفظ</button>
+      <div class="err" id="visaErr"></div><div class="ok" id="visaOk"></div>
+    </div>
+    <h1>فروق التسوية (محسوبة)</h1>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الفرع</th><th>داخلي</th><th>كشف التسوية</th><th>الفرق</th><th>نقاط</th></tr></thead>
+      <tbody id="visaExceptionsBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 7: الاستثناءات والمخاطر -->
+  <div class="panel" id="panel-exceptions">
+    <div class="formbox">
+      <div class="row">
+        <label class="small">من</label><input id="excFrom" type="date" />
+        <label class="small">إلى</label><input id="excTo" type="date" />
+        <button id="excFilterBtn">فلترة</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>النوع</th><th>الوصف</th><th>نقاط</th><th>الفرع</th><th>الوقت</th></tr></thead>
+      <tbody id="excBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 8: سجل التدقيق -->
+  <div class="panel" id="panel-audit">
+    <div class="tablewrap"><table>
+      <thead><tr><th>الوقت</th><th>الحدث</th><th>الدفعة</th><th>مين</th><th>تفاصيل</th></tr></thead>
+      <tbody id="auditBody"></tbody>
+    </table></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الشاشة دي.</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "accountant"];
+const reconcileRoles = ["admin", "accountant"];
+const auditRoles = ["admin", "accountant"];
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    loadTab(btn.dataset.tab);
+  };
+});
+function loadTab(tab) {
+  if (tab === "overview") loadOverview();
+  if (tab === "payments") loadPayments();
+  if (tab === "adjustments") loadAdjustments();
+  if (tab === "talabat") loadTalabat();
+  if (tab === "instapay") loadInstapay();
+  if (tab === "visa") loadVisa();
+  if (tab === "exceptions") loadExceptions();
+  if (tab === "audit") loadAudit();
+}
+
+const dt = (s) => s ? new Date(s).toLocaleString("ar-EG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+const today = () => new Date().toLocaleDateString("en-CA");
+
+// ---------------- PIN modal (Payment Adjustment Request approval) ----------------
+let pinResolve = null;
+function askPin(contextText, meta) {
+  document.getElementById("pinContext").textContent = contextText;
+  document.getElementById("pinInput").value = "";
+  document.getElementById("pinErr").textContent = "";
+  document.getElementById("pinOverlay").classList.add("show");
+  document.getElementById("pinInput").focus();
+  return new Promise((resolve) => { pinResolve = { resolve, meta }; });
+}
+document.getElementById("pinCancelBtn").onclick = () => {
+  document.getElementById("pinOverlay").classList.remove("show");
+  if (pinResolve) { pinResolve.resolve(null); pinResolve = null; }
+};
+document.getElementById("pinSubmitBtn").onclick = async () => {
+  const pin = document.getElementById("pinInput").value.trim();
+  const errBox = document.getElementById("pinErr");
+  if (!pin) { errBox.textContent = "دخّل الـ PIN"; return; }
+  if (!pinResolve) return;
+  try {
+    const data = await api("/api/auth/verify-override-pin", {
+      method: "POST", body: JSON.stringify({ pin, ...pinResolve.meta }),
+    });
+    document.getElementById("pinOverlay").classList.remove("show");
+    pinResolve.resolve(data);
+    pinResolve = null;
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+
+// ---------------- 1: نظرة عامة ----------------
+async function loadOverview() {
+  try {
+    const report = await api(`/api/payment-control/reports/daily-owner?date=${today()}`);
+    document.getElementById("ovPoints").textContent = report.totalPoints;
+    document.getElementById("ovTier").textContent = { HIGH: "عالي", MEDIUM: "متوسط", LOW: "منخفض" }[report.tier] || report.tier;
+    document.getElementById("ovExceptions").textContent = report.exceptions.length;
+    document.getElementById("ovMessage").textContent = report.message;
+  } catch (e) { /* تجاهل */ }
+  try {
+    const pending = await api("/api/payment-control/adjustment-requests?status=PENDING");
+    document.getElementById("ovPending").textContent = pending.length;
+  } catch (e) { /* تجاهل */ }
+}
+
+// ---------------- 2: سجل المدفوعات ----------------
+async function loadPayments() {
+  const body = document.getElementById("paymentsBody");
+  body.innerHTML = `<tr><td colspan="7">...جاري التحميل</td></tr>`;
+  const params = new URLSearchParams();
+  params.set("from", document.getElementById("payFrom").value || today());
+  params.set("to", document.getElementById("payTo").value || today());
+  if (document.getElementById("payChannel").value) params.set("channel", document.getElementById("payChannel").value);
+  if (document.getElementById("payStatus").value) params.set("status", document.getElementById("payStatus").value);
+  try {
+    const list = await api(`/api/payment-control/payments?${params.toString()}`);
+    body.innerHTML = list.map(p => `
+      <tr>
+        <td>${dt(p.locked_at)}</td>
+        <td>#${p.order_id}</td>
+        <td>${p.payment_method_name || "—"}</td>
+        <td>${p.channel}</td>
+        <td>${Number(p.amount).toFixed(2)}</td>
+        <td><span class="pill ${p.status}">${p.status}</span></td>
+        <td>${p.locked_by_name || "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="7">مفيش مدفوعات مطابقة</td></tr>`;
+  } catch (e) { body.innerHTML = `<tr><td colspan="7">${e.message}</td></tr>`; }
+}
+document.getElementById("payFilterBtn").onclick = loadPayments;
+
+// ---------------- 3: طلبات تعديل الدفع ----------------
+async function loadPaymentMethodsInto(selectEl) {
+  try {
+    const data = await api("/api/config");
+    selectEl.innerHTML = `<option value="">بدون تغيير</option>` + (data.paymentMethods || []).map(m => `<option value="${m.id}">${m.name}</option>`).join("");
+  } catch (e) { /* تجاهل */ }
+}
+document.getElementById("adjSubmitBtn").onclick = async () => {
+  const errBox = document.getElementById("adjErr"); const okBox = document.getElementById("adjOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const paymentId = Number(document.getElementById("adjPaymentId").value);
+  const reason = document.getElementById("adjReason").value.trim();
+  const proposedPaymentMethodId = Number(document.getElementById("adjProposedMethod").value) || undefined;
+  const proposedAmountRaw = document.getElementById("adjProposedAmount").value;
+  const proposedAmount = proposedAmountRaw ? Number(proposedAmountRaw) : undefined;
+  if (!paymentId || !reason) { errBox.textContent = "لازم رقم الدفعة والسبب"; return; }
+  try {
+    await api("/api/payment-control/adjustment-requests", {
+      method: "POST", body: JSON.stringify({ paymentId, reason, proposedPaymentMethodId, proposedAmount }),
+    });
+    okBox.textContent = "اتبعت الطلب، في انتظار الاعتماد";
+    document.getElementById("adjPaymentId").value = "";
+    document.getElementById("adjReason").value = "";
+    document.getElementById("adjProposedAmount").value = "";
+    loadAdjustments();
+  } catch (e) { errBox.textContent = e.message; }
+};
+async function loadAdjustments() {
+  const body = document.getElementById("adjustmentsBody");
+  body.innerHTML = `<tr><td colspan="8">...جاري التحميل</td></tr>`;
+  const status = document.getElementById("adjStatusFilter").value;
+  try {
+    const params = status ? `?status=${status}` : "";
+    const list = await api(`/api/payment-control/adjustment-requests${params}`);
+    body.innerHTML = list.map(r => `
+      <tr>
+        <td>${dt(r.requested_at)}</td>
+        <td>#${r.order_id}</td>
+        <td>${r.payment_id}</td>
+        <td>${Number(r.amount_delta).toFixed(2)}</td>
+        <td>${r.reason}</td>
+        <td>${r.requested_by_name || "—"}</td>
+        <td><span class="pill ${r.status}">${r.status}</span></td>
+        <td>
+          ${r.status === "PENDING" ? `
+            <button class="smallbtn approve" data-id="${r.id}" data-act="approve">اعتماد</button>
+            <button class="smallbtn reject" data-id="${r.id}" data-act="reject">رفض</button>
+          ` : ""}
+        </td>
+      </tr>
+    `).join("") || `<tr><td colspan="8">مفيش طلبات</td></tr>`;
+    body.querySelectorAll("[data-act]").forEach(btn => { btn.onclick = () => decideAdjustment(btn.dataset.id, btn.dataset.act); });
+  } catch (e) { body.innerHTML = `<tr><td colspan="8">${e.message}</td></tr>`; }
+}
+async function decideAdjustment(id, act) {
+  if (act === "reject") {
+    if (!confirm("متأكد إنك عايز ترفض الطلب ده؟")) return;
+    try { await api(`/api/payment-control/adjustment-requests/${id}/reject`, { method: "POST" }); loadAdjustments(); }
+    catch (e) { alert(e.message); }
+    return;
+  }
+  const grant = await askPin("اعتماد طلب تعديل الدفع", { actionType: "PAYMENT_ADJUSTMENT", targetType: "payment_adjustment_request", targetId: id });
+  if (!grant) return;
+  try {
+    await api(`/api/payment-control/adjustment-requests/${id}/approve`, { method: "POST", body: JSON.stringify({ approvalToken: grant.token }) });
+    loadAdjustments();
+  } catch (e) { alert(e.message); }
+}
+document.getElementById("adjRefreshBtn").onclick = loadAdjustments;
+document.getElementById("adjStatusFilter").addEventListener("change", loadAdjustments);
+
+// ---------------- فروع (مشتركة للتبويبات 4-6) ----------------
+async function loadBranchesInto(selectEl) {
+  try {
+    const branches = await api("/api/branches");
+    selectEl.innerHTML = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+    if (auth.user.branchId) selectEl.value = auth.user.branchId;
+  } catch (e) { /* تجاهل */ }
+}
+
+// ---------------- 4: مطابقة طلبات ----------------
+document.getElementById("talSubmitBtn").onclick = async () => {
+  const errBox = document.getElementById("talErr"); const okBox = document.getElementById("talOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const branchId = Number(document.getElementById("talBranch").value);
+  const externalDate = document.getElementById("talDate").value;
+  const externalAmount = Number(document.getElementById("talAmount").value);
+  const externalReference = document.getElementById("talRef").value.trim();
+  if (!branchId || !externalDate || !externalAmount) { errBox.textContent = "لازم الفرع والتاريخ والمبلغ"; return; }
+  try {
+    await api("/api/payment-control/reconciliation-records", {
+      method: "POST", body: JSON.stringify({ branchId, source: "talabat_statement", externalDate, externalAmount, externalReference }),
+    });
+    okBox.textContent = "اتسجّل";
+    document.getElementById("talAmount").value = ""; document.getElementById("talRef").value = "";
+    loadTalabat();
+  } catch (e) { errBox.textContent = e.message; }
+};
+async function loadTalabat() {
+  const body = document.getElementById("talExceptionsBody");
+  body.innerHTML = `<tr><td colspan="6">...جاري التحميل</td></tr>`;
+  try {
+    const { exceptions } = await api(`/api/payment-control/exceptions?from=2000-01-01&to=${today()}`);
+    const rows = exceptions.filter(e => e.type === "TALABAT_CASH_DIFF");
+    body.innerHTML = rows.map(r => `
+      <tr><td>${r.day}</td><td>${r.branchId}</td><td>${r.internalAmount.toFixed(2)}</td><td>${r.externalAmount.toFixed(2)}</td><td>${r.diff.toFixed(2)}</td><td>${r.points}</td></tr>
+    `).join("") || `<tr><td colspan="6">مفيش فروق</td></tr>`;
+  } catch (e) { body.innerHTML = `<tr><td colspan="6">${e.message}</td></tr>`; }
+}
+
+// ---------------- 5: إنستاباي/أورانج كاش ----------------
+document.getElementById("instaSubmitBtn").onclick = async () => {
+  const errBox = document.getElementById("instaErr"); const okBox = document.getElementById("instaOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const source = document.getElementById("instaSource").value;
+  const branchId = Number(document.getElementById("instaBranch").value);
+  const externalDate = document.getElementById("instaDate").value;
+  const externalAmount = Number(document.getElementById("instaAmount").value);
+  const externalReference = document.getElementById("instaRef").value.trim();
+  if (!branchId || !externalDate || !externalAmount) { errBox.textContent = "لازم الفرع والتاريخ والمبلغ"; return; }
+  try {
+    await api("/api/payment-control/reconciliation-records", {
+      method: "POST", body: JSON.stringify({ branchId, source, externalDate, externalAmount, externalReference }),
+    });
+    okBox.textContent = "اتسجّل";
+    document.getElementById("instaAmount").value = ""; document.getElementById("instaRef").value = "";
+    loadInstapay();
+  } catch (e) { errBox.textContent = e.message; }
+};
+async function loadInstapay() {
+  const body = document.getElementById("instaExceptionsBody");
+  body.innerHTML = `<tr><td colspan="5">...جاري التحميل</td></tr>`;
+  try {
+    const { exceptions } = await api(`/api/payment-control/exceptions?from=2000-01-01&to=${today()}`);
+    const rows = exceptions.filter(e => e.type.includes("UNMATCHED"));
+    body.innerHTML = rows.map(r => `
+      <tr><td>${r.type}</td><td>${dt(r.detectedAt)}</td><td>${r.orderId ? "#" + r.orderId : (r.reference || "—")}</td><td>${Number(r.amount).toFixed(2)}</td><td>${r.points}</td></tr>
+    `).join("") || `<tr><td colspan="5">مفيش استثناءات</td></tr>`;
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">${e.message}</td></tr>`; }
+}
+
+// ---------------- 6: تسوية فيزا ----------------
+document.getElementById("visaSubmitBtn").onclick = async () => {
+  const errBox = document.getElementById("visaErr"); const okBox = document.getElementById("visaOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const branchId = Number(document.getElementById("visaBranch").value);
+  const externalDate = document.getElementById("visaDate").value;
+  const externalAmount = Number(document.getElementById("visaAmount").value);
+  const externalReference = document.getElementById("visaRef").value.trim();
+  if (!branchId || !externalDate || !externalAmount) { errBox.textContent = "لازم الفرع والتاريخ والمبلغ"; return; }
+  try {
+    await api("/api/payment-control/reconciliation-records", {
+      method: "POST", body: JSON.stringify({ branchId, source: "visa_settlement", externalDate, externalAmount, externalReference }),
+    });
+    okBox.textContent = "اتسجّل";
+    document.getElementById("visaAmount").value = ""; document.getElementById("visaRef").value = "";
+    loadVisa();
+  } catch (e) { errBox.textContent = e.message; }
+};
+async function loadVisa() {
+  const body = document.getElementById("visaExceptionsBody");
+  body.innerHTML = `<tr><td colspan="5">...جاري التحميل</td></tr>`;
+  try {
+    const { exceptions } = await api(`/api/payment-control/exceptions?from=2000-01-01&to=${today()}`);
+    const rows = exceptions.filter(e => e.type === "VISA_SETTLEMENT_DIFF");
+    body.innerHTML = rows.map(r => `
+      <tr><td>${r.branchId}</td><td>${r.internalAmount.toFixed(2)}</td><td>${r.externalAmount.toFixed(2)}</td><td>${r.diff.toFixed(2)}</td><td>${r.points}</td></tr>
+    `).join("") || `<tr><td colspan="5">مفيش فروق</td></tr>`;
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">${e.message}</td></tr>`; }
+}
+
+// ---------------- 7: الاستثناءات والمخاطر ----------------
+async function loadExceptions() {
+  const body = document.getElementById("excBody");
+  body.innerHTML = `<tr><td colspan="5">...جاري التحميل</td></tr>`;
+  const from = document.getElementById("excFrom").value || "2000-01-01";
+  const to = document.getElementById("excTo").value || today();
+  try {
+    const { exceptions } = await api(`/api/payment-control/exceptions?from=${from}&to=${to}`);
+    body.innerHTML = exceptions.map(e => `
+      <tr><td>${e.type}</td><td>${e.description}</td><td><span class="pill ${e.points >= 60 ? 'HIGH' : e.points >= 30 ? 'MEDIUM' : 'LOW'}">${e.points}</span></td><td>${e.branchId || "—"}</td><td>${dt(e.detectedAt || e.day)}</td></tr>
+    `).join("") || `<tr><td colspan="5">مفيش استثناءات في الفترة دي</td></tr>`;
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">${e.message}</td></tr>`; }
+}
+document.getElementById("excFilterBtn").onclick = loadExceptions;
+
+// ---------------- 8: سجل التدقيق ----------------
+async function loadAudit() {
+  const body = document.getElementById("auditBody");
+  body.innerHTML = `<tr><td colspan="5">...جاري التحميل</td></tr>`;
+  try {
+    const logs = await api("/api/payment-control/audit-logs");
+    body.innerHTML = logs.map(l => `
+      <tr><td>${dt(l.created_at)}</td><td>${l.action_type}</td><td>${l.payment_id || "—"}</td><td>${l.actor_name || "—"}</td>
+        <td><span class="detailsToggle" style="color:var(--gold-bright);cursor:pointer;text-decoration:underline" data-id="pal-${l.id}">عرض</span>
+        <pre style="display:none;background:var(--bg-alt);border:1px solid var(--line);border-radius:6px;padding:8px;font-size:11px;white-space:pre-wrap;word-break:break-all" id="pal-${l.id}">${JSON.stringify({ before: l.before_state, after: l.after_state }, null, 2)}</pre></td></tr>
+    `).join("") || `<tr><td colspan="5">مفيش سجلات</td></tr>`;
+    body.querySelectorAll(".detailsToggle").forEach(t => {
+      t.onclick = () => { const box = document.getElementById(t.dataset.id); box.style.display = box.style.display === "block" ? "none" : "block"; };
+    });
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">${e.message}</td></tr>`; }
+}
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+
+  if (!reconcileRoles.includes(auth.user.role)) {
+    ["talabatEntryBox", "instaEntryBox", "visaEntryBox"].forEach(id => document.getElementById(id).style.display = "none");
+  }
+  if (auditRoles.includes(auth.user.role)) document.getElementById("auditTabBtn").style.display = "block";
+
+  await loadPaymentMethodsInto(document.getElementById("adjProposedMethod"));
+  await Promise.all([
+    loadBranchesInto(document.getElementById("talBranch")),
+    loadBranchesInto(document.getElementById("instaBranch")),
+    loadBranchesInto(document.getElementById("visaBranch")),
+  ]);
+  loadOverview();
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+<script src="/js/theme.js"></script>
+</body>
+</html>

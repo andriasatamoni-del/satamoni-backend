@@ -55,6 +55,9 @@ const ROLE_PERMISSIONS = {
     // مدير فرع حقيقي عادي، مفيش نوع حساب "خدمة" منفصل في النظام) - claim/printed/failed على طابور فرعه بس
     "printers.view", "printers.manage", "print_routing.view", "print_routing.manage",
     "print_jobs.view", "print_jobs.manage_queue", "print_jobs.trigger",
+    // Payment Control & Reconciliation: مدير الفرع (Shift Supervisor) يشوف مدفوعات فرعه، يقدر يطلب
+    // تعديل دفع، ويعتمد أي مبلغ - بس مش السقف العالي (ده accountant.approve_high/admin بس)
+    "payment_control.view", "payment_control.adjustment.request", "payment_control.adjustment.approve",
   ],
   accountant: [
     "inventory.view", "recipes.view",
@@ -80,6 +83,11 @@ const ROLE_PERMISSIONS = {
     "deliveries.view_branch", "driver_settlements.review",
     // رؤية بس لطابور الطباعة - نفس منطق shifts.view_branch (يراجع، مش هو اللي بيدير الطابعات فعليًا)
     "print_jobs.view",
+    // Payment Control & Reconciliation: المحاسب هو صاحب المطابقة الفعلية (إدخال كشوف طلبات/فيزا/
+    // إنستاباي/أورانج كاش) وحل الاستثناءات، وهو معتمد السقف العالي لطلبات تعديل الدفع
+    "payment_control.view", "payment_control.adjustment.request",
+    "payment_control.adjustment.approve", "payment_control.adjustment.approve_high",
+    "payment_control.reconciliation.enter", "payment_control.exceptions.resolve", "payment_control.audit.view",
   ],
   cashier: [
     "orders.create", "orders.discount.request", "orders.void.request",
@@ -118,6 +126,9 @@ const ROLE_PERMISSIONS = {
     // كان هيفضل يفشل بـ403 لأن الكاشير معندوش deliveries.assign أصلًا - نفس فلسفة driver_settlements.create
     // بالظبط: الكاشير هو اللي فعليًا واقف قدام السائق وقت الخروج، فمنطقي يقدر يعيّنه ويسجّل خروجه/تسليمه بنفسه
     "deliveries.assign",
+    // Payment Control & Reconciliation: الكاشير هو اللي هيلاحظ لو طريقة الدفع اتسجلت غلط على طلبه هو،
+    // فمنطقي يقدر يبدأ طلب التعديل بنفسه (زي طلب الخصم/الاسترجاع بالظبط) - بس مش يعتمده هو نفسه
+    "payment_control.adjustment.request",
   ],
   callcenter: [
     "orders.create", "orders.discount.request", "orders.void.request",
@@ -281,6 +292,15 @@ const PERMISSION_CATALOG = [
     { key: "print_jobs.view", label: "رؤية طابور الطباعة" },
     { key: "print_jobs.manage_queue", label: "إدارة طابور الطباعة (Print Agent)" },
     { key: "print_jobs.trigger", label: "طباعة/إعادة طباعة إيصال" },
+  ] },
+  { group: "payment_control", groupLabel: "التحكم في المدفوعات والمطابقة", permissions: [
+    { key: "payment_control.view", label: "رؤية لوحة التحكم في المدفوعات" },
+    { key: "payment_control.adjustment.request", label: "طلب تعديل دفع" },
+    { key: "payment_control.adjustment.approve", label: "اعتماد طلب تعديل دفع (أي مبلغ)" },
+    { key: "payment_control.adjustment.approve_high", label: "اعتماد طلب تعديل دفع كبير (فوق السقف)" },
+    { key: "payment_control.reconciliation.enter", label: "إدخال كشوف مطابقة خارجية" },
+    { key: "payment_control.exceptions.resolve", label: "حل استثناءات المطابقة" },
+    { key: "payment_control.audit.view", label: "رؤية سجل تدقيق المدفوعات" },
   ] },
   { group: "payslips", groupLabel: "قسائم الرواتب", permissions: [
     { key: "payslips.view_own", label: "رؤية قسيمة راتبه (موظف)" },

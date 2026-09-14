@@ -101,6 +101,7 @@ app.use("/api/order-ratings", require("./routes/order-ratings"));
 // المرحلة 8.42: الخزائن (خزينة رئيسية لكل فرع + دروج الكاشيرية) والبنوك/حساباتها
 app.use("/api/treasuries", require("./routes/treasuries"));
 app.use("/api/banks", require("./routes/banks"));
+app.use("/api/payment-control", require("./routes/payment-control"));
 
 // المرحلة 6 (6F): /health كان بيرجّع "ok" ثابتة دايمًا حتى لو قاعدة البيانات مش شغالة خالص - ده بيخلي
 // أي مراقبة/health-check بتعتمد عليه (لوحة تحكم استضافة، uptime monitor) تعتقد السيرفر تمام رغم إن
@@ -135,6 +136,10 @@ const PORT = process.env.PORT || 4000;
 // يبعت طلبات للـapp في نفس الـprocess من غير سيرفر شغال فعليًا
 if (require.main === module) {
   const server = app.listen(PORT, () => console.log(`Satamoni backend running on port ${PORT}`));
+
+  // Payment Control & Reconciliation: التقرير اليومي التلقائي - معطّل افتراضيًا (راجع db/payment-report-scheduler.js)
+  const { startPaymentReportScheduler } = require("./db/payment-report-scheduler");
+  startPaymentReportScheduler();
 
   // المرحلة 6 (6I): من غير ده، أي إيقاف للسيرفر (نشر جديد، إعادة تشغيل، docker/orchestrator بيبعت
   // SIGTERM عادةً) كان بيقطع الطلبات الجارية فورًا (نص عملية بيع/دفع ممكن تتقطع في نص التنفيذ) ويسيب
