@@ -5,7 +5,8 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { logAudit } = require("../db/audit");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
-const { computePayrollSummary, toCents } = require("../services/payroll-engine");
+const { computePayrollSummary, computePayrollCostByBranch, toCents } = require("../services/payroll-engine");
+const { computeRevenueAndCogsByBranch } = require("../services/revenue-engine");
 const { recordEmployeeHistoryChanges } = require("../db/employee-history");
 const { parsePayrollWorkbook, normalizeArabicName } = require("../db/payroll-excel-import");
 const { checkTerminationBlockers, applyTerminationCascade } = require("../db/employee-termination");
@@ -592,35 +593,46 @@ router.delete("/adjustments/:id", async (req, res) => {
   }
 });
 
-// ---------------- مبيعات الأقسام الشهرية (لمقارنة تكلفة الرواتب بالمبيعات) ----------------
-router.get("/department-sales", async (req, res) => {
-  const { year, month } = req.query;
+// ---------------- مبيعات الفروع الشهرية (لمقارنة تكلفة الرواتب بالمبيعات) ----------------
+// كانت مبيعات كل قسم بتتسجل يدويًا (department_sales) - رقم بيدخله حد بنفسه ومش مربوط بالأوردرات
+// الفعلية، فسهل يتنسى أو يتغلط فيه. دلوقتي الرقم بيتحسب 100% تلقائيًا من orders الحقيقية لكل فرع
+// (نفس مصدر الإيراد المستخدم في قائمة الدخل - services/revenue-engine.js) وبيتقارن مباشرة بتكلفة
+// الرواتب الفعلية لنفس الفرع (services/payroll-engine.js) - مفيش إدخال يدوي خالص
+router.get("/branch-sales", async (req, res) => {
+  const year = Number(req.query.year);
+  const month = Number(req.query.month);
   if (!year || !month) return res.status(400).json({ error: "لازم تحدد السنة والشهر" });
   try {
-    const result = await pool.query(
-      `SELECT ds.*, b.name AS branch_name FROM department_sales ds
-       JOIN branches b ON b.id = ds.branch_id
-       WHERE ds.year = $1 AND ds.month = $2 ORDER BY b.name, ds.department`,
-      [year, month]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    const from = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
-router.post("/department-sales", async (req, res) => {
-  const { branchId, department, year, month, salesAmount = 0 } = req.body;
-  if (!branchId || !department || !year || !month) return res.status(400).json({ error: "بيانات ناقصة" });
-  try {
-    const result = await pool.query(
-      `INSERT INTO department_sales (branch_id, department, year, month, sales_amount)
-       VALUES ($1,$2,$3,$4,$5)
-       ON CONFLICT (branch_id, department, year, month) DO UPDATE SET sales_amount = EXCLUDED.sales_amount
-       RETURNING *`,
-      [branchId, department, year, month, salesAmount]
-    );
-    res.status(201).json(result.rows[0]);
+    const [branchesResult, revenueByBranch, payroll, settings] = await Promise.all([
+      pool.query("SELECT id, name FROM branches WHERE is_central_kitchen = FALSE ORDER BY name"),
+      computeRevenueAndCogsByBranch(pool, from, to),
+      computePayrollCostByBranch(pool, year, month),
+      pool.query("SELECT payroll_to_sales_warn_ratio FROM payroll_settings WHERE id = 1"),
+    ]);
+
+    const revenueByBranchId = {};
+    revenueByBranch.forEach((r) => { if (r.branchId) revenueByBranchId[r.branchId] = r.revenue; });
+    const warnRatio = Number(settings.rows[0]?.payroll_to_sales_warn_ratio ?? 0.3);
+
+    const rows = branchesResult.rows.map((b) => {
+      const sales = revenueByBranchId[b.id] || 0;
+      const payrollCost = payroll.byBranch[b.id] || 0;
+      const ratio = sales > 0 ? payrollCost / sales : null;
+      return {
+        branchId: b.id,
+        branchName: b.name,
+        sales,
+        payrollCost,
+        ratio,
+        overWarnThreshold: ratio !== null && ratio > warnRatio,
+      };
+    });
+
+    res.json({ year, month, warnRatio, branches: rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

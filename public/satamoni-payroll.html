@@ -536,27 +536,17 @@
     <div class="err" id="tierErr"></div>
     <div class="ok" id="tierOk"></div>
 
-    <h1>مبيعات الأقسام الشهرية (لمقارنة تكلفة الرواتب بالمبيعات)</h1>
-    <div class="formbox">
-      <div class="row">
-        <select id="dsBranchSelect"></select>
-        <select id="dsDepartment"></select>
-        <select id="dsYear"></select>
-        <select id="dsMonth"></select>
-        <input id="dsAmount" type="number" placeholder="قيمة المبيعات" />
-        <button id="dsSaveBtn">حفظ</button>
-      </div>
-      <div class="err" id="dsErr"></div>
-      <div class="ok" id="dsOk"></div>
-    </div>
+    <h1>مبيعات الفروع الشهرية (لمقارنة تكلفة الرواتب بالمبيعات)</h1>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:10px">مبيعات كل فرع بتتحسب تلقائيًا 100% من الأوردرات الفعلية على النظام (زي رقم الإيراد في قائمة الدخل بالظبط) - مفيش إدخال يدوي.</div>
     <div class="row">
       <select id="dsFilterYear"></select>
       <select id="dsFilterMonth"></select>
       <button id="dsLoadBtn">عرض</button>
     </div>
+    <div class="err" id="dsErr"></div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>الفرع</th><th>القسم</th><th>الشهر</th><th>المبيعات</th></tr></thead>
+        <thead><tr><th>الفرع</th><th>المبيعات</th><th>تكلفة الرواتب</th><th>النسبة</th></tr></thead>
         <tbody id="dsBody"></tbody>
       </table>
     </div>
@@ -1514,9 +1504,9 @@ async function openRunDetail(runId) {
   });
 }
 
-// ---------------- الإعدادات ومبيعات الأقسام (المرحلة 8.25) ----------------
+// ---------------- الإعدادات ومبيعات الفروع (المرحلة 8.25) ----------------
 // PATCH /settings و PUT /late-tiers أدمن بس في الباك إند - المحاسب يقدر يشوف بس، فبنخفي زراير الحفظ
-// دي عليه. مبيعات الأقسام (POST /department-sales) متاحة لأدمن ومحاسب زي باقي شاشة الرواتب
+// دي عليه. مبيعات الفروع (GET /branch-sales) بتتحسب تلقائيًا من الأوردرات، مفيش زرار حفظ لها خالص
 const canEditPayrollSettings = () => auth.user.role === "admin";
 
 async function initSettingsTab() {
@@ -1524,10 +1514,7 @@ async function initSettingsTab() {
   document.getElementById("tierAddBtn").style.display = canEditPayrollSettings() ? "" : "none";
   document.getElementById("tierSaveBtn").style.display = canEditPayrollSettings() ? "" : "none";
 
-  populatePeriodSelectors("dsYear", "dsMonth");
   populatePeriodSelectors("dsFilterYear", "dsFilterMonth");
-  document.getElementById("dsBranchSelect").innerHTML = branchesCache.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
-  document.getElementById("dsDepartment").innerHTML = DEPARTMENTS.map(d => `<option value="${d}">${d}</option>`).join("");
 
   await loadPayrollSettingsAndTiers();
   await loadDepartmentSales();
@@ -1625,39 +1612,24 @@ document.getElementById("tierSaveBtn").onclick = guardedClick(document.getElemen
   } catch (e) { errBox.textContent = e.message; }
 });
 
-document.getElementById("dsSaveBtn").onclick = guardedClick(document.getElementById("dsSaveBtn"), async () => {
-  const errBox = document.getElementById("dsErr");
-  const okBox = document.getElementById("dsOk");
-  errBox.textContent = ""; okBox.textContent = "";
-  try {
-    await api("/api/payroll/department-sales", {
-      method: "POST",
-      body: JSON.stringify({
-        branchId: document.getElementById("dsBranchSelect").value,
-        department: document.getElementById("dsDepartment").value,
-        year: Number(document.getElementById("dsYear").value),
-        month: Number(document.getElementById("dsMonth").value),
-        salesAmount: Number(document.getElementById("dsAmount").value || 0),
-      }),
-    });
-    okBox.textContent = "اتحفظت مبيعات القسم";
-    document.getElementById("dsFilterYear").value = document.getElementById("dsYear").value;
-    document.getElementById("dsFilterMonth").value = document.getElementById("dsMonth").value;
-    await loadDepartmentSales();
-  } catch (e) { errBox.textContent = e.message; }
-});
-
 document.getElementById("dsLoadBtn").onclick = () => loadDepartmentSales();
 
 async function loadDepartmentSales() {
+  const errBox = document.getElementById("dsErr");
+  errBox.textContent = "";
   const year = document.getElementById("dsFilterYear").value;
   const month = document.getElementById("dsFilterMonth").value;
   try {
-    const rows = await api(`/api/payroll/department-sales?year=${year}&month=${month}`);
-    document.getElementById("dsBody").innerHTML = rows.map(r => `
-      <tr><td>${r.branch_name}</td><td>${r.department}</td><td>${r.year}/${r.month}</td><td>${money(r.sales_amount)}</td></tr>
-    `).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--faint)">مفيش بيانات مسجلة للشهر ده</td></tr>`;
-  } catch (e) { document.getElementById("dsBody").innerHTML = `<tr><td colspan="4" style="color:var(--red)">${e.message}</td></tr>`; }
+    const data = await api(`/api/payroll/branch-sales?year=${year}&month=${month}`);
+    document.getElementById("dsBody").innerHTML = data.branches.map(r => `
+      <tr style="${r.overWarnThreshold ? "color:var(--red)" : ""}">
+        <td>${r.branchName}</td>
+        <td>${money(r.sales)}</td>
+        <td>${money(r.payrollCost)}</td>
+        <td>${r.ratio === null ? "—" : `${(r.ratio * 100).toFixed(1)}%${r.overWarnThreshold ? " ⚠" : ""}`}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--faint)">مفيش فروع مسجلة</td></tr>`;
+  } catch (e) { errBox.textContent = e.message; }
 }
 
 if (auth.token && auth.user) {
