@@ -259,3 +259,45 @@ test("12) عزل الفروع: محاسب فرع تاني مايقدرش يشغ�
     .set(authed(accountant2Token)).send({ branchId });
   expect(res.status).toBe(403);
 });
+
+// -------------------- حذف سطر مطابقة مُدخل يدوي/بالغلط (DELETE /reconciliation-records/:id) --------------------
+test("13) حذف سطر UNMATCHED بينجح ويشيله من القايمة", async () => {
+  const created = await request(app).post("/api/payment-control/reconciliation-records").set(authed(accountantToken)).send({
+    branchId, source: "visa_settlement", externalAmount: 999, externalDate: "2026-01-25", externalReference: "TO-DELETE",
+  });
+  expect(created.status).toBe(201);
+
+  const del = await request(app).delete(`/api/payment-control/reconciliation-records/${created.body.id}`).set(authed(accountantToken));
+  expect(del.status).toBe(200);
+
+  const check = await pool.query("SELECT * FROM payment_reconciliation_records WHERE id = $1", [created.body.id]);
+  expect(check.rows.length).toBe(0);
+});
+
+test("14) حذف سطر MATCHED بالفعل مرفوض", async () => {
+  const orderId = await makeOrder(instapayMethodId);
+  const payment = await paymentForOrder(orderId);
+  const day = payment.locked_at.toISOString().slice(0, 10);
+  // مبلغ مميّز - نفس سبب الاختبار المشابه فوق: نتجنب التصادم مع دفعات UNMATCHED متروكة من اختبارات تانية
+  await pool.query("UPDATE payments SET amount = 512.34 WHERE id = $1", [payment.id]);
+
+  const created = await request(app).post("/api/payment-control/reconciliation-records").set(authed(accountantToken)).send({
+    branchId, source: "instapay", externalAmount: 512.34, externalDate: day, externalReference: "TO-STAY-MATCHED",
+  });
+  await request(app).post("/api/payment-control/reconciliation-records/match-auto").set(authed(accountantToken))
+    .send({ source: "instapay", branchId });
+
+  const check = await pool.query("SELECT match_status FROM payment_reconciliation_records WHERE id = $1", [created.body.id]);
+  expect(check.rows[0].match_status).toBe("MATCHED");
+
+  const del = await request(app).delete(`/api/payment-control/reconciliation-records/${created.body.id}`).set(authed(accountantToken));
+  expect(del.status).toBe(400);
+});
+
+test("15) عزل الفروع: محاسب فرع تاني مايقدرش يمسح سطر فرع مختلف", async () => {
+  const created = await request(app).post("/api/payment-control/reconciliation-records").set(authed(accountantToken)).send({
+    branchId, source: "visa_settlement", externalAmount: 50, externalDate: "2026-01-26", externalReference: "BRANCH-ISOLATION",
+  });
+  const del = await request(app).delete(`/api/payment-control/reconciliation-records/${created.body.id}`).set(authed(accountant2Token));
+  expect(del.status).toBe(403);
+});

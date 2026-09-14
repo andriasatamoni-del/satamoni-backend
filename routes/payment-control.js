@@ -269,6 +269,25 @@ router.get("/reconciliation-records", requirePermission("payment_control.view"),
   }
 });
 
+// DELETE /api/payment-control/reconciliation-records/:id - حذف سطر واحد (إدخال يدوي بالغلط/مكرر) -
+// نفس قيد إلغاء دفعة الاستيراد بالظبط: مسموح بس لو السطر لسه UNMATCHED (سطر اتطابق لازم يتراجع بوعي، مش يتمسح)
+router.delete("/reconciliation-records/:id", requirePermission("payment_control.reconciliation.enter"), async (req, res) => {
+  try {
+    const record = await pool.query("SELECT * FROM payment_reconciliation_records WHERE id = $1", [req.params.id]);
+    if (record.rows.length === 0) return res.status(404).json({ error: "السطر مش موجود" });
+    if (record.rows[0].branch_id && !assertOwnBranch(req.user, record.rows[0].branch_id)) {
+      return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+    }
+    if (record.rows[0].match_status !== "UNMATCHED") {
+      return res.status(400).json({ error: "السطر ده اتطابق بالفعل - مينفعش يتمسح مباشرة" });
+    }
+    await pool.query("DELETE FROM payment_reconciliation_records WHERE id = $1", [req.params.id]);
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/payment-control/reconciliation-records/:id/match - {paymentId} مطابقة يدوية صريحة
 router.patch("/reconciliation-records/:id/match", requirePermission("payment_control.reconciliation.enter"), async (req, res) => {
   const { paymentId } = req.body;

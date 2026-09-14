@@ -227,6 +227,11 @@
       <div class="err" id="talImportErr"></div>
       <div class="ok" id="talImportOk"></div>
     </div>
+    <h1>السطور اللي دخلتها</h1>
+    <div class="tablewrap"><table>
+      <thead><tr><th>التاريخ</th><th>المبلغ</th><th>مرجع</th><th>الحالة</th><th></th></tr></thead>
+      <tbody id="talRecordsBody"></tbody>
+    </table></div>
     <h1>فروق الكاش (محسوبة)</h1>
     <div class="tablewrap"><table>
       <thead><tr><th>اليوم</th><th>الفرع</th><th>داخلي</th><th>كشف طلبات</th><th>الفرق</th><th>نقاط</th></tr></thead>
@@ -269,6 +274,11 @@
       <div class="err" id="instaImportErr"></div>
       <div class="ok" id="instaImportOk"></div>
     </div>
+    <h1>السطور اللي دخلتها</h1>
+    <div class="tablewrap"><table>
+      <thead><tr><th>المصدر</th><th>التاريخ</th><th>المبلغ</th><th>مرجع</th><th>الحالة</th><th></th></tr></thead>
+      <tbody id="instaRecordsBody"></tbody>
+    </table></div>
     <h1>سطور غير مطابقة</h1>
     <div class="tablewrap"><table>
       <thead><tr><th>المصدر</th><th>التاريخ</th><th>مرجع/طلب</th><th>المبلغ</th><th>النوع</th></tr></thead>
@@ -309,6 +319,11 @@
       <div class="err" id="visaImportErr"></div>
       <div class="ok" id="visaImportOk"></div>
     </div>
+    <h1>السطور اللي دخلتها</h1>
+    <div class="tablewrap"><table>
+      <thead><tr><th>التاريخ</th><th>المبلغ</th><th>مرجع</th><th>الحالة</th><th></th></tr></thead>
+      <tbody id="visaRecordsBody"></tbody>
+    </table></div>
     <h1>فروق التسوية (محسوبة)</h1>
     <div class="tablewrap"><table>
       <thead><tr><th>الفرع</th><th>داخلي</th><th>كشف التسوية</th><th>الفرق</th><th>نقاط</th></tr></thead>
@@ -587,6 +602,41 @@ async function loadBranchesInto(selectEl) {
   } catch (e) { /* تجاهل */ }
 }
 
+// عرض السطور المُدخلة يدويًا/بالاستيراد لأي مصدر - عشان تقدر تراجع/تمسح سطر مكرر أو غلط بدل ما تفضل
+// حاير إيه اللي دخلته بالظبط (لو الفرق بين الداخلي والمُدخل غريب)
+async function loadReconciliationRecordsList(bodyId, { source, branchId }, reloadTab) {
+  const body = document.getElementById(bodyId);
+  const params = new URLSearchParams();
+  if (source) params.set("source", source);
+  if (branchId) params.set("branchId", branchId);
+  try {
+    const records = await api(`/api/payment-control/reconciliation-records?${params.toString()}`);
+    const showSource = !source;
+    const colspan = showSource ? 6 : 5;
+    body.innerHTML = records.map(r => `
+      <tr>
+        ${showSource ? `<td>${r.source}</td>` : ""}
+        <td>${String(r.external_date).slice(0, 10)}</td>
+        <td>${Number(r.external_amount).toFixed(2)}</td>
+        <td>${r.external_reference || "—"}</td>
+        <td>${{ MATCHED: "متطابق", UNMATCHED: "غير مطابق", DISPUTED: "متنازع عليه" }[r.match_status] || r.match_status}</td>
+        <td>${r.match_status === "UNMATCHED" ? `<span class="detailsToggle" style="color:var(--err);cursor:pointer;text-decoration:underline" data-delrecord="${r.id}">حذف</span>` : "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="${colspan}">لسه معملتش أي إدخال</td></tr>`;
+    body.querySelectorAll("[data-delrecord]").forEach(link => {
+      link.onclick = async () => {
+        if (!confirm("متأكد عايز تمسح السطر ده؟")) return;
+        try {
+          await api(`/api/payment-control/reconciliation-records/${link.dataset.delrecord}`, { method: "DELETE" });
+          // نعيد تحميل التبويب كله (مش بس القايمة دي) - جدول "الفروق المحسوبة" لازم يتحدّث كمان،
+          // مش بس القايمة، عشان مايفضلش يوري رقم قديم بعد الحذف
+          if (reloadTab) reloadTab(); else loadReconciliationRecordsList(bodyId, { source, branchId }, reloadTab);
+        } catch (e) { alert(e.message); }
+      };
+    });
+  } catch (e) { body.innerHTML = `<tr><td colspan="6">${e.message}</td></tr>`; }
+}
+
 // ---------------- 4: مطابقة طلبات ----------------
 document.getElementById("talSubmitBtn").onclick = async () => {
   const errBox = document.getElementById("talErr"); const okBox = document.getElementById("talOk");
@@ -608,6 +658,7 @@ document.getElementById("talSubmitBtn").onclick = async () => {
 async function loadTalabat() {
   const body = document.getElementById("talExceptionsBody");
   body.innerHTML = `<tr><td colspan="6">...جاري التحميل</td></tr>`;
+  loadReconciliationRecordsList("talRecordsBody", { source: "talabat_statement", branchId: document.getElementById("talBranch").value }, loadTalabat);
   try {
     const { exceptions } = await api(`/api/payment-control/exceptions?from=2000-01-01&to=${today()}`);
     const rows = exceptions.filter(e => e.type === "TALABAT_CASH_DIFF");
@@ -639,6 +690,7 @@ document.getElementById("instaSubmitBtn").onclick = async () => {
 async function loadInstapay() {
   const body = document.getElementById("instaExceptionsBody");
   body.innerHTML = `<tr><td colspan="5">...جاري التحميل</td></tr>`;
+  loadReconciliationRecordsList("instaRecordsBody", { branchId: document.getElementById("instaBranch").value }, loadInstapay);
   try {
     const { exceptions } = await api(`/api/payment-control/exceptions?from=2000-01-01&to=${today()}`);
     const rows = exceptions.filter(e => e.type.includes("UNMATCHED"));
@@ -669,6 +721,7 @@ document.getElementById("visaSubmitBtn").onclick = async () => {
 async function loadVisa() {
   const body = document.getElementById("visaExceptionsBody");
   body.innerHTML = `<tr><td colspan="5">...جاري التحميل</td></tr>`;
+  loadReconciliationRecordsList("visaRecordsBody", { source: "visa_settlement", branchId: document.getElementById("visaBranch").value }, loadVisa);
   try {
     const { exceptions } = await api(`/api/payment-control/exceptions?from=2000-01-01&to=${today()}`);
     const rows = exceptions.filter(e => e.type === "VISA_SETTLEMENT_DIFF");
