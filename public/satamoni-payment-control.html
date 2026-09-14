@@ -159,7 +159,7 @@
       </div>
     </div>
     <div class="tablewrap"><table>
-      <thead><tr><th>الوقت</th><th>الطلب</th><th>طريقة الدفع</th><th>القناة</th><th>المبلغ</th><th>الحالة</th><th>سجّلها</th></tr></thead>
+      <thead><tr><th>الوقت</th><th>الطلب</th><th>طريقة الدفع</th><th>القناة</th><th>المبلغ</th><th>الحالة</th><th>سجّلها</th><th></th></tr></thead>
       <tbody id="paymentsBody"></tbody>
     </table></div>
   </div>
@@ -474,7 +474,7 @@ document.getElementById("ovBackfillBtn").onclick = async () => {
 // ---------------- 2: سجل المدفوعات ----------------
 async function loadPayments() {
   const body = document.getElementById("paymentsBody");
-  body.innerHTML = `<tr><td colspan="7">...جاري التحميل</td></tr>`;
+  body.innerHTML = `<tr><td colspan="8">...جاري التحميل</td></tr>`;
   const params = new URLSearchParams();
   params.set("from", document.getElementById("payFrom").value || today());
   params.set("to", document.getElementById("payTo").value || today());
@@ -491,9 +491,19 @@ async function loadPayments() {
         <td>${Number(p.amount).toFixed(2)}</td>
         <td><span class="pill ${p.status}">${p.status}</span></td>
         <td>${p.locked_by_name || "—"}</td>
+        <td>${p.status === "LOCKED" ? `<button class="smallbtn" style="background:var(--gold);color:#fff" data-adjustpayment="${p.id}">طلب تعديل</button>` : "—"}</td>
       </tr>
-    `).join("") || `<tr><td colspan="7">مفيش مدفوعات مطابقة</td></tr>`;
-  } catch (e) { body.innerHTML = `<tr><td colspan="7">${e.message}</td></tr>`; }
+    `).join("") || `<tr><td colspan="8">مفيش مدفوعات مطابقة</td></tr>`;
+    body.querySelectorAll("[data-adjustpayment]").forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b.dataset.tab === "adjustments"));
+        document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-adjustments"));
+        document.getElementById("adjPaymentId").value = btn.dataset.adjustpayment;
+        document.getElementById("adjReason").focus();
+        loadAdjustments();
+      };
+    });
+  } catch (e) { body.innerHTML = `<tr><td colspan="8">${e.message}</td></tr>`; }
 }
 document.getElementById("payFilterBtn").onclick = loadPayments;
 
