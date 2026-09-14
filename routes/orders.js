@@ -158,15 +158,28 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
   try {
     const {
       source, orderType, tableNumber,
-      deliveryAreaId, addressDetails, customerName, customerPhone, customerPhone2,
+      deliveryAreaId, addressDetails, customerName, customerPhone2,
       distinguishingMark, paymentMethodId, items: rawItems, deliveryFee = 0, discount = 0,
       discountApprovalToken, idempotencyKey, inventoryOverrideApprovalToken,
       loyaltyPointsRedeemed = 0, talabatOrderId, talabatCashCollected = 0,
     } = req.body;
+    let customerPhone = req.body.customerPhone;
     let branchId = req.body.branchId;
 
     if ((source === "pos" || source === "talabat") && !assertOwnBranch(req.user, branchId)) {
       return res.status(403).json({ error: "معندكش صلاحية تسجل طلب على فرع تاني" });
+    }
+
+    // باج حقيقي كان موجود: البحث في شاشة الكول سنتر بيقبل رقم العميل الأساسي أو التاني (phone2) ويعرض
+    // بروفايله صح في الحالتين، بس لو الموظف دوّر بالرقم التاني وسجّل الطلب، customerPhone هنا كان بييجي
+    // = الرقم التاني نفسه - وده مختلف عن customers.phone (الأساسي)، يعني: (1) خصم نقاط الولاء تحت كان
+    // بيفحص رصيد صفر (مفيش صف بالرقم التاني ده في عمود phone) فكان بيرفض الاستخدام برسالة "العميل معاه
+    // 0 نقطة بس" رغم إن العميل فعليًا معاه رصيد, و(2) upsert العميل تحت (ON CONFLICT (phone)) كان بينشئ
+    // صف عميل جديد مكرر بدل ما يحدّث نفس العميل. الحل: نحوّل customerPhone للرقم الأساسي الحقيقي من أول
+    // خطوة، فكل حاجة بعد كده (الحظر، النقاط، الـupsert، الطلب نفسه) بتستخدم نفس الهوية دايمًا
+    if (customerPhone) {
+      const canonical = await client.query("SELECT phone FROM customers WHERE phone = $1 OR phone2 = $1", [customerPhone]);
+      if (canonical.rows.length > 0) customerPhone = canonical.rows[0].phone;
     }
 
     // المرحلة 7P: عميل محظور مايقدرش يسجّل طلب دليفري جديد (بيتفحص برقمه الأساسي أو التاني) - التيك أواي
@@ -1429,14 +1442,20 @@ router.put(
   async (req, res) => {
     const {
       deliveryAreaId, addressDetails, distinguishingMark,
-      customerName, customerPhone, customerPhone2,
+      customerName, customerPhone2,
       paymentMethodId, items: rawItems,
       discountApprovalToken, inventoryOverrideApprovalToken, tableNumber,
     } = req.body;
+    let customerPhone = req.body.customerPhone;
 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      // نفس تحويل الرقم التاني (phone2) للرقم الأساسي بتاع POST / بالظبط - راجع التعليق هناك للسبب
+      if (customerPhone) {
+        const canonical = await client.query("SELECT phone FROM customers WHERE phone = $1 OR phone2 = $1", [customerPhone]);
+        if (canonical.rows.length > 0) customerPhone = canonical.rows[0].phone;
+      }
       const orderRes = await client.query("SELECT * FROM orders WHERE id = $1 FOR UPDATE", [req.params.id]);
       if (orderRes.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الطلب مش موجود" }); }
       const order = orderRes.rows[0];

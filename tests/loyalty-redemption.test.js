@@ -124,3 +124,41 @@ describe("خصم نقاط الولاء", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// باج حقيقي اتبلّغ بيه: شاشة الكول سنتر بتلاقي العميل صح لو اتدوّر عليه برقمه التاني (phone2) - بس لو
+// الطلب اتسجّل برقمه التاني ده، كان مفيش أي صف في customers.phone بالرقم ده، فخصم النقاط كان بيترفض
+// برسالة "العميل معاه 0 نقطة بس" رغم إن رصيده الحقيقي كبير، وكان كمان بينشئ عميل مكرر جديد بدل ما يحدّث
+// نفس العميل (ON CONFLICT (phone) مبيتفعّلش لأن الرقم التاني مش هو عمود phone الأساسي)
+describe("استخدام رقم العميل التاني (phone2) - لازم يتحوّل لنفس هوية العميل الأساسية", () => {
+  let primaryPhone, secondaryPhone;
+
+  beforeAll(async () => {
+    primaryPhone = `012${Date.now()}`.slice(0, 11);
+    secondaryPhone = `013${Date.now()}`.slice(0, 11);
+    await pool.query(
+      "INSERT INTO customers (phone, phone2, name, loyalty_points) VALUES ($1,$2,'عميل رقمين-جست',1000)",
+      [primaryPhone, secondaryPhone]
+    );
+  });
+
+  test("طلب اتسجّل برقم العميل التاني وفيه استخدام نقاط - بيتقبل ومبيتحسبش على عميل مكرر جديد", async () => {
+    const res = await request(app).post("/api/orders").set(authed(managerToken)).send({
+      branchId, source: "pos", orderType: "takeaway", customerPhone: secondaryPhone, paymentMethodId,
+      loyaltyPointsRedeemed: 200,
+      items: [{ itemId: menuItemId, variantId, quantity: 1 }],
+    });
+    expect(res.status).toBe(201);
+
+    // الرصيد اتخصم صح من صف العميل الأساسي (نفس الصف، مفيش صف تاني اتعمل)
+    const primary = await pool.query("SELECT loyalty_points FROM customers WHERE phone=$1", [primaryPhone]);
+    expect(Number(primary.rows[0].loyalty_points)).toBe(1000 - 200 + 900); // subtotal 1000-100(200*0.5)=900 مكتسبة
+
+    // الطلب نفسه اتسجّل برقم العميل الأساسي (مش رقمه التاني) - نفس هوية الملف الشخصي بالظبط
+    const order = await pool.query("SELECT customer_phone FROM orders WHERE id=$1", [res.body.orderId]);
+    expect(order.rows[0].customer_phone).toBe(primaryPhone);
+
+    // ولازم يفضل عميل واحد بس بالرقمين دول - مفيش صف مكرر جديد اتعمل بالرقم التاني كـphone أساسي
+    const duplicate = await pool.query("SELECT COUNT(*)::int AS c FROM customers WHERE phone=$1", [secondaryPhone]);
+    expect(duplicate.rows[0].c).toBe(0);
+  });
+});
