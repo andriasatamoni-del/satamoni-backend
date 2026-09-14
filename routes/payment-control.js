@@ -247,16 +247,18 @@ router.post("/reconciliation-records", requirePermission("payment_control.reconc
   }
 });
 
-// GET /api/payment-control/reconciliation-records?source=
+// GET /api/payment-control/reconciliation-records?source= أو ?sources=instapay,orange_cash (تبويب
+// إنستاباي/أورانج كاش محتاج المصدرين مع بعض، مش واحد بس)
 router.get("/reconciliation-records", requirePermission("payment_control.view"), async (req, res) => {
   let branchId;
   try { branchId = resolveBranchScope(req); } catch (err) { return res.status(403).json({ error: err.message }); }
-  const { source, matchStatus } = req.query;
+  const { source, sources, matchStatus } = req.query;
   const conditions = [];
   const values = [];
   let i = 1;
   if (branchId) { conditions.push(`branch_id = $${i++}`); values.push(branchId); }
-  if (source) { conditions.push(`source = $${i++}`); values.push(source); }
+  if (sources) { conditions.push(`source = ANY($${i++})`); values.push(sources.split(",").map((s) => s.trim()).filter(Boolean)); }
+  else if (source) { conditions.push(`source = $${i++}`); values.push(source); }
   if (matchStatus) { conditions.push(`match_status = $${i++}`); values.push(matchStatus); }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   try {

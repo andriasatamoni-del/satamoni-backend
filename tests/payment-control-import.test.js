@@ -301,3 +301,24 @@ test("15) عزل الفروع: محاسب فرع تاني مايقدرش يمس�
   const del = await request(app).delete(`/api/payment-control/reconciliation-records/${created.body.id}`).set(authed(accountant2Token));
   expect(del.status).toBe(403);
 });
+
+// -------------------- ?sources= (تبويب إنستاباي/أورانج كاش محتاج المصدرين مع بعض بدون فيزا/طلبات) --------------------
+test("16) GET /reconciliation-records?sources=instapay,orange_cash بيرجّع المصدرين بس مش فيزا/طلبات", async () => {
+  await request(app).post("/api/payment-control/reconciliation-records").set(authed(accountantToken)).send({
+    branchId, source: "visa_settlement", externalAmount: 111, externalDate: "2026-02-01", externalReference: "SRC-VISA",
+  });
+  await request(app).post("/api/payment-control/reconciliation-records").set(authed(accountantToken)).send({
+    branchId, source: "instapay", externalAmount: 222, externalDate: "2026-02-01", externalReference: "SRC-INSTA",
+  });
+  await request(app).post("/api/payment-control/reconciliation-records").set(authed(accountantToken)).send({
+    branchId, source: "orange_cash", externalAmount: 333, externalDate: "2026-02-01", externalReference: "SRC-ORANGE",
+  });
+
+  const res = await request(app).get(`/api/payment-control/reconciliation-records?sources=instapay,orange_cash&branchId=${branchId}`)
+    .set(authed(accountantToken));
+  expect(res.status).toBe(200);
+  const refs = res.body.map((r) => r.external_reference);
+  expect(refs).toContain("SRC-INSTA");
+  expect(refs).toContain("SRC-ORANGE");
+  expect(refs).not.toContain("SRC-VISA");
+});
