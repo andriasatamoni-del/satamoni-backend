@@ -612,11 +612,11 @@ function renderInventoryItemDetail(data, category) {
   html += `
     <div class="dcard">
       <h3>المخزون</h3>
-      ${stock.length === 0 ? `<div class="statemsg">مفيش رصيد مسجّل في أي فرع</div>` : stock.map((s) => `
+      ${stock.length === 0 ? `<div class="statemsg">مفيش رصيد مسجّل في أي فرع</div>` : stock.map((s, idx) => `
         <div class="stockrow">
           <span>${esc(s.branch_name)}${s.is_central_kitchen ? " (سنتر كيتشن)" : ""}</span>
           <span>${num(s.quantity)} ${esc(item.unit)}</span>
-          <span>حد الطلب: ${s.reorder_point != null ? num(s.reorder_point) : "—"}</span>
+          <span>حد الطلب: ${s.reorder_point != null ? num(s.reorder_point) : "—"} ${canEdit ? `<a href="#" class="editbtn" data-reorder-idx="${idx}" style="font-size:11px">✏️</a>` : ""}</span>
           <span class="statuspill ${s.status}">${STOCK_STATUS_LABELS[s.status]}</span>
         </div>
       `).join("")}
@@ -630,6 +630,11 @@ function renderInventoryItemDetail(data, category) {
   document.getElementById("detailBody").innerHTML = html;
   if (canEdit && item.item_type === "manufactured") {
     document.getElementById("editRecipeBtn").onclick = () => openManufacturedRecipeModal(item, recipe);
+  }
+  if (canEdit) {
+    document.querySelectorAll("[data-reorder-idx]").forEach((el) => {
+      el.onclick = (e) => { e.preventDefault(); openEditReorderPointModal(item, stock[Number(el.dataset.reorderIdx)]); };
+    });
   }
 }
 
@@ -870,16 +875,43 @@ function openEditInventoryItemModal(item) {
     <div class="mrow"><div class="mfield"><label>اسم الصنف</label><input id="editItemName" type="text" value="${esc(item.name)}" /></div></div>
     <div class="mrow"><div class="mfield"><label>وحدة القياس</label><input id="editItemUnit" type="text" value="${esc(item.unit)}" /></div></div>
     <div class="mrow"><div class="mfield"><label>تكلفة الوحدة (ج.م)</label><input id="editItemCost" type="number" step="0.01" value="${item.unit_cost ?? ""}" /></div></div>
+    <div class="mrow"><div class="mfield">
+      <label>نوع الصنف</label>
+      <select id="editItemType">
+        <option value="raw" ${item.item_type === "raw" ? "selected" : ""}>مواد خام</option>
+        <option value="manufactured" ${item.item_type === "manufactured" ? "selected" : ""}>مواد مصنعة</option>
+      </select>
+      <div style="font-size:11px;color:var(--faint);margin-top:4px">
+        تحويل الصنف من خام لمصنّع (أو العكس) بيغيّر شكل شاشته (وصفة/إنتاج بدل سعر شراء) - محتاج مراجعة
+        الوصفة بعد التحويل لو الصنف بقى مصنّع
+      </div>
+    </div></div>
   `, async () => {
     const name = document.getElementById("editItemName").value.trim();
     const unit = document.getElementById("editItemUnit").value.trim();
     const unitCost = document.getElementById("editItemCost").value;
+    const itemType = document.getElementById("editItemType").value;
     if (!name || !unit) throw new Error("لازم اسم ووحدة قياس");
     await api(`/api/inventory/items/${item.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ name, unit, ...(unitCost !== "" ? { unitCost: Number(unitCost) } : {}) }),
+      body: JSON.stringify({ name, unit, itemType, ...(unitCost !== "" ? { unitCost: Number(unitCost) } : {}) }),
     });
     await loadItemList();
+    openItemDetail(item.id, itemType);
+  });
+}
+
+function openEditReorderPointModal(item, stockRow) {
+  openModal(`حد الطلب — ${item.name} (${stockRow.branch_name})`, `
+    <div class="mrow"><div class="mfield"><label>حد الطلب (بوحدة ${esc(item.unit)})</label>
+      <input id="editReorderPoint" type="number" step="0.01" min="0" value="${stockRow.reorder_point ?? ""}" placeholder="من غير حد - سيبه فاضي" />
+    </div></div>
+  `, async () => {
+    const value = document.getElementById("editReorderPoint").value;
+    await api("/api/inventory/stock-thresholds", {
+      method: "PATCH",
+      body: JSON.stringify({ branchId: stockRow.branch_id, inventoryItemId: item.id, reorderPoint: value === "" ? null : Number(value) }),
+    });
     openItemDetail(item.id, item.item_type);
   });
 }
