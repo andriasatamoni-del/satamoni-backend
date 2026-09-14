@@ -1,10 +1,16 @@
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
 const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { logAudit } = require("../db/audit");
 const { logPriceChange } = require("../db/menu-price-history");
+const {
+  readStatementGrid, buildPricesWorkbook, buildRecipesWorkbook, parsePricesGrid, parseRecipesGrid,
+} = require("../db/menu-excel-io");
+
+const menuExcelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // المرحلة 8.29 (شاشة الأصناف): admin/branch_manager(بما فيهم مدير السنتر كيتشن)/accountant - نفس
 // مجموعة الأدوار اللي عندها inventory.view بالظبط، عشان شاشة الأصناف تقدر تعرض أصناف المنيو وتفاصيلها.
@@ -288,6 +294,316 @@ router.post("/talabat-prices/import", requireAuth, requireRole("admin"), async (
       newValues: { updatedCount: updated.length, notFoundCount: notFound.length }, req,
     });
     res.json({ updatedCount: updated.length, updated, notFound });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------- تصدير/استيراد شيت إكسيل (تعديل جماعي للأسعار أو الريسبي) ----------------
+// الفكرة: تصدير شيت بالحالة الحالية، تعديله يدويًا في إكسيل، ورفعه تاني - الاستيراد بيحدّث بس (مش بيضيف
+// أصناف/أحجام جديدة، ومش بيحذف صنف/حجم غير موجود في الشيت) عشان يفضل آمن زي استيراد أسعار طلبات القديم
+// بالظبط. كل استيراد له preview (من غير أي كتابة في الداتابيز) قبل commit، عشان صاحب المطعم يشوف التغييرات
+// قبل ما تتنفذ فعليًا - مهم خصوصًا لشيت الريسبي لأن الاستبدال فيه كامل (راجع التعليق فوق /recipes/import/commit)
+
+async function loadPriceSheetRows() {
+  const result = await pool.query(`
+    SELECT mc.name AS category, mi.name AS item, v.label AS variant, v.price, v.talabat_price AS "talabatPrice"
+    FROM menu_item_variants v
+    JOIN menu_items mi ON mi.id = v.item_id
+    JOIN menu_categories mc ON mc.id = mi.category_id
+    ORDER BY mc.display_order, mi.name, v.id
+  `);
+  // NUMERIC بيرجع كـstring من node-pg - لازم Number() هنا عشان خلايا الإكسيل تتكتب كأرقام حقيقية مش نص
+  return result.rows.map((r) => ({
+    ...r, price: Number(r.price), talabatPrice: r.talabatPrice == null ? null : Number(r.talabatPrice),
+  }));
+}
+
+// GET /api/menu/prices/export - شيت إكسيل بكل الأصناف/الأحجام وأسعارها الحالية (العادي + طلبات)
+router.get("/prices/export", requireAuth, requireRole("admin"), async (req, res) => {
+  try {
+    const rows = await loadPriceSheetRows();
+    const buffer = await buildPricesWorkbook(rows);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="menu-prices.xlsx"');
+    res.send(Buffer.from(buffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// بيرجع {changes, unchangedCount, notFound} من غير أي كتابة - مستخدمة من preview وcommit الاتنين عشان
+// منطق المطابقة/الحساب يفضل مكرر مكان واحد بس
+async function computePriceImportChanges(buffer, originalName) {
+  const grid = await readStatementGrid(buffer, originalName);
+  const parsedRows = parsePricesGrid(grid);
+  const changes = [];
+  const notFound = [];
+  let unchangedCount = 0;
+
+  for (const row of parsedRows) {
+    if (!row.item || !row.variant || row.price === null || Number.isNaN(row.price) || Number.isNaN(row.talabatPrice)) {
+      notFound.push(`${row.item || "?"} (${row.variant || "?"}) - بيانات الصف غير صحيحة`);
+      continue;
+    }
+    const found = await pool.query(
+      `SELECT v.id, v.price, v.talabat_price FROM menu_item_variants v
+       JOIN menu_items mi ON mi.id = v.item_id
+       WHERE mi.name = $1 AND v.label = $2`,
+      [row.item, row.variant]
+    );
+    if (found.rows.length === 0) {
+      notFound.push(`${row.item} (${row.variant}) - مش موجود في المنيو`);
+      continue;
+    }
+    const current = found.rows[0];
+    const priceChanged = Number(current.price) !== Number(row.price);
+    const talabatChanged = (current.talabat_price == null ? null : Number(current.talabat_price)) !==
+      (row.talabatPrice === null ? null : Number(row.talabatPrice));
+    if (!priceChanged && !talabatChanged) { unchangedCount++; continue; }
+    changes.push({
+      variantId: current.id, category: row.category, item: row.item, variant: row.variant,
+      oldPrice: Number(current.price), newPrice: row.price,
+      oldTalabatPrice: current.talabat_price == null ? null : Number(current.talabat_price),
+      newTalabatPrice: row.talabatPrice,
+    });
+  }
+  return { changes, unchangedCount, notFound };
+}
+
+// POST /api/menu/prices/import/preview - {file} multipart -> التغييرات المتوقعة من غير أي كتابة فعلية
+router.post("/prices/import/preview", requireAuth, requireRole("admin"), (req, res, next) => {
+  menuExcelUpload.single("file")(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "الملف كبير جدًا (الحد الأقصى 10 ميجا)" });
+    res.status(400).json({ error: err.message });
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "لازم ترفع ملف CSV أو Excel" });
+  try {
+    const result = await computePriceImportChanges(req.file.buffer, req.file.originalname);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/menu/prices/import/commit - بيطبّق نفس التغييرات اللي preview وريها بالظبط (بيعيد تحليل نفس
+// الملف بدل ما يستنى الـclient يبعت التغييرات تاني، عشان مفيش فرصة يتلاعب حد بالأرقام بين preview وcommit)
+router.post("/prices/import/commit", requireAuth, requireRole("admin"), (req, res, next) => {
+  menuExcelUpload.single("file")(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "الملف كبير جدًا (الحد الأقصى 10 ميجا)" });
+    res.status(400).json({ error: err.message });
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "لازم ترفع ملف CSV أو Excel" });
+  try {
+    const { changes, notFound } = await computePriceImportChanges(req.file.buffer, req.file.originalname);
+    for (const change of changes) {
+      await pool.query("UPDATE menu_item_variants SET price = $1, talabat_price = $2 WHERE id = $3",
+        [change.newPrice, change.newTalabatPrice, change.variantId]);
+      if (Number(change.oldPrice) !== Number(change.newPrice)) {
+        await logPriceChange(pool, {
+          entityType: "variant", entityId: change.variantId, fieldName: "price",
+          oldPrice: change.oldPrice, newPrice: change.newPrice, changedBy: req.user.id,
+        });
+      }
+      if ((change.oldTalabatPrice ?? null) !== (change.newTalabatPrice ?? null)) {
+        await logPriceChange(pool, {
+          entityType: "variant", entityId: change.variantId, fieldName: "talabat_price",
+          oldPrice: change.oldTalabatPrice, newPrice: change.newTalabatPrice, changedBy: req.user.id,
+        });
+      }
+    }
+    await logAudit(pool, {
+      userId: req.user.id, action: "MENU_PRICES_BULK_IMPORT", entityType: "menu_item_variant", entityId: null,
+      newValues: { updatedCount: changes.length, notFoundCount: notFound.length, fileName: req.file.originalname }, req,
+    });
+    res.json({ updatedCount: changes.length, notFound });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function loadRecipeSheetRows() {
+  const result = await pool.query(`
+    SELECT mc.name AS category, mi.name AS item, v.label AS variant,
+           ii.name AS ingredient, mvi.quantity_per_unit AS "quantityPerUnit", ii.unit
+    FROM menu_item_variant_ingredients mvi
+    JOIN menu_item_variants v ON v.id = mvi.variant_id
+    JOIN menu_items mi ON mi.id = v.item_id
+    JOIN menu_categories mc ON mc.id = mi.category_id
+    JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+    ORDER BY mc.display_order, mi.name, v.id, ii.name
+  `);
+  // NUMERIC بيرجع كـstring من node-pg - لازم Number() هنا عشان خلايا الإكسيل تتكتب كأرقام حقيقية مش نص
+  return result.rows.map((r) => ({ ...r, quantityPerUnit: Number(r.quantityPerUnit) }));
+}
+
+// GET /api/menu/recipes/export - شيت إكسيل بكل الأصناف/الأحجام ومكوّناتها الحالية (سطر لكل مكوّن)
+router.get("/recipes/export", requireAuth, requireRole("admin"), async (req, res) => {
+  try {
+    const rows = await loadRecipeSheetRows();
+    const buffer = await buildRecipesWorkbook(rows);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="menu-recipes.xlsx"');
+    res.send(Buffer.from(buffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// بيجمّع صفوف الشيت حسب (الصنف، الحجم) - كل مجموعة = الريسبي الجديد الكامل للحجم ده (استبدال كامل، مش
+// إضافة/تحديث سطر بسطر) - لو صنف/حجم مش موجود أصلاً في الشيت، مبيتلمسش خالص (فرق عن "موجود بصفوف فاضية")
+function groupRecipeRows(parsedRows) {
+  const groups = new Map();
+  for (const row of parsedRows) {
+    if (!row.item || !row.variant) continue; // صف ناقص بيانات أساسية - هيتسجل تحت كـnotFound لو محتاج
+    const key = `${row.item} ${row.variant}`;
+    if (!groups.has(key)) groups.set(key, { category: row.category, item: row.item, variant: row.variant, lines: [] });
+    groups.get(key).lines.push(row);
+  }
+  return [...groups.values()];
+}
+
+// بيرجع {variantChanges, unchangedVariantsCount, notFoundVariants, notFoundIngredients} من غير أي كتابة
+async function computeRecipeImportChanges(buffer, originalName) {
+  const grid = await readStatementGrid(buffer, originalName);
+  const parsedRows = parseRecipesGrid(grid);
+  const groups = groupRecipeRows(parsedRows);
+
+  const variantChanges = [];
+  const notFoundVariants = [];
+  const notFoundIngredients = [];
+  let unchangedVariantsCount = 0;
+
+  for (const group of groups) {
+    const variantRes = await pool.query(
+      `SELECT v.id FROM menu_item_variants v
+       JOIN menu_items mi ON mi.id = v.item_id
+       WHERE mi.name = $1 AND v.label = $2`,
+      [group.item, group.variant]
+    );
+    if (variantRes.rows.length === 0) {
+      notFoundVariants.push(`${group.item} (${group.variant}) - مش موجود في المنيو`);
+      continue;
+    }
+    const variantId = variantRes.rows[0].id;
+
+    const newLines = [];
+    for (const line of group.lines) {
+      if (!line.ingredient || line.quantityPerUnit === null || Number.isNaN(line.quantityPerUnit) || line.quantityPerUnit <= 0) {
+        notFoundIngredients.push(`${group.item} (${group.variant}) - "${line.ingredient || "?"}" - كمية غير صحيحة، اتجاهل`);
+        continue;
+      }
+      const ingRes = await pool.query("SELECT id FROM inventory_items WHERE name = $1", [line.ingredient]);
+      if (ingRes.rows.length === 0) {
+        notFoundIngredients.push(`${group.item} (${group.variant}) - "${line.ingredient}" - مكوّن مش موجود في الكتالوج، اتجاهل`);
+        continue;
+      }
+      newLines.push({ inventoryItemId: ingRes.rows[0].id, ingredient: line.ingredient, quantityPerUnit: line.quantityPerUnit });
+    }
+
+    const currentRes = await pool.query(
+      `SELECT ii.id AS inventory_item_id, ii.name AS ingredient, mvi.quantity_per_unit AS "quantityPerUnit"
+       FROM menu_item_variant_ingredients mvi JOIN inventory_items ii ON ii.id = mvi.inventory_item_id
+       WHERE mvi.variant_id = $1`,
+      [variantId]
+    );
+    const currentById = new Map(currentRes.rows.map((r) => [r.inventory_item_id, r]));
+    const newById = new Map(newLines.map((r) => [r.inventoryItemId, r]));
+
+    const added = newLines.filter((r) => !currentById.has(r.inventoryItemId))
+      .map((r) => ({ ingredient: r.ingredient, quantityPerUnit: r.quantityPerUnit }));
+    const removed = currentRes.rows.filter((r) => !newById.has(r.inventory_item_id))
+      .map((r) => ({ ingredient: r.ingredient, quantityPerUnit: Number(r.quantityPerUnit) }));
+    const changed = newLines.filter((r) => {
+      const cur = currentById.get(r.inventoryItemId);
+      return cur && Number(cur.quantityPerUnit) !== Number(r.quantityPerUnit);
+    }).map((r) => ({
+      ingredient: r.ingredient, oldQuantityPerUnit: Number(currentById.get(r.inventoryItemId).quantityPerUnit), newQuantityPerUnit: r.quantityPerUnit,
+    }));
+
+    if (added.length === 0 && removed.length === 0 && changed.length === 0) { unchangedVariantsCount++; continue; }
+    variantChanges.push({
+      variantId, category: group.category, item: group.item, variant: group.variant,
+      added, removed, changed, newLines,
+    });
+  }
+  return { variantChanges, unchangedVariantsCount, notFoundVariants, notFoundIngredients };
+}
+
+// POST /api/menu/recipes/import/preview - {file} multipart -> التغييرات المتوقعة (إضافة/حذف/تعديل كمية
+// كل مكوّن لكل حجم) من غير أي كتابة فعلية
+router.post("/recipes/import/preview", requireAuth, requireRole("admin"), (req, res, next) => {
+  menuExcelUpload.single("file")(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "الملف كبير جدًا (الحد الأقصى 10 ميجا)" });
+    res.status(400).json({ error: err.message });
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "لازم ترفع ملف CSV أو Excel" });
+  try {
+    const { variantChanges, unchangedVariantsCount, notFoundVariants, notFoundIngredients } =
+      await computeRecipeImportChanges(req.file.buffer, req.file.originalname);
+    res.json({
+      variantChanges: variantChanges.map(({ newLines, ...rest }) => rest), // newLines داخلي بس (للcommit)
+      unchangedVariantsCount, notFoundVariants, notFoundIngredients,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/menu/recipes/import/commit - استبدال كامل لريسبي كل حجم ظهر في الشيت (نفس منطق/فلسفة
+// PUT /api/inventory/recipe/:variantId بالظبط - DELETE ثم INSERT، مسجّل بنفس RECIPE_CHANGE audit action)
+// أي حجم مش موجود في الشيت أصلاً بيفضل من غير ما يتلمس خالص
+router.post("/recipes/import/commit", requireAuth, requireRole("admin"), (req, res, next) => {
+  menuExcelUpload.single("file")(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "الملف كبير جدًا (الحد الأقصى 10 ميجا)" });
+    res.status(400).json({ error: err.message });
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "لازم ترفع ملف CSV أو Excel" });
+  try {
+    const { variantChanges, notFoundVariants, notFoundIngredients } =
+      await computeRecipeImportChanges(req.file.buffer, req.file.originalname);
+
+    for (const change of variantChanges) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const before = await client.query(
+          `SELECT inventory_item_id, quantity_per_unit FROM menu_item_variant_ingredients WHERE variant_id = $1`,
+          [change.variantId]
+        );
+        await client.query("DELETE FROM menu_item_variant_ingredients WHERE variant_id = $1", [change.variantId]);
+        for (const line of change.newLines) {
+          await client.query(
+            `INSERT INTO menu_item_variant_ingredients (variant_id, inventory_item_id, quantity_per_unit) VALUES ($1, $2, $3)`,
+            [change.variantId, line.inventoryItemId, line.quantityPerUnit]
+          );
+        }
+        await logAudit(client, {
+          userId: req.user.id, action: "RECIPE_CHANGE", entityType: "menu_variant", entityId: change.variantId,
+          oldValues: { ingredients: before.rows }, newValues: { ingredients: change.newLines, source: "excel_bulk_import" }, req,
+        });
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+
+    await logAudit(pool, {
+      userId: req.user.id, action: "MENU_RECIPES_BULK_IMPORT", entityType: "menu_item_variant", entityId: null,
+      newValues: { updatedVariantsCount: variantChanges.length, notFoundVariantsCount: notFoundVariants.length, fileName: req.file.originalname }, req,
+    });
+    res.json({ updatedVariantsCount: variantChanges.length, notFoundVariants, notFoundIngredients });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
