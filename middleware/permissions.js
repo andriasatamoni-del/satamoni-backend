@@ -154,7 +154,7 @@ const ROLE_PERMISSIONS = {
   // بمطابقة employees.user_id مع req.user.id في routes/employee-self.js). مفيش أي وصول لبيانات موظفين
   // تانيين أو أي جزء تاني من النظام - قسائم راتبه وطلبات إجازته بس
   employee: [
-    "payslips.view_own", "leave_requests.manage_own",
+    "payslips.view_own", "leave_requests.manage_own", "attendance.view_own",
   ],
 };
 
@@ -319,6 +319,9 @@ const PERMISSION_CATALOG = [
   ] },
   { group: "leave_requests", groupLabel: "طلبات الإجازة", permissions: [
     { key: "leave_requests.manage_own", label: "تقديم/متابعة طلبات إجازته (موظف)" },
+  ] },
+  { group: "attendance", groupLabel: "الحضور والانصراف", permissions: [
+    { key: "attendance.view_own", label: "رؤية سجل حضوره/انصرافه (موظف)" },
   ] },
 ];
 

@@ -95,10 +95,15 @@
   <div id="tabs">
     <div class="tabbtn active" data-tab="payslips">قسائم راتبي</div>
     <div class="tabbtn" data-tab="leaves">طلبات إجازتي</div>
+    <div class="tabbtn" data-tab="attendance">حضوري وانصرافي</div>
   </div>
 
   <div class="panel active" id="panel-payslips">
     <div id="payslipsList"></div>
+  </div>
+
+  <div class="panel" id="panel-attendance">
+    <div id="attendanceList"></div>
   </div>
 
   <div class="panel" id="panel-leaves">
@@ -177,6 +182,7 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
     if (btn.dataset.tab === "payslips") loadPayslips();
     if (btn.dataset.tab === "leaves") loadLeaveRequests();
+    if (btn.dataset.tab === "attendance") loadAttendance();
   };
 });
 
@@ -211,6 +217,47 @@ async function loadPayslips() {
       `;
       wrap.appendChild(card);
     });
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty">${e.message}</div>`;
+  }
+}
+
+async function loadAttendance() {
+  const wrap = document.getElementById("attendanceList");
+  wrap.innerHTML = "";
+  try {
+    const data = await api("/api/employee-self/attendance?months=3");
+    if (data.mode === "fingerprint_auto") {
+      if (data.punches.length === 0) { wrap.innerHTML = `<div class="empty">مفيش بصمات مسجّلة لسه</div>`; return; }
+      data.punches.forEach(p => {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `
+          <div class="top"><span class="title">${p.punch_date.slice(0, 10)}</span>${p.exempted ? `<span class="pill">معفى</span>` : ""}</div>
+          <div class="field">الفرع: <b>${p.branch_name}</b></div>
+          <div class="field">حضور: <b>${p.clock_in ? p.clock_in.slice(0, 5) : "—"}</b> — انصراف: <b>${p.clock_out ? p.clock_out.slice(0, 5) : "—"}</b></div>
+        `;
+        wrap.appendChild(card);
+      });
+      return;
+    }
+    if (data.mode === "manual") {
+      if (data.months.length === 0) { wrap.innerHTML = `<div class="empty">مفيش سجل حضور مسجّل لسه</div>`; return; }
+      const monthNames = ["", "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+      data.months.forEach(m => {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `
+          <div class="top"><span class="title">${monthNames[m.month]} ${m.year}</span></div>
+          <div class="field">أيام حضور: <b>${m.present_days ?? "—"}</b> — أيام غياب: <b>${m.absent_days ?? "—"}</b></div>
+          <div class="field">دقائق تأخير: <b>${m.total_late_minutes ?? 0}</b> — خصم: <b>${money(m.manual_deduction || 0)}</b></div>
+          ${m.notes ? `<div class="field">ملاحظات: <b>${m.notes}</b></div>` : ""}
+        `;
+        wrap.appendChild(card);
+      });
+      return;
+    }
+    wrap.innerHTML = `<div class="empty">مفيش نظام حضور مفعّل على حسابك دلوقتي</div>`;
   } catch (e) {
     wrap.innerHTML = `<div class="empty">${e.message}</div>`;
   }
