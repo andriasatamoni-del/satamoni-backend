@@ -231,11 +231,24 @@
           <option value="card_or_wallet">فيزا/محفظة/إنستاباي — تحت التحصيل</option>
           <option value="credit">آجل — تسوية شهرية</option>
         </select>
+        <select id="paySettlementChannel">
+          <option value="">بدون قناة تسوية محددة</option>
+          <option value="visa_pos">فيزا POS</option>
+          <option value="instapay">إنستاباي</option>
+          <option value="orange_cash">أورانج كاش</option>
+          <option value="vodafone_cash">فودافون كاش</option>
+          <option value="other">قناة تانية</option>
+        </select>
         <button id="paySubmit">إضافة</button>
       </div>
       <div class="err" id="payErr"></div>
+      <div style="font-size:12px;color:var(--faint);margin-top:6px">
+        قناة التسوية مهمة بس لطرق الدفع "تحت التحصيل" (فيزا/محفظة/إنستاباي) - هي اللي بتربط طريقة الدفع
+        دي بشاشة "التحكم في المدفوعات والمطابقة" (satamoni-payment-control.html) عشان تقدر تطابقها مع
+        كشف حساب حقيقي. لو مش محددة، الطريقة دي مش هتظهر في تبويبات المطابقة هناك.
+      </div>
     </div>
-    <table><thead><tr><th>الاسم</th><th>ملاحظة</th><th>النوع</th><th>الحالة</th><th></th></tr></thead><tbody id="paymentsBody"></tbody></table>
+    <table><thead><tr><th>الاسم</th><th>ملاحظة</th><th>النوع</th><th>قناة التسوية</th><th>الحالة</th><th></th></tr></thead><tbody id="paymentsBody"></tbody></table>
   </div>
 
   <!-- العروض -->
@@ -930,19 +943,37 @@ document.getElementById("areaSubmit").onclick = async () => {
 };
 
 // ---------------- طرق الدفع ----------------
+const SETTLEMENT_CHANNEL_LABELS = {
+  "": "بدون", visa_pos: "فيزا POS", instapay: "إنستاباي", orange_cash: "أورانج كاش",
+  vodafone_cash: "فودافون كاش", other: "قناة تانية",
+};
 async function loadPayments() {
   const payments = await api("/api/config/payment-methods");
   const kindLabels = { cash: "كاش (لحظي)", card_or_wallet: "فيزا/محفظة (تحت التحصيل)", credit: "آجل (شهري)" };
   document.getElementById("paymentsBody").innerHTML = payments.map(p => `
     <tr><td>${p.name}</td><td>${p.note || "—"}</td><td>${kindLabels[p.kind] || p.kind}</td>
+    <td>${p.kind === "card_or_wallet" ? `
+      <select data-settlement="${p.id}">
+        ${Object.entries(SETTLEMENT_CHANNEL_LABELS).map(([v, label]) => `<option value="${v}" ${(p.settlement_channel || "") === v ? "selected" : ""}>${label}</option>`).join("")}
+      </select>
+    ` : "—"}</td>
     <td><span class="badge ${p.enabled ? "active" : "inactive"}">${p.enabled ? "شغالة" : "معطّلة"}</span></td>
     <td><button class="linkbtn" data-togglepay="${p.id}" data-enabled="${p.enabled}">${p.enabled ? "تعطيل" : "تفعيل"}</button></td></tr>
-  `).join("") || `<tr><td colspan="5">لسه مفيش طرق دفع</td></tr>`;
+  `).join("") || `<tr><td colspan="6">لسه مفيش طرق دفع</td></tr>`;
   document.querySelectorAll("[data-togglepay]").forEach(btn => {
     btn.onclick = async () => {
       const enabled = btn.dataset.enabled === "true";
       await api(`/api/config/payment-methods/${btn.dataset.togglepay}`, { method: "PATCH", body: JSON.stringify({ enabled: !enabled }) });
       loadPayments();
+    };
+  });
+  document.querySelectorAll("[data-settlement]").forEach(sel => {
+    sel.onchange = async () => {
+      try {
+        await api(`/api/config/payment-methods/${sel.dataset.settlement}`, {
+          method: "PATCH", body: JSON.stringify({ settlementChannel: sel.value || null }),
+        });
+      } catch (e) { alert(e.message); loadPayments(); }
     };
   });
 }
@@ -956,10 +987,12 @@ document.getElementById("paySubmit").onclick = async () => {
         name: document.getElementById("payName").value.trim(),
         note: document.getElementById("payNote").value.trim() || null,
         kind: document.getElementById("payKind").value,
+        settlementChannel: document.getElementById("paySettlementChannel").value || null,
       }),
     });
     document.getElementById("payName").value = "";
     document.getElementById("payNote").value = "";
+    document.getElementById("paySettlementChannel").value = "";
     await loadPayments();
   } catch (e) { errBox.textContent = e.message; }
 };
