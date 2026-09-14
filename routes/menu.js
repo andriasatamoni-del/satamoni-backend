@@ -39,7 +39,7 @@ router.get("/", async (req, res) => {
       FROM menu_items mi
       JOIN menu_categories mc ON mc.id = mi.category_id
       JOIN menu_item_variants v ON v.item_id = mi.id
-      WHERE mi.is_active = TRUE
+      WHERE mi.is_active = TRUE AND mc.is_active = TRUE
       GROUP BY mi.id, mc.name, mc.display_order, mc.menu_group
       ORDER BY mc.display_order, mc.name, mi.id
     `);
@@ -80,7 +80,7 @@ router.post("/categories", requireAuth, requireRole("admin"), async (req, res) =
 // PATCH /api/menu/categories/:id - تعديل ترتيب الظهور أو المجموعة (عادي/صيامي) أو الاسم
 router.patch("/categories/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { name, displayOrder, menuGroup } = req.body;
+  const { name, displayOrder, menuGroup, isActive } = req.body;
   if (menuGroup !== undefined && !["regular", "fasting"].includes(menuGroup)) {
     return res.status(400).json({ error: "مجموعة منيو غير معروفة" });
   }
@@ -90,6 +90,7 @@ router.patch("/categories/:id", requireAuth, requireRole("admin"), async (req, r
   if (name !== undefined) { fields.push(`name = $${i++}`); values.push(name); }
   if (displayOrder !== undefined) { fields.push(`display_order = $${i++}`); values.push(displayOrder); }
   if (menuGroup !== undefined) { fields.push(`menu_group = $${i++}`); values.push(menuGroup); }
+  if (isActive !== undefined) { fields.push(`is_active = $${i++}`); values.push(!!isActive); }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
 
   values.push(id);
@@ -100,6 +101,22 @@ router.patch("/categories/:id", requireAuth, requireRole("admin"), async (req, r
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "القسم مش موجود" });
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/menu/categories/:id - حذف قسم فاضي بالكامل (من غير أي صنف فيه) - لو فيه أصناف، لازم
+// تتحذف/تتنقل لقسم تاني الأول (مش بنحذفهم تلقائي معاه، عشان محدش يفقد صنف بالغلط وهو مقصوده يحذف قسم بس)
+router.delete("/categories/:id", requireAuth, requireRole("admin"), async (req, res) => {
+  try {
+    const items = await pool.query("SELECT COUNT(*)::int AS c FROM menu_items WHERE category_id = $1", [req.params.id]);
+    if (items.rows[0].c > 0) {
+      return res.status(400).json({ error: `القسم ده فيه ${items.rows[0].c} صنف - احذفهم الأول أو انقلهم لقسم تاني` });
+    }
+    const result = await pool.query("DELETE FROM menu_categories WHERE id = $1 RETURNING id", [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "القسم مش موجود" });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -231,6 +248,22 @@ router.patch("/items/:id", requireAuth, requireRole("admin"), async (req, res) =
     if (result.rows.length === 0) return res.status(404).json({ error: "الصنف مش موجود" });
     res.json(result.rows[0]);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/menu/items/:id - حذف صنف نهائيًا (وأحجامه/وصفاته/مرفقاته معاه - كلهم CASCADE من الصنف).
+// لو الصنف ده اتباع في أوردر حقيقي قبل كده، قاعدة البيانات نفسها بترفض الحذف (order_items بتشاور عليه
+// من غير CASCADE عمدًا - تاريخ البيع محفوظ) - نرجّع رسالة واضحة تقول له يعطّله بدل ما يحذفه
+router.delete("/items/:id", requireAuth, requireRole("admin"), async (req, res) => {
+  try {
+    const result = await pool.query("DELETE FROM menu_items WHERE id = $1 RETURNING id", [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "الصنف مش موجود" });
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === "23503") {
+      return res.status(400).json({ error: "الصنف ده اتباع في أوردرات حقيقية قبل كده - منقدرش نحذفه، استخدم تعطيله بدل كده" });
+    }
     res.status(500).json({ error: err.message });
   }
 });

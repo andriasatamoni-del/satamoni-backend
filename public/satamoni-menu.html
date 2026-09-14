@@ -154,7 +154,7 @@
       <div class="err" id="catErr"></div>
     </div>
     <table style="margin-bottom:16px">
-      <thead><tr><th>القسم</th><th>الترتيب</th><th>المجموعة</th><th></th></tr></thead>
+      <thead><tr><th>القسم</th><th>الترتيب</th><th>المجموعة</th><th>الحالة</th><th></th></tr></thead>
       <tbody id="categoriesBody"></tbody>
     </table>
 
@@ -544,9 +544,14 @@ async function loadCategories() {
           <option value="fasting" ${c.menu_group === "fasting" ? "selected" : ""}>منيو صيامي</option>
         </select>
       </td>
-      <td><button class="linkbtn" data-savecat="${c.id}">حفظ</button></td>
+      <td>${c.is_active ? "نشط" : "<span style=\"color:var(--faint)\">معطّل</span>"}</td>
+      <td>
+        <button class="linkbtn" data-savecat="${c.id}">حفظ</button>
+        <button class="linkbtn" data-togglecat="${c.id}" data-active="${c.is_active}">${c.is_active ? "تعطيل" : "تفعيل"}</button>
+        <button class="linkbtn danger" data-deletecat="${c.id}">حذف</button>
+      </td>
     </tr>
-  `).join("") || `<tr><td colspan="4">لسه مفيش أقسام</td></tr>`;
+  `).join("") || `<tr><td colspan="5">لسه مفيش أقسام</td></tr>`;
   document.querySelectorAll("[data-savecat]").forEach(btn => {
     btn.onclick = async () => {
       const id = btn.dataset.savecat;
@@ -560,6 +565,29 @@ async function loadCategories() {
         await api(`/api/menu/categories/${id}`, { method: "PATCH", body: JSON.stringify({ displayOrder, menuGroup }) });
         btn.textContent = "✓ اتحفظ";
         setTimeout(() => { btn.textContent = originalText; }, 1200);
+      } catch (e) {
+        alert(e.message);
+      }
+    };
+  });
+  document.querySelectorAll("[data-togglecat]").forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.togglecat;
+      const isActive = btn.dataset.active === "true";
+      try {
+        await api(`/api/menu/categories/${id}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
+        await loadCategories();
+      } catch (e) {
+        alert(e.message);
+      }
+    };
+  });
+  document.querySelectorAll("[data-deletecat]").forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm("متأكد إنك عايز تحذف القسم ده؟ الحذف نهائي.")) return;
+      try {
+        await api(`/api/menu/categories/${btn.dataset.deletecat}`, { method: "DELETE" });
+        await loadCategories();
       } catch (e) {
         alert(e.message);
       }
@@ -596,6 +624,7 @@ async function loadItems() {
           <div><div class="name">${it.name}</div><div class="cat">${it.category}${it.is_best ? " · الأكثر طلبًا" : ""}</div></div>
         </div>
         <button class="linkbtn ${it.is_active ? "danger" : ""}" data-toggle="${it.id}" data-active="${it.is_active}">${it.is_active ? "تعطيل" : "تفعيل"}</button>
+        <button class="linkbtn danger" data-deleteitem="${it.id}">حذف الصنف</button>
       </div>
       ${it.variants.map(v => `
         <div class="variant-row">
@@ -637,6 +666,17 @@ async function loadItems() {
       const isActive = btn.dataset.active === "true";
       await api(`/api/menu/items/${btn.dataset.toggle}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
       loadItems();
+    };
+  });
+  document.querySelectorAll("[data-deleteitem]").forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm("متأكد إنك عايز تحذف الصنف ده بكل أحجامه؟ الحذف نهائي.")) return;
+      try {
+        await api(`/api/menu/items/${btn.dataset.deleteitem}`, { method: "DELETE" });
+        loadItems();
+      } catch (e) {
+        alert(e.message);
+      }
     };
   });
   // المرحلة 7R: checkboxes بتتعاد كل مرة الأصناف تتحمّل تاني - "تحديد الكل" لازم يتربط تاني كل مرة كمان
