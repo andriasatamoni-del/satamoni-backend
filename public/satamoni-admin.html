@@ -152,7 +152,7 @@
 
   <h1>الموظفين الحاليين</h1>
   <table style="margin-bottom:24px">
-    <thead><tr><th>الاسم</th><th>البريد</th><th>الدور</th><th>الفرع</th><th>الحالة</th><th>PIN موافقة</th><th>الصلاحيات</th><th></th></tr></thead>
+    <thead><tr><th>الاسم</th><th>البريد</th><th>الدور</th><th>الفرع</th><th>الحالة</th><th>PIN موافقة</th><th>الصلاحيات</th><th>ملف الموظف (HR)</th><th></th></tr></thead>
     <tbody id="usersBody"></tbody>
   </table>
 
@@ -345,9 +345,18 @@ document.getElementById("branchSubmit").onclick = async () => {
 };
 
 let usersCache = [];
+let unlinkedEmployeesCache = null; // HR-6: ملفات موظفين HR من غير حساب دخول ذاتي مربوط بيها لسه
+async function ensureUnlinkedEmployees() {
+  if (!unlinkedEmployeesCache) {
+    const employees = await api("/api/payroll/employees");
+    unlinkedEmployeesCache = employees.filter((e) => !e.user_id);
+  }
+  return unlinkedEmployeesCache;
+}
 async function loadUsers() {
   const users = await api("/api/users");
   usersCache = users;
+  unlinkedEmployeesCache = null; // كل تحديث للجدول بيعيد جلب الملفات المتاحة (ممكن يتغيروا)
   const roleLabels = { admin: "أدمن", branch_manager: "مدير فرع", accountant: "محاسب", cashier: "كاشير", callcenter: "كول سنتر" };
   const canHavePin = (role) => role === "admin" || role === "branch_manager";
   document.getElementById("usersBody").innerHTML = users.map(u => `
@@ -363,6 +372,11 @@ async function loadUsers() {
         : "—"}
       </td>
       <td><button class="linkbtn" data-editperm="${u.id}">تعديل الصلاحيات</button></td>
+      <td>${u.employee_id
+        ? `<span class="badge active">${u.employee_name}</span>`
+        : `<select data-empselect="${u.id}" style="max-width:140px"><option value="">جاري التحميل...</option></select>
+           <button class="linkbtn" data-linkemp="${u.id}">ربط</button>`}
+      </td>
       <td><button class="linkbtn" data-id="${u.id}" data-active="${u.is_active}">${u.is_active ? "تعطيل" : "تفعيل"}</button></td>
     </tr>`).join("");
   document.querySelectorAll("#usersBody button[data-id]").forEach(btn => {
@@ -370,6 +384,28 @@ async function loadUsers() {
       const isActive = btn.dataset.active === "true";
       await api(`/api/users/${btn.dataset.id}`, { method: "PATCH", body: JSON.stringify({ isActive: !isActive }) });
       loadUsers();
+    };
+  });
+  // HR-6: ربط حساب دخول موجود بملف موظف HR موجود - الـselect بيتحمّل بكسل (lazy) أول مرة يحصل focus
+  // عليه بس (مش كل الصفوف مع بعض) عشان مانضربش /api/payroll/employees من غير داعي لو مفيش صفوف مربوطة
+  document.querySelectorAll("#usersBody select[data-empselect]").forEach(sel => {
+    let loaded = false;
+    sel.onfocus = async () => {
+      if (loaded) return;
+      loaded = true;
+      const employees = await ensureUnlinkedEmployees();
+      sel.innerHTML = `<option value="">اختار ملف موظف...</option>` +
+        employees.map(e => `<option value="${e.id}">${e.name} - ${e.department}</option>`).join("");
+    };
+  });
+  document.querySelectorAll("#usersBody button[data-linkemp]").forEach(btn => {
+    btn.onclick = async () => {
+      const sel = document.querySelector(`select[data-empselect="${btn.dataset.linkemp}"]`);
+      if (!sel || !sel.value) { alert("اختار ملف موظف الأول"); return; }
+      try {
+        await api(`/api/users/${btn.dataset.linkemp}`, { method: "PATCH", body: JSON.stringify({ employeeId: Number(sel.value) }) });
+        loadUsers();
+      } catch (e) { alert(e.message); }
     };
   });
   document.querySelectorAll("#usersBody button[data-setpin]").forEach(btn => {
