@@ -74,6 +74,34 @@ router.get("/payments", requirePermission("payment_control.view"), async (req, r
   }
 });
 
+// POST /api/payment-control/backfill-settlement-channels - {branchId?}
+// لو طريقة دفع (فيزا/محفظة/إنستاباي) اتضاف لها قناة تسوية *بعد* ما طلبات فعلية اتسجّلت عليها بالفعل
+// (زي ما حصل فعليًا أول مرة اتفعّلت فيها الميزة دي - راجع migration 0043)، الدفعات القديمة دي بتفضل
+// settlement_channel = NULL للأبد (نسخة مجمّدة وقت القفل، مش لينك حي) ومتظهرش في فحوص المطابقة خالص.
+// النداء ده بينسخ القناة الحالية بتاعة طريقة الدفع لأي دفعة لسه NULL بس - مش بيلمس دفعة القناة بتاعتها
+// اتحددت بالفعل (حتى لو اتغيّرت بعد كده)، عشان يفضل "تكملة فجوة" مش "إعادة كتابة تاريخ"
+router.post("/backfill-settlement-channels", requirePermission("payment_control.reconciliation.enter"), async (req, res) => {
+  const { branchId } = req.body;
+  if (branchId && !assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+  try {
+    const result = await pool.query(
+      `UPDATE payments p
+       SET settlement_channel = pm.settlement_channel
+       FROM payment_methods pm
+       WHERE p.payment_method_id = pm.id
+         AND p.method_kind = 'card_or_wallet'
+         AND p.settlement_channel IS NULL
+         AND pm.settlement_channel IS NOT NULL
+         AND ($1::int IS NULL OR p.branch_id = $1)
+       RETURNING p.id`,
+      [branchId || null]
+    );
+    res.json({ updated: result.rows.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/payment-control/adjustment-requests - {paymentId, reason, proposedPaymentMethodId?, proposedAmount?}
 router.post("/adjustment-requests", requirePermission("payment_control.adjustment.request"), async (req, res) => {
   const { paymentId, reason, proposedPaymentMethodId, proposedAmount } = req.body;
