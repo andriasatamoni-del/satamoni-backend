@@ -300,6 +300,9 @@
 
     <h3>بيانات العميل</h3>
     <div id="customerStatus">اكتب رقم موبايل العميل لمعرفة حالته</div>
+    <!-- CRM-1: لو العميل ده عنده شكوى مسجّلة قبل كده (أي حالة)، نوريها هنا عشان الموظف ياخد باله وهو
+         بيسجّل الأوردر الجديد - مش بس أوردرات جديدة، شكاوى قديمة كمان تستاهل انتباه -->
+    <div id="complaintBanner" style="display:none;font-size:12px;font-weight:700;background:rgba(194,42,36,.12);color:var(--red);border:1px solid var(--red);border-radius:8px;padding:8px 10px;margin:6px 0"></div>
     <div id="customerFields">
       <input id="nameInput" placeholder="اسم العميل" />
       <input id="phoneInput" placeholder="رقم موبايل العميل" />
@@ -991,6 +994,7 @@ document.getElementById("newOrderBtn").onclick = () => {
   document.getElementById("redeemNote").textContent = "";
   document.getElementById("customerStatus").textContent = "اكتب رقم موبايل العميل لمعرفة حالته";
   document.getElementById("customerStatus").style.color = "var(--faint)";
+  document.getElementById("complaintBanner").style.display = "none";
   document.getElementById("profileBox").style.display = "none";
   document.getElementById("resultsList").innerHTML = "";
   document.getElementById("searchInput").value = "";
@@ -1118,6 +1122,24 @@ function applyCustomerLookup(phone, p) {
   }
   renderCart();
   loadSavedAddresses(phone, p.isRegistered);
+  loadComplaintBanner(phone);
+}
+
+// CRM-1: لو العميل ده عنده شكوى مسجّلة (أي حالة)، نوريها هنا كتنبيه عشان الموظف يهتم بالعميل والأوردر
+// الجديد ده بالذات - فاشل بصمت لو حصل أي خطأ (زي عدم وجود صلاحية) عشان ميوقفش تسجيل الأوردر نفسه
+async function loadComplaintBanner(phone) {
+  const banner = document.getElementById("complaintBanner");
+  banner.style.display = "none";
+  try {
+    const complaint = await api(`/api/crm/customers/${encodeURIComponent(phone)}/complaints/latest`);
+    if (!complaint) return;
+    const categoryLabels = { late_order: "تأخير", wrong_item: "صنف غلط", quality: "جودة", other: "تانية" };
+    const statusLabels = { open: "مفتوحة", in_progress: "تحت المعالجة", resolved: "اتحلت" };
+    const date = new Date(complaint.created_at).toLocaleDateString("ar-EG");
+    banner.innerHTML = `⚠️ العميل ده كان عنده شكوى يوم ${date} من أوردر #${complaint.order_id} (${categoryLabels[complaint.category] || complaint.category}) -
+      ${complaint.description ? `السبب: ${complaint.description} - ` : ""}الحالة: ${statusLabels[complaint.status] || complaint.status}`;
+    banner.style.display = "block";
+  } catch (e) { /* تجاهل - مش المفروض توقف تسجيل الأوردر */ }
 }
 
 // المرحلة 7M: دفتر عناوين العميل - لو عنده أكتر من عنوان محفوظ (بيت/شغل/...) بيظهروا كشرائح، اختيار

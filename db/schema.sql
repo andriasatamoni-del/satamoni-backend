@@ -126,6 +126,7 @@ CREATE TABLE home_tiles (
 );
 INSERT INTO home_tiles (tile_key, href, icon, title, description, display_order) VALUES
   ('pos', 'satamoni-pos.html', '🧾', 'نقطة البيع (كاشير)', 'تسجيل طلبات الفرع مباشرة', 10),
+  ('crm', 'satamoni-crm.html', '📇', 'متابعة العملاء (CRM)', 'متابعة أوردرات الدليفري بعد التسليم، تسجيل الشكاوى، ودليل العملاء الكامل', 15),
   ('callcenter', 'satamoni-callcenter.html', '📞', 'الكول سنتر', 'بحث عن عميل وتسجيل طلب تليفوني', 20),
   ('delivery', 'satamoni-delivery.html', '🛵', 'دورة حياة الدليفري', 'تحت التحضير، في الطريق، تحصيل الفلوس، وسجل كل الطلبات', 30),
   ('drivers', 'satamoni-drivers.html', '🛵', 'إدارة السائقين (أدمن/مدير فرع)', 'إضافة سائق جديد، وتفعيل/تعطيل السائقين الحاليين', 32),
@@ -136,7 +137,6 @@ INSERT INTO home_tiles (tile_key, href, icon, title, description, display_order)
   ('accounting', 'satamoni-accounting.html', '💰', 'الحسابات', 'مصروفات، مشتريات، تقفيل كاش، كشف حساب المخزن', 50),
   ('payment-control', 'satamoni-payment-control.html', '💳', 'التحكم في المدفوعات والمطابقة', 'كشف فروق طرق الدفع، مطابقة طلبات/فيزا/إنستاباي/أورانج كاش، طلبات تعديل الدفع', 55),
   ('reports', 'satamoni-reports.html', '📈', 'مركز التقارير', 'مبيعات، هالك، ملغي، تأخيرات، أداء الأصناف، مصروفات ومشتريات، مناطق وطيارين، خدمة الدليفري', 60),
-  ('customers', 'satamoni-customers.html', '👥', 'بيانات العملاء', 'دليل العملاء وبحث برقم التليفون، نقاط الولاء، والعملاء اللي مطلبوش بقالهم فترة', 70),
   ('audit', 'satamoni-audit.html', '🛡️', 'سجل التدقيق والموافقات', 'كل عملية حساسة اتسجلت مين وامتى، وطلبات موافقة على تسوية المخزون', 80),
   ('attendance', 'satamoni-attendance.html', '🕒', 'الحضور والانصراف', 'تسجيل حضورك، أو متابعة شيفتات الفرع', 90),
   ('admin', 'satamoni-admin.html', '🔐', 'إدارة المستخدمين (أدمن)', 'إضافة موظفين وتحديد صلاحياتهم', 100),
@@ -1465,6 +1465,46 @@ CREATE TABLE customer_addresses (
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_customer_addresses_phone ON customer_addresses(customer_phone);
+
+-- المرحلة CRM-1: متابعة أوردرات الدليفري بعد التسليم - الكول سنتر بيتصل بالعميل يتأكد من جودة الأوردر/الخدمة
+-- ويسجّل شكوى لو فيه. صف واحد بس لكل أوردر (UNIQUE(order_id)) - محاولة تانية على نفس الأوردر بتحدّث نفس
+-- الصف (upsert)، مش بتضيف صف جديد؛ "مردود عليه" بيفضل في طابور المتابعة لمحاولة تانية، أما "اتصلنا 3 مرات
+-- ومردش" فده اعتباره نهائي (بنوقف نحاول) فبيخرج من الطابور
+CREATE TABLE customer_followups (
+  id                   SERIAL PRIMARY KEY,
+  order_id             INTEGER NOT NULL UNIQUE REFERENCES orders(id),
+  branch_id            INTEGER REFERENCES branches(id),
+  customer_phone       TEXT NOT NULL,
+  call_result          TEXT NOT NULL CHECK (call_result IN ('answered', 'no_answer', 'no_answer_after_3_tries')),
+  satisfaction_rating  TEXT CHECK (satisfaction_rating IN ('excellent', 'good', 'average', 'bad')),
+  notes                TEXT,
+  has_complaint        BOOLEAN NOT NULL DEFAULT FALSE,
+  called_by            INTEGER REFERENCES users(id),
+  called_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_customer_followups_phone ON customer_followups(customer_phone);
+
+-- شكوى عميل - ممكن تتسجل من نتيجة مكالمة متابعة (followup_id) أو مباشرة. جدول منفصل عن customer_followups
+-- عشان حالتها بتتغيّر بعد كده لوحدها (مفتوحة -> تحت المعالجة -> اتحلت) مستقلة عن وقت تسجيل المكالمة نفسها.
+-- نفس شكل whatsapp_complaints (category/status/resolution) بالظبط، بس مش مربوطة بمحادثة واتساب - شكوى
+-- جايه من مكالمة متابعة تليفونية، قناة مختلفة تمامًا
+CREATE TABLE customer_complaints (
+  id                 SERIAL PRIMARY KEY,
+  order_id           INTEGER NOT NULL REFERENCES orders(id),
+  branch_id          INTEGER REFERENCES branches(id),
+  customer_phone     TEXT NOT NULL,
+  followup_id        INTEGER REFERENCES customer_followups(id),
+  category           TEXT NOT NULL CHECK (category IN ('late_order', 'wrong_item', 'quality', 'other')),
+  description        TEXT,
+  status             TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved')),
+  resolution_notes   TEXT,
+  created_by         INTEGER REFERENCES users(id),
+  resolved_by        INTEGER REFERENCES users(id),
+  resolved_at        TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_customer_complaints_phone ON customer_complaints(customer_phone);
+CREATE INDEX idx_customer_complaints_open ON customer_complaints(status) WHERE status != 'resolved';
 
 -- ---------------- الموارد البشرية: شيفتات وحضور/انصراف ----------------
 CREATE TABLE shifts (

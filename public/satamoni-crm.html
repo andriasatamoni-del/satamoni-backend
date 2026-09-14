@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ستاموني — متابعة العملاء (CRM)</title>
+<style>
+  :root {
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --err: #F08A83;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  :root:not([data-theme="dark"]) #topbar {
+    background: #1B5FA8; border-bottom: 1px solid #164E8A; --ink: #FFFFFF; --faint: rgba(255,255,255,.82);
+    --line: rgba(255,255,255,.45); --green: #6FCF7A; --red: #FF6B60; --err: #FF8A80;
+  }
+  :root:not([data-theme="dark"]) #topbar .brand { color: #FFFFFF; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  #tabs { display: flex; gap: 6px; margin: 0 0 16px; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select, .formbox textarea { flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; font-family: inherit; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .formbox button.secondary { background: transparent; border: 1px solid var(--line); color: var(--faint); }
+  .formbox label.small { flex: 0; white-space: nowrap; font-size: 12px; color: var(--faint); }
+  .err { color: var(--err); font-size: 12px; margin-top: 6px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .tablewrap { overflow-x: auto; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .pill.open { background: rgba(194,42,36,.15); color: var(--err); }
+  .pill.in_progress { background: rgba(168,124,31,.15); color: var(--gold); }
+  .pill.resolved { background: rgba(63,163,77,.15); color: var(--green); }
+  .smallbtn { padding: 5px 10px; border: none; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 11px; margin-inline-end: 4px; background: var(--red); color: #fff; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">📇 متابعة العملاء (CRM)</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>📇 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الشاشة دي.</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="queue">قائمة المتابعة</div>
+    <div class="tabbtn" data-tab="complaints">الشكاوى</div>
+    <div class="tabbtn" data-tab="customers">العملاء</div>
+  </div>
+
+  <!-- 1: قائمة المتابعة -->
+  <div class="panel active" id="panel-queue">
+    <div style="font-size:12px;color:var(--faint);margin-bottom:12px">
+      كل أوردر دليفري اتسلّم ولسه محتاج مكالمة متابعة (لسه ما اتصلناش بيه، أو اتصلنا وماردّش) - أقدم أوردر الأول.
+      أوردر "اتصلنا 3 مرات وماردّش" بيخرج من القائمة دي تلقائيًا.
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الأوردر</th><th>الفرع</th><th>العميل</th><th>العنوان</th><th>الإجمالي</th><th>تاريخ التسليم</th><th>آخر محاولة</th><th></th></tr></thead>
+      <tbody id="queueBody"></tbody>
+    </table></div>
+
+    <div class="formbox" id="followupFormBox" style="display:none;margin-top:16px">
+      <h1 style="margin-top:0">تسجيل متابعة — أوردر #<span id="followupOrderId"></span></h1>
+      <div class="row">
+        <label class="small">نتيجة الاتصال</label>
+        <select id="followupCallResult">
+          <option value="answered">تم الرد</option>
+          <option value="no_answer">مردّش</option>
+          <option value="no_answer_after_3_tries">مردّش بعد 3 محاولات</option>
+        </select>
+        <label class="small">تقييم الرضا</label>
+        <select id="followupSatisfaction">
+          <option value="">—</option>
+          <option value="excellent">ممتاز</option>
+          <option value="good">كويس</option>
+          <option value="average">متوسط</option>
+          <option value="bad">سيء</option>
+        </select>
+      </div>
+      <div class="row"><textarea id="followupNotes" placeholder="ملاحظات حرة" rows="2"></textarea></div>
+      <div class="row"><label class="chk" style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="followupHasComplaint" style="flex:0" /> فيه شكوى؟</label></div>
+      <div id="followupComplaintFields" style="display:none">
+        <div class="row">
+          <label class="small">نوع الشكوى</label>
+          <select id="complaintCategory">
+            <option value="late_order">تأخير</option>
+            <option value="wrong_item">صنف غلط</option>
+            <option value="quality">جودة</option>
+            <option value="other">تانية</option>
+          </select>
+          <label class="small">حالتها</label>
+          <select id="complaintStatus">
+            <option value="open">مفتوحة</option>
+            <option value="in_progress">تحت المعالجة</option>
+            <option value="resolved">اتحلت</option>
+          </select>
+        </div>
+        <div class="row"><textarea id="complaintDescription" placeholder="سبب الشكوى" rows="2"></textarea></div>
+        <div class="row"><textarea id="complaintResolutionNotes" placeholder="ملاحظة الحل (لو اتحلت أو تحت المعالجة)" rows="2"></textarea></div>
+      </div>
+      <button id="followupSubmitBtn">حفظ المتابعة</button>
+      <button type="button" class="secondary" id="followupCancelBtn">إلغاء</button>
+      <div class="err" id="followupErr"></div>
+      <div class="ok" id="followupOk"></div>
+    </div>
+  </div>
+
+  <!-- 2: الشكاوى -->
+  <div class="panel" id="panel-complaints">
+    <div class="formbox">
+      <div class="row">
+        <select id="complaintsStatusFilter">
+          <option value="">كل الحالات</option>
+          <option value="open">مفتوحة</option>
+          <option value="in_progress">تحت المعالجة</option>
+          <option value="resolved">اتحلت</option>
+        </select>
+        <button id="complaintsFilterBtn">فلترة</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>الأوردر</th><th>العميل</th><th>الفرع</th><th>النوع</th><th>السبب</th><th>الحالة</th><th>ملاحظة الحل</th><th>تاريخ</th><th></th></tr></thead>
+      <tbody id="complaintsBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 3: العملاء -->
+  <div class="panel" id="panel-customers">
+    <!-- src متعمول من غير قيمة عمدًا (متضافة في boot() بعد ما تسجيل الدخول يخلص) - لو حطينا src هنا في
+         الـHTML مباشرة، الـiframe هيحمّل الشاشة قبل ما sessionStorage يبقى فيه التوكن، فهيعرض شاشة
+         تسجيل دخول تانية جوه نفسه (مش بيعيد فحص التوكن تاني بعد كده لوحده) -->
+    <iframe id="customersFrame" style="width:100%;height:78vh;border:0;border-radius:10px"></iframe>
+  </div>
+</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "callcenter"];
+const CATEGORY_LABELS = { late_order: "تأخير", wrong_item: "صنف غلط", quality: "جودة", other: "تانية" };
+const STATUS_LABELS = { open: "مفتوحة", in_progress: "تحت المعالجة", resolved: "اتحلت" };
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+function money(v) { return `${Number(v || 0).toFixed(2)} ج.م`; }
+function dt(v) { return v ? new Date(v).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" }) : "—"; }
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    loadTab(btn.dataset.tab);
+  };
+});
+function loadTab(tab) {
+  if (tab === "queue") loadQueue();
+  if (tab === "complaints") loadComplaints();
+}
+
+// ---------------- قائمة المتابعة ----------------
+async function loadQueue() {
+  const body = document.getElementById("queueBody");
+  body.innerHTML = `<tr><td colspan="8">جاري التحميل...</td></tr>`;
+  try {
+    const rows = await api("/api/crm/followup-queue");
+    body.innerHTML = rows.map(r => `
+      <tr>
+        <td>#${r.orderId}</td>
+        <td>${r.branchName}</td>
+        <td>${r.customerName || "—"}<br><span style="color:var(--faint)">${r.customerPhone || "—"}</span></td>
+        <td>${r.addressDetails || "—"}${r.distinguishingMark ? ` (${r.distinguishingMark})` : ""}</td>
+        <td>${money(r.total)}</td>
+        <td>${dt(r.deliveredAt)}</td>
+        <td>${r.lastCallResult ? `مردّش (${dt(r.lastCalledAt)})` : "—"}</td>
+        <td><button class="smallbtn" data-order-id="${r.orderId}">تسجيل متابعة</button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="8">مفيش أوردرات محتاجة متابعة دلوقتي 🎉</td></tr>`;
+    body.querySelectorAll("[data-order-id]").forEach(btn => {
+      btn.onclick = () => openFollowupForm(Number(btn.dataset.orderId));
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="8">${e.message}</td></tr>`;
+  }
+}
+
+function openFollowupForm(orderId) {
+  document.getElementById("followupOrderId").textContent = orderId;
+  document.getElementById("followupFormBox").dataset.orderId = orderId;
+  document.getElementById("followupCallResult").value = "answered";
+  document.getElementById("followupSatisfaction").value = "";
+  document.getElementById("followupNotes").value = "";
+  document.getElementById("followupHasComplaint").checked = false;
+  document.getElementById("followupComplaintFields").style.display = "none";
+  document.getElementById("complaintCategory").value = "late_order";
+  document.getElementById("complaintStatus").value = "open";
+  document.getElementById("complaintDescription").value = "";
+  document.getElementById("complaintResolutionNotes").value = "";
+  document.getElementById("followupErr").textContent = "";
+  document.getElementById("followupOk").textContent = "";
+  document.getElementById("followupFormBox").style.display = "block";
+  document.getElementById("followupFormBox").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+document.getElementById("followupCancelBtn").onclick = () => { document.getElementById("followupFormBox").style.display = "none"; };
+document.getElementById("followupHasComplaint").onchange = (e) => {
+  document.getElementById("followupComplaintFields").style.display = e.target.checked ? "block" : "none";
+};
+document.getElementById("followupSubmitBtn").onclick = async () => {
+  const errBox = document.getElementById("followupErr");
+  const okBox = document.getElementById("followupOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  const orderId = Number(document.getElementById("followupFormBox").dataset.orderId);
+  const hasComplaint = document.getElementById("followupHasComplaint").checked;
+  const body = {
+    orderId,
+    callResult: document.getElementById("followupCallResult").value,
+    satisfactionRating: document.getElementById("followupSatisfaction").value || null,
+    notes: document.getElementById("followupNotes").value.trim() || null,
+    hasComplaint,
+    complaint: hasComplaint ? {
+      category: document.getElementById("complaintCategory").value,
+      status: document.getElementById("complaintStatus").value,
+      description: document.getElementById("complaintDescription").value.trim() || null,
+      resolutionNotes: document.getElementById("complaintResolutionNotes").value.trim() || null,
+    } : undefined,
+  };
+  try {
+    await api("/api/crm/followups", { method: "POST", body: JSON.stringify(body) });
+    okBox.textContent = "✅ اتسجّلت المتابعة";
+    document.getElementById("followupFormBox").style.display = "none";
+    await loadQueue();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+
+// ---------------- الشكاوى ----------------
+async function loadComplaints() {
+  const status = document.getElementById("complaintsStatusFilter").value;
+  const body = document.getElementById("complaintsBody");
+  body.innerHTML = `<tr><td colspan="9">جاري التحميل...</td></tr>`;
+  try {
+    const rows = await api(`/api/crm/complaints${status ? `?status=${status}` : ""}`);
+    body.innerHTML = rows.map(r => `
+      <tr>
+        <td>#${r.orderId}</td>
+        <td>${r.customerName || "—"}<br><span style="color:var(--faint)">${r.customerPhone}</span></td>
+        <td>${r.branchName || "—"}</td>
+        <td>${CATEGORY_LABELS[r.category] || r.category}</td>
+        <td>${r.description || "—"}</td>
+        <td>
+          <select data-status-for="${r.id}">
+            <option value="open" ${r.status === "open" ? "selected" : ""}>مفتوحة</option>
+            <option value="in_progress" ${r.status === "in_progress" ? "selected" : ""}>تحت المعالجة</option>
+            <option value="resolved" ${r.status === "resolved" ? "selected" : ""}>اتحلت</option>
+          </select>
+        </td>
+        <td><textarea data-notes-for="${r.id}" rows="1" style="width:100%;font-size:11px">${r.resolutionNotes || ""}</textarea></td>
+        <td>${dt(r.createdAt)}</td>
+        <td><button class="smallbtn" data-save-id="${r.id}">حفظ</button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="9">مفيش شكاوى</td></tr>`;
+    body.querySelectorAll("[data-save-id]").forEach(btn => {
+      btn.onclick = () => saveComplaint(btn.dataset.saveId);
+    });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="9">${e.message}</td></tr>`;
+  }
+}
+async function saveComplaint(id) {
+  const status = document.querySelector(`[data-status-for="${id}"]`).value;
+  const resolutionNotes = document.querySelector(`[data-notes-for="${id}"]`).value.trim();
+  try {
+    await api(`/api/crm/complaints/${id}`, { method: "PATCH", body: JSON.stringify({ status, resolutionNotes: resolutionNotes || null }) });
+    await loadComplaints();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+document.getElementById("complaintsFilterBtn").onclick = loadComplaints;
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  document.getElementById("customersFrame").src = "satamoni-customers.html";
+  loadQueue();
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+<script src="/js/theme.js"></script>
+</body>
+</html>
