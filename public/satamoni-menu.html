@@ -188,6 +188,43 @@
       <div id="talabatImportResult" style="font-size:12px;margin-top:8px"></div>
     </div>
 
+    <!-- تعديل جماعي بشيت إكسيل: نزّل الشيت الحالي (كل الأصناف/الأحجام)، عدّله في إكسيل، ارفعه تاني -
+         معاينة التغييرات قبل التطبيق الفعلي (preview مفيهوش أي كتابة في الداتابيز، commit بيطبّق نفس
+         التغييرات اللي المعاينة وريتها بالظبط - بيعيد تحليل نفس الملف من غير ما يستنى تغييرات من المتصفح) -->
+    <h1>شيت الأسعار (تعديل جماعي)</h1>
+    <div class="formbox">
+      <div style="font-size:11px;color:var(--faint);margin-bottom:8px">
+        نزّل الشيت الحالي، عدّل الأسعار (العادي أو طلبات) في إكسيل، وارفعه تاني. الاستيراد بيحدّث الأصناف/الأحجام
+        الموجودة بس - مش بيضيف صنف جديد ولا بيحذف حاجة.
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button type="button" id="priceSheetExportBtn">⬇️ تنزيل شيت الأسعار الحالي</button>
+        <input type="file" id="priceSheetFile" accept=".xlsx,.csv" />
+        <button type="button" id="priceSheetPreviewBtn">معاينة التغييرات</button>
+        <button type="button" id="priceSheetCommitBtn" style="display:none">✅ تأكيد وتطبيق التغييرات</button>
+      </div>
+      <div class="err" id="priceSheetErr"></div>
+      <div id="priceSheetResult" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
+    <h1>شيت الريسبي (تعديل جماعي)</h1>
+    <div class="formbox">
+      <div style="font-size:11px;color:var(--faint);margin-bottom:8px">
+        نزّل شيت الريسبي الحالي (سطر لكل مكوّن)، راجعه أو عدّل الكميات/أضف/احذف مكوّنات، وارفعه تاني.
+        <strong>مهم:</strong> ريسبي أي حجم ظاهر في الشيت بيتستبدل بالكامل (المكوّنات اللي مش موجودة في
+        الشيت لصنف معيّن بتتشال من ريسبيه) - أي حجم مش موجود في الشيت أصلًا بيفضل من غير ما يتلمس خالص.
+        راجع المعاينة كويس قبل التأكيد.
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button type="button" id="recipeSheetExportBtn">⬇️ تنزيل شيت الريسبي الحالي</button>
+        <input type="file" id="recipeSheetFile" accept=".xlsx,.csv" />
+        <button type="button" id="recipeSheetPreviewBtn">معاينة التغييرات</button>
+        <button type="button" id="recipeSheetCommitBtn" style="display:none">✅ تأكيد وتطبيق التغييرات</button>
+      </div>
+      <div class="err" id="recipeSheetErr"></div>
+      <div id="recipeSheetResult" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
     <h1>الأصناف الحالية</h1>
     <!-- المرحلة 7R: تفعيل/تعطيل جماعي - بدل ما كل صنف يتعطّل لوحده وقت نقص مكوّن مشترك بين أصناف كتير -->
     <div id="bulkItemsBar" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
@@ -342,6 +379,34 @@ async function api(path, opts = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "حصل خطأ");
   return data;
+}
+
+// رفع ملف (FormData) - بدون Content-Type يدوي عشان المتصفح يحدد الـboundary بنفسه، نفس فكرة api() في الباقي
+async function apiUpload(path, formData) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}) },
+    body: formData,
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+
+// تنزيل ملف إكسيل من endpoint محمي بـauth - fetch بدل <a href> مباشر عشان لازم Authorization header
+async function downloadExport(path, filename) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || "حصل خطأ"); }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 document.getElementById("loginBtn").onclick = async () => {
@@ -685,6 +750,147 @@ document.getElementById("talabatImportSubmit").onclick = async () => {
     `;
     document.getElementById("talabatImportText").value = "";
     await loadItems();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+
+// ---------------- شيت الأسعار (تعديل جماعي بإكسيل) ----------------
+let priceSheetSelectedFile = null;
+document.getElementById("priceSheetExportBtn").onclick = async () => {
+  const errBox = document.getElementById("priceSheetErr");
+  errBox.textContent = "";
+  try {
+    await downloadExport("/api/menu/prices/export", "menu-prices.xlsx");
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("priceSheetPreviewBtn").onclick = async () => {
+  const errBox = document.getElementById("priceSheetErr");
+  const resultBox = document.getElementById("priceSheetResult");
+  const commitBtn = document.getElementById("priceSheetCommitBtn");
+  errBox.textContent = ""; resultBox.innerHTML = ""; commitBtn.style.display = "none";
+  const file = document.getElementById("priceSheetFile").files[0];
+  if (!file) { errBox.textContent = "اختار ملف الشيت الأول"; return; }
+  priceSheetSelectedFile = file;
+  try {
+    const fd = new FormData(); fd.append("file", file);
+    const data = await apiUpload("/api/menu/prices/import/preview", fd);
+    if (data.changes.length === 0) {
+      resultBox.innerHTML = `<div style="color:var(--faint)">مفيش أي تغيير فعلي في الشيت ده (${data.unchangedCount} صنف زي ما هو)</div>`;
+    } else {
+      resultBox.innerHTML = `
+        <div style="margin-bottom:6px">هيتغيّر سعر ${data.changes.length} حجم (${data.unchangedCount} تاني زي ما هو):</div>
+        <table><thead><tr><th>الصنف</th><th>الحجم</th><th>السعر العادي</th><th>سعر طلبات</th></tr></thead><tbody>
+          ${data.changes.map((c) => `<tr>
+            <td>${c.item}</td><td>${c.variant}</td>
+            <td>${c.oldPrice} ← <strong>${c.newPrice}</strong></td>
+            <td>${c.oldTalabatPrice ?? "—"} ← <strong>${c.newTalabatPrice ?? "—"}</strong></td>
+          </tr>`).join("")}
+        </tbody></table>
+      `;
+      commitBtn.style.display = "";
+    }
+    if (data.notFound.length) {
+      resultBox.innerHTML += `
+        <div style="color:var(--err);margin-top:8px">⚠️ ${data.notFound.length} سطر مش لاقي له صنف مطابق - راجعهم:</div>
+        <ul style="margin:4px 0;padding-inline-start:18px;color:var(--err)">${data.notFound.map((n) => `<li>${n}</li>`).join("")}</ul>
+      `;
+    }
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("priceSheetCommitBtn").onclick = async () => {
+  const errBox = document.getElementById("priceSheetErr");
+  const resultBox = document.getElementById("priceSheetResult");
+  errBox.textContent = "";
+  if (!priceSheetSelectedFile) { errBox.textContent = "اعمل معاينة الأول"; return; }
+  try {
+    const fd = new FormData(); fd.append("file", priceSheetSelectedFile);
+    const data = await apiUpload("/api/menu/prices/import/commit", fd);
+    resultBox.innerHTML = `<div style="color:var(--green)">✅ اتحدّث سعر ${data.updatedCount} حجم</div>`;
+    document.getElementById("priceSheetCommitBtn").style.display = "none";
+    document.getElementById("priceSheetFile").value = "";
+    priceSheetSelectedFile = null;
+    await loadItems();
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+
+// ---------------- شيت الريسبي (تعديل جماعي بإكسيل) ----------------
+let recipeSheetSelectedFile = null;
+document.getElementById("recipeSheetExportBtn").onclick = async () => {
+  const errBox = document.getElementById("recipeSheetErr");
+  errBox.textContent = "";
+  try {
+    await downloadExport("/api/menu/recipes/export", "menu-recipes.xlsx");
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+function renderRecipeLines(lines, sign) {
+  return lines.map((l) => `<li>${sign} ${l.ingredient}: ${l.quantityPerUnit ?? ""}</li>`).join("");
+}
+document.getElementById("recipeSheetPreviewBtn").onclick = async () => {
+  const errBox = document.getElementById("recipeSheetErr");
+  const resultBox = document.getElementById("recipeSheetResult");
+  const commitBtn = document.getElementById("recipeSheetCommitBtn");
+  errBox.textContent = ""; resultBox.innerHTML = ""; commitBtn.style.display = "none";
+  const file = document.getElementById("recipeSheetFile").files[0];
+  if (!file) { errBox.textContent = "اختار ملف الشيت الأول"; return; }
+  recipeSheetSelectedFile = file;
+  try {
+    const fd = new FormData(); fd.append("file", file);
+    const data = await apiUpload("/api/menu/recipes/import/preview", fd);
+    if (data.variantChanges.length === 0) {
+      resultBox.innerHTML = `<div style="color:var(--faint)">مفيش أي تغيير فعلي في ريسبي أي حجم (${data.unchangedVariantsCount} حجم زي ما هو)</div>`;
+    } else {
+      resultBox.innerHTML = `
+        <div style="margin-bottom:6px">هيتستبدل ريسبي ${data.variantChanges.length} حجم كامل (${data.unchangedVariantsCount} تاني زي ما هو):</div>
+        ${data.variantChanges.map((c) => `
+          <div style="margin:8px 0;padding:8px;background:var(--bg-alt);border-radius:6px">
+            <strong>${c.item} - ${c.variant}</strong>
+            <ul style="margin:4px 0;padding-inline-start:18px;font-size:12px">
+              ${renderRecipeLines(c.added, "➕")}
+              ${c.removed.map((l) => `<li style="color:var(--err)">➖ ${l.ingredient}: ${l.quantityPerUnit}</li>`).join("")}
+              ${c.changed.map((l) => `<li>✏️ ${l.ingredient}: ${l.oldQuantityPerUnit} ← <strong>${l.newQuantityPerUnit}</strong></li>`).join("")}
+            </ul>
+          </div>
+        `).join("")}
+      `;
+      commitBtn.style.display = "";
+    }
+    if (data.notFoundVariants.length) {
+      resultBox.innerHTML += `
+        <div style="color:var(--err);margin-top:8px">⚠️ ${data.notFoundVariants.length} صنف/حجم مش لاقي له مطابقة (اتجاهل بالكامل):</div>
+        <ul style="margin:4px 0;padding-inline-start:18px;color:var(--err)">${data.notFoundVariants.map((n) => `<li>${n}</li>`).join("")}</ul>
+      `;
+    }
+    if (data.notFoundIngredients.length) {
+      resultBox.innerHTML += `
+        <div style="color:var(--err);margin-top:8px">⚠️ ${data.notFoundIngredients.length} مكوّن مش لاقي له مطابقة (اتجاهل بس باقي الصنف هيتحدّث):</div>
+        <ul style="margin:4px 0;padding-inline-start:18px;color:var(--err)">${data.notFoundIngredients.map((n) => `<li>${n}</li>`).join("")}</ul>
+      `;
+    }
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+};
+document.getElementById("recipeSheetCommitBtn").onclick = async () => {
+  const errBox = document.getElementById("recipeSheetErr");
+  const resultBox = document.getElementById("recipeSheetResult");
+  errBox.textContent = "";
+  if (!recipeSheetSelectedFile) { errBox.textContent = "اعمل معاينة الأول"; return; }
+  try {
+    const fd = new FormData(); fd.append("file", recipeSheetSelectedFile);
+    const data = await apiUpload("/api/menu/recipes/import/commit", fd);
+    resultBox.innerHTML = `<div style="color:var(--green)">✅ اتستبدل ريسبي ${data.updatedVariantsCount} حجم</div>`;
+    document.getElementById("recipeSheetCommitBtn").style.display = "none";
+    document.getElementById("recipeSheetFile").value = "";
+    recipeSheetSelectedFile = null;
   } catch (e) {
     errBox.textContent = e.message;
   }
