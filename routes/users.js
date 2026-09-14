@@ -30,9 +30,11 @@ router.get("/", requireRole("admin", "branch_manager"), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.name, u.email, u.role, u.is_active, u.branch_id, b.name AS branch_name, u.created_at,
-              (u.pin_hash IS NOT NULL) AS has_pin, u.permission_grants, u.permission_revokes
+              (u.pin_hash IS NOT NULL) AS has_pin, u.permission_grants, u.permission_revokes,
+              e.id AS employee_id, e.name AS employee_name
        FROM users u
        LEFT JOIN branches b ON b.id = u.branch_id
+       LEFT JOIN employees e ON e.user_id = u.id
        WHERE ($1::int IS NULL OR u.branch_id = $1)
        ORDER BY u.id`,
       [branchId]
@@ -114,7 +116,7 @@ router.post("/", requireRole("admin"), async (req, res) => {
 // PIN بتاع موافقة الخصومات الكبيرة واسترجاع الطلبات - بيتحدد بس لمدير فرع/أدمن (4-6 أرقام)
 router.patch("/:id", requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const { role, branchId, isActive, password, pin, permissions } = req.body;
+  const { role, branchId, isActive, password, pin, permissions, employeeId } = req.body;
 
   try {
     const before = await pool.query("SELECT role, is_active, branch_id, permission_grants, permission_revokes FROM users WHERE id = $1", [id]);
@@ -158,17 +160,49 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
       fields.push(`permission_grants = $${i++}`); values.push(JSON.stringify(overrides.grants));
       fields.push(`permission_revokes = $${i++}`); values.push(JSON.stringify(overrides.revokes));
     }
-    if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
+    if (fields.length === 0 && employeeId === undefined) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
 
-    values.push(id);
-    const result = await pool.query(
-      `UPDATE users SET ${fields.join(", ")} WHERE id = $${i}
-       RETURNING id, name, email, role, branch_id, is_active, created_at, (pin_hash IS NOT NULL) AS has_pin,
-                 permission_grants, permission_revokes`,
-      values
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: "المستخدم مش موجود" });
-    const updated = result.rows[0];
+    // HR-6: ربط حساب دخول موجود بالفعل (اتعمل قبل ما نظام الدخول الذاتي للموظف كان موجود، أو حساب
+    // كاشير/كول سنتر اتضافله صلاحية self-service بعد كده) بملف موظف HR موجود - نفس ضمانة POST / بالظبط
+    // (employees.user_id UNIQUE + WHERE user_id IS NULL يمنع ربط ملف موظف مربوط بالفعل)
+    let linkedEmployee = null;
+    if (employeeId !== undefined && employeeId !== null) {
+      try {
+        const linked = await pool.query(
+          "UPDATE employees SET user_id = $1 WHERE id = $2 AND user_id IS NULL RETURNING id, name",
+          [id, employeeId]
+        );
+        if (linked.rows.length === 0) {
+          return res.status(400).json({ error: "ملف الموظف ده مش موجود أو عنده حساب دخول ذاتي بالفعل" });
+        }
+        linkedEmployee = linked.rows[0];
+      } catch (err) {
+        if (err.code === "23505") return res.status(400).json({ error: "الحساب ده مربوط بملف موظف تاني بالفعل" });
+        throw err;
+      }
+    }
+
+    let updated;
+    if (fields.length > 0) {
+      values.push(id);
+      const result = await pool.query(
+        `UPDATE users SET ${fields.join(", ")} WHERE id = $${i}
+         RETURNING id, name, email, role, branch_id, is_active, created_at, (pin_hash IS NOT NULL) AS has_pin,
+                   permission_grants, permission_revokes`,
+        values
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: "المستخدم مش موجود" });
+      updated = result.rows[0];
+    } else {
+      const result = await pool.query(
+        `SELECT id, name, email, role, branch_id, is_active, created_at, (pin_hash IS NOT NULL) AS has_pin,
+                permission_grants, permission_revokes
+         FROM users WHERE id = $1`,
+        [id]
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: "المستخدم مش موجود" });
+      updated = result.rows[0];
+    }
 
     if (role !== undefined && prev && prev.role !== role) {
       await logAudit(pool, {
@@ -208,6 +242,13 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
         entityType: "user", entityId: updated.id,
         oldValues: { permissionGrants: prev.permission_grants, permissionRevokes: prev.permission_revokes },
         newValues: { permissionGrants: overrides.grants, permissionRevokes: overrides.revokes }, req,
+      });
+    }
+    if (linkedEmployee) {
+      await logAudit(pool, {
+        branchId: updated.branch_id, userId: req.user.id, action: "USER_LINKED_TO_EMPLOYEE",
+        entityType: "user", entityId: updated.id,
+        newValues: { employeeId: Number(employeeId), employeeName: linkedEmployee.name }, req,
       });
     }
     res.json(updated);
