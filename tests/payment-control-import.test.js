@@ -216,3 +216,46 @@ test("9) مدير الفرع (Shift Supervisor) معندوش صلاحية يست
     .attach("file", Buffer.from(csv), "s.csv");
   expect(res.status).toBe(403);
 });
+
+// -------------------- تحديث قنوات تسوية الطلبات القديمة (backfill-settlement-channels) --------------------
+// إعادة إنتاج حقيقية للباج اللي حصل فعليًا أول استخدام للميزة: طريقة دفع اتضافلها قناة تسوية *بعد* ما
+// طلبات اتسجّلت عليها بالفعل - الدفعات القديمة دي لازم تتحدّث، من غير ما نلمس دفعة قناتها متحددة أصلًا
+
+test("10) طلب اتسجّل قبل ما القناة تتظبط على طريقة الدفع - backfill بيصلّحه", async () => {
+  const pm = await pool.query("INSERT INTO payment_methods (name, kind) VALUES ('فيزا-متأخرة-PCI', 'card_or_wallet') RETURNING id");
+  const orderId = await makeOrder(pm.rows[0].id);
+  const before = await paymentForOrder(orderId);
+  expect(before.settlement_channel).toBeNull(); // زي ما هو متوقع - القناة كانت فاضية وقت القفل
+
+  // دلوقتي الأدمن بيظبط القناة على طريقة الدفع (بعد ما الطلب اتسجّل بالفعل)
+  await pool.query("UPDATE payment_methods SET settlement_channel = 'visa_pos' WHERE id = $1", [pm.rows[0].id]);
+
+  const res = await request(app).post("/api/payment-control/backfill-settlement-channels")
+    .set(authed(accountantToken)).send({ branchId });
+  expect(res.status).toBe(200);
+  expect(res.body.updated).toBeGreaterThanOrEqual(1);
+
+  const after = await paymentForOrder(orderId);
+  expect(after.settlement_channel).toBe("visa_pos");
+});
+
+test("11) backfill ميلمسش دفعة قناتها متحددة أصلًا حتى لو طريقة الدفع اتغيّرت بعد كده", async () => {
+  const orderId = await makeOrder(instapayMethodId); // instapayMethodId قناته 'instapay' من الأساس
+  const before = await paymentForOrder(orderId);
+  expect(before.settlement_channel).toBe("instapay");
+
+  // نفترض حد غيّر قناة طريقة الدفع بعد كده لقيمة تانية
+  await pool.query("UPDATE payment_methods SET settlement_channel = 'orange_cash' WHERE id = $1", [instapayMethodId]);
+
+  await request(app).post("/api/payment-control/backfill-settlement-channels").set(authed(accountantToken)).send({ branchId });
+
+  const after = await paymentForOrder(orderId);
+  expect(after.settlement_channel).toBe("instapay"); // فضلت زي ما هي - مش اتكتبت فوقها
+  await pool.query("UPDATE payment_methods SET settlement_channel = 'instapay' WHERE id = $1", [instapayMethodId]); // نرجّعها لحالتها الأصلية لباقي الاختبارات
+});
+
+test("12) عزل الفروع: محاسب فرع تاني مايقدرش يشغّل backfill لفرع مختلف", async () => {
+  const res = await request(app).post("/api/payment-control/backfill-settlement-channels")
+    .set(authed(accountant2Token)).send({ branchId });
+  expect(res.status).toBe(403);
+});

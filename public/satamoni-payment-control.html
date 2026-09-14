@@ -134,6 +134,17 @@
       <div style="font-size:12px;color:var(--faint)">رسالة التقرير اليومي (نفس محتوى الإرسال التلقائي لو مفعّل):</div>
       <pre id="ovMessage" style="white-space:pre-wrap;font-size:12px;margin-top:8px"></pre>
     </div>
+    <div class="formbox" id="ovBackfillBox">
+      <div style="font-weight:800;margin-bottom:4px">تحديث قنوات تسوية الطلبات القديمة</div>
+      <div style="font-size:12px;color:var(--faint);margin-bottom:8px">
+        لو ظبطت "قناة التسوية" (فيزا POS/إنستاباي/أورانج كاش) على طريقة دفع من إعدادات المنيو *بعد* ما
+        طلبات اتسجلت عليها بالفعل، الطلبات القديمة دي مش هتظهر في فحوص المطابقة لحد ما تحدّثها هنا مرة
+        واحدة - إجراء آمن ومفيش أي حاجة بتتغيّر غير الطلبات اللي قناتها لسه فاضية.
+      </div>
+      <button id="ovBackfillBtn" class="secondary">حدّث دلوقتي</button>
+      <div class="ok" id="ovBackfillOk"></div>
+      <div class="err" id="ovBackfillErr"></div>
+    </div>
   </div>
 
   <!-- 2: سجل المدفوعات -->
@@ -451,6 +462,14 @@ async function loadOverview() {
     document.getElementById("ovPending").textContent = pending.length;
   } catch (e) { /* تجاهل */ }
 }
+document.getElementById("ovBackfillBtn").onclick = async () => {
+  const errBox = document.getElementById("ovBackfillErr"); const okBox = document.getElementById("ovBackfillOk");
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    const result = await api("/api/payment-control/backfill-settlement-channels", { method: "POST", body: JSON.stringify({}) });
+    okBox.textContent = result.updated > 0 ? `اتحدّث ${result.updated} طلب - دلوقتي هيظهروا في فحوص المطابقة` : "كل الطلبات محدّثة أصلًا، مفيش حاجة محتاجة تحديث";
+  } catch (e) { errBox.textContent = e.message; }
+};
 
 // ---------------- 2: سجل المدفوعات ----------------
 async function loadPayments() {
@@ -778,7 +797,7 @@ async function boot() {
   document.getElementById("accessDenied").style.display = "none";
 
   if (!reconcileRoles.includes(auth.user.role)) {
-    ["talabatEntryBox", "instaEntryBox", "visaEntryBox", "talImportBox", "instaImportBox", "visaImportBox"].forEach(id => document.getElementById(id).style.display = "none");
+    ["talabatEntryBox", "instaEntryBox", "visaEntryBox", "talImportBox", "instaImportBox", "visaImportBox", "ovBackfillBox"].forEach(id => document.getElementById(id).style.display = "none");
   }
   if (auditRoles.includes(auth.user.role)) document.getElementById("auditTabBtn").style.display = "block";
 
