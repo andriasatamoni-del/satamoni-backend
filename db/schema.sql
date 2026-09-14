@@ -2611,10 +2611,14 @@ CREATE TABLE payment_reconciliation_records (
   match_status        TEXT NOT NULL DEFAULT 'UNMATCHED' CHECK (match_status IN ('UNMATCHED', 'MATCHED', 'DISPUTED')),
   notes               TEXT,
   entered_by          INTEGER REFERENCES users(id),
-  entered_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+  entered_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Phase 2: استيراد ملفات (CSV/Excel) - كل سطور نفس عملية الاستيراد بتتوسم بنفس الـbatch عشان لو
+  -- الملف اتقرا غلط (عمود متبدّل مثلًا) يتشال دفعة واحدة بدل تصحيح يدوي سطر سطر. NULL = إدخال يدوي عادي
+  import_batch_id     TEXT
 );
 CREATE INDEX idx_payment_reconciliation_branch_date ON payment_reconciliation_records(branch_id, source, external_date);
 CREATE INDEX idx_payment_reconciliation_match_status ON payment_reconciliation_records(match_status);
+CREATE INDEX idx_payment_reconciliation_import_batch ON payment_reconciliation_records(import_batch_id) WHERE import_batch_id IS NOT NULL;
 
 -- سجل تدقيق مخصص للمدفوعات (منفصل عن audit_logs العام، تفاصيل أدق: before/after كاملة) - append-only
 -- بالفعل (مفيش UPDATE/DELETE route ليه)، نفس فلسفة audit_logs العام تمامًا

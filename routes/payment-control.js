@@ -2,6 +2,8 @@
 // routes/driver-shifts.js/routes/shifts.js). المنطق الفعلي (قفل/تعديل/مطابقة/نقاط مخاطر) كله في الـengine.
 const express = require("express");
 const router = express.Router();
+const crypto = require("crypto");
+const multer = require("multer");
 const pool = require("../db/pool");
 const { requireAuth, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission, hasPermission } = require("../middleware/permissions");
@@ -9,9 +11,14 @@ const { validateIdParam } = require("../middleware/validate-id-param");
 const { consumeApprovalGrant } = require("../db/approval-engine");
 const {
   createAdjustmentRequest, applyAdjustmentApproval, rejectAdjustmentRequest, computeExceptions,
-  formatOwnerReportMessage,
+  formatOwnerReportMessage, autoMatchChannelRecords,
 } = require("../db/payment-control-engine");
+const { previewStatementFile, readStatementGrid, extractStatementRows } = require("../db/payment-reconciliation-import");
 const { getCairoBusinessDate } = require("../db/business-date");
+
+const statementUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const VALID_SOURCES = ["talabat_statement", "visa_settlement", "instapay", "orange_cash"];
+const SETTLEMENT_CHANNEL_BY_SOURCE = { instapay: "instapay", orange_cash: "orange_cash" };
 
 router.use(requireAuth);
 router.param("id", validateIdParam);
@@ -249,6 +256,132 @@ router.patch("/reconciliation-records/:id/match", requirePermission("payment_con
       [paymentId, req.params.id]
     );
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/payment-control/reconciliation-records/import/preview - {file, source}multipart -> عيّنة
+// من الصفوف الخام + عدد الأعمدة عشان المحاسب يختار عمود التاريخ/المبلغ/المرجع بعينه (مفيش تخمين أعمى
+// لأسماء أعمدة - راجع db/payment-reconciliation-import.js للسبب)
+router.post("/reconciliation-records/import/preview", requirePermission("payment_control.reconciliation.enter"), (req, res, next) => {
+  statementUpload.single("file")(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "الملف كبير جدًا (الحد الأقصى 10 ميجا)" });
+    res.status(400).json({ error: err.message });
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "لازم ترفع ملف CSV أو Excel" });
+  if (!VALID_SOURCES.includes(req.body.source)) return res.status(400).json({ error: "مصدر كشف غير معروف" });
+  try {
+    const preview = await previewStatementFile(req.file.buffer, req.file.originalname);
+    res.json(preview);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/payment-control/reconciliation-records/import/commit - {file, source, branchId, dateColumn,
+// amountColumn, referenceColumn?, hasHeaderRow} -> بيستورد كل صفوف الملف، ولو المصدر إنستاباي/أورانج
+// كاش بيحاول مطابقة تلقائية فورًا بعدها (راجع autoMatchChannelRecords - طلبات/فيزا مقارنة إجمالي مش
+// سطرية، فمفيش حاجة تُطابق هناك)
+router.post("/reconciliation-records/import/commit", requirePermission("payment_control.reconciliation.enter"), (req, res, next) => {
+  statementUpload.single("file")(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "الملف كبير جدًا (الحد الأقصى 10 ميجا)" });
+    res.status(400).json({ error: err.message });
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "لازم ترفع ملف CSV أو Excel" });
+  const { source, branchId, dateColumn, amountColumn, referenceColumn, hasHeaderRow } = req.body;
+  if (!VALID_SOURCES.includes(source)) return res.status(400).json({ error: "مصدر كشف غير معروف" });
+  if (dateColumn === undefined || amountColumn === undefined) {
+    return res.status(400).json({ error: "لازم تحدد عمود التاريخ وعمود المبلغ على الأقل" });
+  }
+  if (branchId && !assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+
+  try {
+    const grid = await readStatementGrid(req.file.buffer, req.file.originalname);
+    const { rows, errors } = extractStatementRows(grid, {
+      dateColumn: Number(dateColumn), amountColumn: Number(amountColumn),
+      referenceColumn: referenceColumn !== undefined && referenceColumn !== "" ? Number(referenceColumn) : null,
+      hasHeaderRow: hasHeaderRow === true || hasHeaderRow === "true",
+    });
+    if (rows.length === 0) {
+      return res.status(400).json({ error: "مفيش أي صف صالح للاستيراد في الملف ده", errors });
+    }
+
+    const batchId = crypto.randomUUID();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO payment_reconciliation_records
+            (branch_id, source, external_reference, external_amount, external_date, entered_by, import_batch_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [branchId || null, source, row.externalReference, row.externalAmount, row.externalDate, req.user.id, batchId]
+        );
+      }
+      await client.query(
+        `INSERT INTO payment_audit_logs (branch_id, actor_id, actor_role, action_type, after_state)
+         VALUES ($1,$2,$3,'RECONCILIATION_ENTERED',$4)`,
+        [branchId || null, req.user.id, req.user.role, JSON.stringify({ source, imported: rows.length, batchId, fileName: req.file.originalname })]
+      );
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    let matchResult = null;
+    const settlementChannel = SETTLEMENT_CHANNEL_BY_SOURCE[source];
+    if (settlementChannel) {
+      matchResult = await autoMatchChannelRecords(pool, { source, branchId: branchId || null, settlementChannel });
+    }
+
+    res.status(201).json({ batchId, imported: rows.length, errors, autoMatch: matchResult });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/payment-control/reconciliation-records/match-auto - {source, branchId} - إعادة تشغيل
+// المطابقة التلقائية يدويًا (مفيد لو دفعات جديدة اتقفلت بعد ما الملف اتستورد أصلًا)
+router.post("/reconciliation-records/match-auto", requirePermission("payment_control.reconciliation.enter"), async (req, res) => {
+  const { source, branchId } = req.body;
+  const settlementChannel = SETTLEMENT_CHANNEL_BY_SOURCE[source];
+  if (!settlementChannel) return res.status(400).json({ error: "المطابقة التلقائية متاحة لإنستاباي/أورانج كاش بس" });
+  if (branchId && !assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+  try {
+    const result = await autoMatchChannelRecords(pool, { source, branchId: branchId || null, settlementChannel });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/payment-control/reconciliation-records/import-batches/:batchId - إلغاء استيراد كامل لو
+// اتقرا غلط (عمود متبدّل مثلًا) - مسموح بس لو كل سطور الدفعة لسه UNMATCHED (لو أي سطر اتطابق بالفعل،
+// لازم يتراجع يدويًا سطر سطر - مش هنفك مطابقة مؤكدة تلقائيًا من غير قرار بشري صريح)
+router.delete("/reconciliation-records/import-batches/:batchId", requirePermission("payment_control.reconciliation.enter"), async (req, res) => {
+  try {
+    const rows = await pool.query(
+      "SELECT id, branch_id, match_status FROM payment_reconciliation_records WHERE import_batch_id = $1",
+      [req.params.batchId]
+    );
+    if (rows.rows.length === 0) return res.status(404).json({ error: "دفعة الاستيراد دي مش موجودة" });
+    const branchIds = [...new Set(rows.rows.map((r) => r.branch_id).filter(Boolean))];
+    for (const bId of branchIds) {
+      if (!assertOwnBranch(req.user, bId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+    }
+    if (rows.rows.some((r) => r.match_status !== "UNMATCHED")) {
+      return res.status(400).json({ error: "الدفعة دي فيها سطور اتطابقت بالفعل - لازم تتراجع يدويًا سطر سطر" });
+    }
+    await pool.query("DELETE FROM payment_reconciliation_records WHERE import_batch_id = $1", [req.params.batchId]);
+    res.json({ deleted: rows.rows.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

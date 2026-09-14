@@ -15,6 +15,10 @@ const RISK_WEIGHTS = {
 };
 const REPEATED_ADJUSTMENTS_THRESHOLD = 3;
 const UNMATCHED_GRACE_DAYS = 3;
+// Phase 2 (مطابقة تلقائية إنستاباي/أورانج كاش بس - راجع autoMatchChannelRecords): سماحية بسيطة لفروق
+// التوقيت/التقريب الطبيعية بين لحظة تسجيل الدفعة في الكاشير ولحظة ظهورها في كشف حساب المزوّد
+const MATCH_AMOUNT_TOLERANCE_EGP = 1;
+const MATCH_DATE_TOLERANCE_DAYS = 3;
 
 function riskTier(points) {
   if (points >= 60) return "HIGH";
@@ -360,6 +364,58 @@ async function findRepeatedAdjustmentsInShift(client, { branchId, from, to }) {
   }));
 }
 
+// Phase 2: مطابقة تلقائية بعد استيراد ملف - إنستاباي/أورانج كاش بس (مطابقة سطر بسطر فعلية). فرق عن
+// فحص طلبات/فيزا: الاتنين دول (findTalabatCashDiscrepancies/findVisaSettlementDiscrepancy) مقارنة
+// إجمالي فترة مقابل إجمالي فترة (مفيش "سطر داخلي = سطر خارجي" واحد لواحد أصلًا)، فمفيش حاجة تُطابق
+// سطريًا هناك - matched_payment_id مالوش معنى غير هنا. مطابقة "مؤكدة" بس (unique mutual match): سطر
+// كشف له مرشح دفعة واحد بس ضمن السماحية، والدفعة دي نفسها مالهاش مرشح تاني غيره - أي غموض (أكتر من
+// مرشح) بيتسيب UNMATCHED عمدًا، النظام مايخمّنش
+async function autoMatchChannelRecords(client, { source, branchId, settlementChannel }) {
+  const records = await client.query(
+    `SELECT id, external_amount, external_date FROM payment_reconciliation_records
+     WHERE source = $1 AND match_status = 'UNMATCHED' AND ($2::int IS NULL OR branch_id = $2)`,
+    [source, branchId || null]
+  );
+  const payments = await client.query(
+    `SELECT p.id, p.amount, p.locked_at FROM payments p
+     WHERE p.settlement_channel = $1 AND ($2::int IS NULL OR p.branch_id = $2)
+       AND NOT EXISTS (SELECT 1 FROM payment_reconciliation_records r WHERE r.matched_payment_id = p.id)`,
+    [settlementChannel, branchId || null]
+  );
+
+  const withinTolerance = (record, payment) => {
+    const amountDiff = Math.abs(Number(record.external_amount) - Number(payment.amount));
+    if (amountDiff > MATCH_AMOUNT_TOLERANCE_EGP) return false;
+    const recordDate = new Date(record.external_date);
+    const paymentDate = new Date(payment.locked_at);
+    const dayDiff = Math.abs(recordDate - paymentDate) / 86400000;
+    return dayDiff <= MATCH_DATE_TOLERANCE_DAYS;
+  };
+
+  const candidatesByRecord = new Map();
+  const candidatesByPayment = new Map();
+  for (const record of records.rows) {
+    const matches = payments.rows.filter((p) => withinTolerance(record, p));
+    candidatesByRecord.set(record.id, matches.map((p) => p.id));
+    for (const p of matches) {
+      candidatesByPayment.set(p.id, (candidatesByPayment.get(p.id) || []).concat(record.id));
+    }
+  }
+
+  let matchedCount = 0;
+  for (const [recordId, paymentIds] of candidatesByRecord.entries()) {
+    if (paymentIds.length !== 1) continue;
+    const paymentId = paymentIds[0];
+    if ((candidatesByPayment.get(paymentId) || []).length !== 1) continue; // نفس الدفعة مرشحة لأكتر من سطر - غموض، تجاهل
+    await client.query(
+      `UPDATE payment_reconciliation_records SET matched_payment_id = $1, match_status = 'MATCHED' WHERE id = $2`,
+      [paymentId, recordId]
+    );
+    matchedCount++;
+  }
+  return { checked: records.rows.length, matched: matchedCount };
+}
+
 // كل الفحوصات مع بعض، مرتبة تنازليًا بالنقاط - ده اللي بيغذّي تبويب "الاستثناءات والمخاطر" والتقرير اليومي
 async function computeExceptions(client, { branchId = null, from, to }) {
   const [talabatMismatch, talabatCashDiff, instapayUnmatched, orangeUnmatched, visaDiff, repeatedAdjustments] = await Promise.all([
@@ -399,4 +455,5 @@ module.exports = {
   lockPaymentForOrder, createAdjustmentRequest, applyAdjustmentApproval, rejectAdjustmentRequest,
   findTalabatPosMismatches, findTalabatCashDiscrepancies, findChannelUnmatchedExceptions, findVisaSettlementDiscrepancy,
   findRepeatedAdjustmentsInShift, computeExceptions, formatOwnerReportMessage,
+  autoMatchChannelRecords,
 };

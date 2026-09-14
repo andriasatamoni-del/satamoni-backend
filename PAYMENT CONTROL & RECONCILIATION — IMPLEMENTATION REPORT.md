@@ -147,3 +147,58 @@ without modifying any existing accounting-posting logic, order lifecycle behavio
 test. It is ready for a real branch to start using — entering statement data and reviewing the Exceptions
 tab — with the explicit understanding that the risk-score weights are a starting point to be tuned, and
 that the daily auto-send stays off until an admin turns it on and confirms `SMS_WEBHOOK_URL` is configured.
+
+---
+
+## 6. PHASE 2 ADDENDUM (2026-09-14) — File import + auto-matching
+
+Requested as the next deferred item once Phase 1 was live. No real sample statement file from any provider
+(Talabat, Visa, InstaPay, Orange Cash) was available to build against, so this was built on an explicit,
+owner-confirmed assumption: rather than hard-coding guessed column names (a real risk in a fraud-detection
+tool — a silently misread column means real discrepancies go undetected), the importer is **positional and
+human-confirmed**. The accountant uploads a CSV/Excel file, sees a real sample of its rows
+(`POST /api/payment-control/reconciliation-records/import/preview`), and explicitly picks which column is
+the date, which is the amount, and (optionally) which is the reference — then commits the full import
+(`.../import/commit`). When a real file eventually becomes available, an automatic column-guess can be
+layered on top of this without replacing it.
+
+### What was built
+- `db/payment-reconciliation-import.js` — reads both `.csv` and `.xlsx` via the project's existing
+  `exceljs` dependency (already used by the payroll importer, no new npm packages added), normalizes date
+  cells (defaulting to DD/MM/YYYY on ambiguous text, matching regional statement conventions rather than
+  the US MM/DD/YYYY default) and amount cells (currency symbols, thousands separators, parenthesized
+  negatives), and skips — without aborting the whole file — any row with an unreadable date or amount,
+  reporting exactly which row numbers were skipped and why.
+- Every import is tagged with a shared `import_batch_id`. A bad import (wrong column picked) can be undone
+  in one action (`DELETE .../import-batches/:batchId`) rather than corrected row by row — but only while
+  every row in that batch is still `UNMATCHED`; a batch containing an already-matched row must be corrected
+  manually, so a confirmed match is never silently unwound.
+- `autoMatchChannelRecords` (`db/payment-control-engine.js`) — automatic fuzzy matching, scoped
+  **specifically to InstaPay and Orange Cash**. This scoping is deliberate, not a shortcut: the Talabat-cash
+  and Visa-settlement checks are period-total comparisons by design (`findTalabatCashDiscrepancies`,
+  `findVisaSettlementDiscrepancy`) — there is no one-external-row-to-one-internal-payment relationship for
+  them to match in the first place. Only InstaPay/Orange Cash were ever per-transaction checks, so only
+  they get a matching step; importing a Talabat or Visa file simply bulk-loads the period totals faster
+  than typing them one at a time.
+- The match itself only commits on a **unique mutual match**: a statement line with exactly one candidate
+  payment within tolerance (±1 EGP, ±3 days), and that payment itself a candidate for no other line. Any
+  ambiguity (multiple candidates on either side) is left `UNMATCHED` on purpose — the system never guesses.
+- Dashboard tabs 4/5/6 (Talabat, InstaPay/Orange Cash, Visa Settlement) each got an import widget: pick a
+  file → read it → a live sample table with per-column dropdowns → import → inline undo link and an
+  auto-match summary. The InstaPay/Orange Cash tab also got a manual "re-run matching now" button, for when
+  new payments lock in after a statement was already imported.
+
+### Testing
+`tests/payment-control-import.test.js` — 9 new scenarios: preview returns raw sample data, a mixed-validity
+file imports the valid rows and reports the invalid ones by row number, a unique match commits
+automatically, a genuinely ambiguous case stays unmatched, Talabat/Visa imports skip matching entirely (as
+designed), batch undo succeeds pre-match and is refused once any row in the batch is matched, and branch
+isolation on both import and undo. Full regression after this addition: **98/98 suites, 1236/1236 tests**,
+confirmed clean across two runs (one run hit the same pre-existing `accounting.test.js` ordering flake
+already documented in the Phase 1 section of this repository's history — reconfirmed via isolated re-run,
+42/42 passing, and unrelated to anything touched here).
+
+### Honest limitation carried forward
+The column-mapping approach is the right call under real uncertainty, but it is manual every time — it
+does not remember "this is what Visa's export always looks like" between imports. That's a reasonable
+follow-up once a real recurring file format is seen in practice, not before.

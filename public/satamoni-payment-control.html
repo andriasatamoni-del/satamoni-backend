@@ -196,6 +196,26 @@
       <button id="talSubmitBtn">حفظ</button>
       <div class="err" id="talErr"></div><div class="ok" id="talOk"></div>
     </div>
+    <div class="formbox" id="talImportBox">
+      <h1 style="margin-top:0">استيراد ملف (CSV/Excel)</h1>
+      <div class="row">
+        <input type="file" id="talImportFile" accept=".csv,.xlsx" />
+        <button id="talImportPreviewBtn" class="secondary">اقرأ الملف</button>
+      </div>
+      <div id="talImportPreviewArea" style="display:none">
+        <div style="font-size:12px;color:var(--faint);margin:8px 0">اختر عمود التاريخ والمبلغ بناءً على العيّنة تحت (بيانات كل يوم كإجمالي، مش لازم مرجع):</div>
+        <div class="tablewrap"><table id="talImportSampleTable"></table></div>
+        <div class="row" style="margin-top:8px">
+          <label class="small">أول صف عنوان؟</label><input type="checkbox" id="talImportHasHeader" checked style="flex:0" />
+          <label class="small">عمود التاريخ</label><select id="talImportDateCol"></select>
+          <label class="small">عمود المبلغ</label><select id="talImportAmountCol"></select>
+          <label class="small">عمود المرجع (اختياري)</label><select id="talImportRefCol"><option value="">بدون</option></select>
+        </div>
+        <button id="talImportCommitBtn">استورد</button>
+      </div>
+      <div class="err" id="talImportErr"></div>
+      <div class="ok" id="talImportOk"></div>
+    </div>
     <h1>فروق الكاش (محسوبة)</h1>
     <div class="tablewrap"><table>
       <thead><tr><th>اليوم</th><th>الفرع</th><th>داخلي</th><th>كشف طلبات</th><th>الفرق</th><th>نقاط</th></tr></thead>
@@ -217,6 +237,27 @@
       <button id="instaSubmitBtn">حفظ</button>
       <div class="err" id="instaErr"></div><div class="ok" id="instaOk"></div>
     </div>
+    <div class="formbox" id="instaImportBox">
+      <h1 style="margin-top:0">استيراد ملف (CSV/Excel)</h1>
+      <div class="row">
+        <input type="file" id="instaImportFile" accept=".csv,.xlsx" />
+        <button id="instaImportPreviewBtn" class="secondary">اقرأ الملف</button>
+        <button id="instaMatchAutoBtn" class="secondary">طابق تلقائيًا الآن</button>
+      </div>
+      <div id="instaImportPreviewArea" style="display:none">
+        <div style="font-size:12px;color:var(--faint);margin:8px 0">اختر عمود التاريخ والمبلغ والمرجع (لو موجود) بناءً على العيّنة تحت - القناة (إنستاباي/أورانج كاش) هي المختارة فوق:</div>
+        <div class="tablewrap"><table id="instaImportSampleTable"></table></div>
+        <div class="row" style="margin-top:8px">
+          <label class="small">أول صف عنوان؟</label><input type="checkbox" id="instaImportHasHeader" checked style="flex:0" />
+          <label class="small">عمود التاريخ</label><select id="instaImportDateCol"></select>
+          <label class="small">عمود المبلغ</label><select id="instaImportAmountCol"></select>
+          <label class="small">عمود المرجع (اختياري)</label><select id="instaImportRefCol"><option value="">بدون</option></select>
+        </div>
+        <button id="instaImportCommitBtn">استورد</button>
+      </div>
+      <div class="err" id="instaImportErr"></div>
+      <div class="ok" id="instaImportOk"></div>
+    </div>
     <h1>سطور غير مطابقة</h1>
     <div class="tablewrap"><table>
       <thead><tr><th>المصدر</th><th>التاريخ</th><th>مرجع/طلب</th><th>المبلغ</th><th>النوع</th></tr></thead>
@@ -236,6 +277,26 @@
       </div>
       <button id="visaSubmitBtn">حفظ</button>
       <div class="err" id="visaErr"></div><div class="ok" id="visaOk"></div>
+    </div>
+    <div class="formbox" id="visaImportBox">
+      <h1 style="margin-top:0">استيراد ملف (CSV/Excel)</h1>
+      <div class="row">
+        <input type="file" id="visaImportFile" accept=".csv,.xlsx" />
+        <button id="visaImportPreviewBtn" class="secondary">اقرأ الملف</button>
+      </div>
+      <div id="visaImportPreviewArea" style="display:none">
+        <div style="font-size:12px;color:var(--faint);margin:8px 0">اختر عمود التاريخ والمبلغ بناءً على العيّنة تحت (بيانات كل يوم كإجمالي، مش لازم مرجع):</div>
+        <div class="tablewrap"><table id="visaImportSampleTable"></table></div>
+        <div class="row" style="margin-top:8px">
+          <label class="small">أول صف عنوان؟</label><input type="checkbox" id="visaImportHasHeader" checked style="flex:0" />
+          <label class="small">عمود التاريخ</label><select id="visaImportDateCol"></select>
+          <label class="small">عمود المبلغ</label><select id="visaImportAmountCol"></select>
+          <label class="small">عمود المرجع (اختياري)</label><select id="visaImportRefCol"><option value="">بدون</option></select>
+        </div>
+        <button id="visaImportCommitBtn">استورد</button>
+      </div>
+      <div class="err" id="visaImportErr"></div>
+      <div class="ok" id="visaImportOk"></div>
     </div>
     <h1>فروق التسوية (محسوبة)</h1>
     <div class="tablewrap"><table>
@@ -588,6 +649,98 @@ async function loadVisa() {
   } catch (e) { body.innerHTML = `<tr><td colspan="5">${e.message}</td></tr>`; }
 }
 
+// ---------------- استيراد ملف (Phase 2) - مشترك بين تبويبات 4/5/6 ----------------
+// موضعي بالكامل (اختيار عمود يدوي بناءً على عيّنة حقيقية)، مش تخمين اسم عمود - راجع
+// db/payment-reconciliation-import.js للسبب. prefix: tal/insta/visa، getSource() بيرجّع قيمة المصدر
+// الفعلية وقت النداء (ثابتة لـtal/visa، من select لـinsta)
+function bindImportWidget(prefix, getSource, reloadTab) {
+  const fileInput = document.getElementById(`${prefix}ImportFile`);
+  const previewBtn = document.getElementById(`${prefix}ImportPreviewBtn`);
+  const previewArea = document.getElementById(`${prefix}ImportPreviewArea`);
+  const sampleTable = document.getElementById(`${prefix}ImportSampleTable`);
+  const dateCol = document.getElementById(`${prefix}ImportDateCol`);
+  const amountCol = document.getElementById(`${prefix}ImportAmountCol`);
+  const refCol = document.getElementById(`${prefix}ImportRefCol`);
+  const hasHeader = document.getElementById(`${prefix}ImportHasHeader`);
+  const errBox = document.getElementById(`${prefix}ImportErr`);
+  const okBox = document.getElementById(`${prefix}ImportOk`);
+  const commitBtn = document.getElementById(`${prefix}ImportCommitBtn`);
+
+  previewBtn.onclick = async () => {
+    errBox.textContent = ""; okBox.innerHTML = "";
+    const file = fileInput.files[0];
+    if (!file) { errBox.textContent = "اختار ملف الأول"; return; }
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("source", getSource());
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/payment-control/reconciliation-records/import/preview`, {
+        method: "POST", headers: { Authorization: `Bearer ${auth.token}` }, body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "حصل خطأ");
+      previewArea.style.display = "block";
+      const colOptions = Array.from({ length: data.columnCount }, (_, i) => `<option value="${i}">عمود ${i + 1}</option>`).join("");
+      dateCol.innerHTML = colOptions;
+      amountCol.innerHTML = colOptions;
+      amountCol.selectedIndex = Math.min(1, data.columnCount - 1);
+      refCol.innerHTML = `<option value="">بدون</option>` + colOptions;
+      sampleTable.innerHTML = data.sampleRows.map(row => `<tr>${row.map(c => `<td>${c ?? ""}</td>`).join("")}</tr>`).join("");
+    } catch (e) { errBox.textContent = e.message; }
+  };
+
+  commitBtn.onclick = async () => {
+    errBox.textContent = ""; okBox.innerHTML = "";
+    const file = fileInput.files[0];
+    if (!file) { errBox.textContent = "اختار ملف الأول"; return; }
+    const branchSelect = document.getElementById(`${prefix}Branch`);
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("source", getSource());
+    fd.append("branchId", branchSelect.value);
+    fd.append("dateColumn", dateCol.value);
+    fd.append("amountColumn", amountCol.value);
+    if (refCol.value !== "") fd.append("referenceColumn", refCol.value);
+    fd.append("hasHeaderRow", hasHeader.checked ? "true" : "false");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/payment-control/reconciliation-records/import/commit`, {
+        method: "POST", headers: { Authorization: `Bearer ${auth.token}` }, body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "حصل خطأ");
+      let msg = `اتستورد ${data.imported} سطر`;
+      if (data.errors.length > 0) { msg += ` (${data.errors.length} سطر اتجاهل - أرقام الصفوف: ${data.errors.map(x => x.row).join("، ")})`; }
+      if (data.autoMatch) msg += ` - اتطابق تلقائيًا ${data.autoMatch.matched} من ${data.autoMatch.checked}`;
+      okBox.innerHTML = `${msg} <span class="detailsToggle" style="color:var(--red);cursor:pointer;text-decoration:underline" id="${prefix}UndoLink">[تراجع عن الاستيراد ده]</span>`;
+      document.getElementById(`${prefix}UndoLink`).onclick = async () => {
+        if (!confirm("متأكد عايز تلغي الاستيراد ده بالكامل؟")) return;
+        try {
+          await api(`/api/payment-control/reconciliation-records/import-batches/${data.batchId}`, { method: "DELETE" });
+          okBox.textContent = "اتلغى الاستيراد";
+          reloadTab();
+        } catch (e2) { alert(e2.message); }
+      };
+      previewArea.style.display = "none";
+      fileInput.value = "";
+      reloadTab();
+    } catch (e) { errBox.textContent = e.message; }
+  };
+}
+bindImportWidget("tal", () => "talabat_statement", loadTalabat);
+bindImportWidget("insta", () => document.getElementById("instaSource").value, loadInstapay);
+bindImportWidget("visa", () => "visa_settlement", loadVisa);
+document.getElementById("instaMatchAutoBtn").onclick = async () => {
+  const source = document.getElementById("instaSource").value;
+  const branchId = document.getElementById("instaBranch").value;
+  try {
+    const result = await api("/api/payment-control/reconciliation-records/match-auto", {
+      method: "POST", body: JSON.stringify({ source, branchId: Number(branchId) }),
+    });
+    alert(`اتطابق ${result.matched} من ${result.checked} سطر`);
+    loadInstapay();
+  } catch (e) { alert(e.message); }
+};
+
 // ---------------- 7: الاستثناءات والمخاطر ----------------
 async function loadExceptions() {
   const body = document.getElementById("excBody");
@@ -625,7 +778,7 @@ async function boot() {
   document.getElementById("accessDenied").style.display = "none";
 
   if (!reconcileRoles.includes(auth.user.role)) {
-    ["talabatEntryBox", "instaEntryBox", "visaEntryBox"].forEach(id => document.getElementById(id).style.display = "none");
+    ["talabatEntryBox", "instaEntryBox", "visaEntryBox", "talImportBox", "instaImportBox", "visaImportBox"].forEach(id => document.getElementById(id).style.display = "none");
   }
   if (auditRoles.includes(auth.user.role)) document.getElementById("auditTabBtn").style.display = "block";
 
