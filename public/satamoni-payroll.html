@@ -351,6 +351,22 @@
     <div style="font-size:11px;color:var(--faint);margin-bottom:8px" id="hrLeaveBalanceNote"></div>
     <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>المستحق تقديريًا</th><th>المأخوذ</th><th>المتبقي تقديريًا</th></tr></thead><tbody id="hrLeaveBalanceBody"></tbody></table></div>
 
+    <h2>التأخيرات المتكررة (بصمة تلقائي بس)</h2>
+    <div class="formbox">
+      <div class="row">
+        <label>من</label><input id="hrLatenessFrom" type="date" />
+        <label>إلى</label><input id="hrLatenessTo" type="date" />
+        <label>حد أدنى لعدد أيام التأخير</label><input id="hrLatenessMinDays" type="number" min="1" value="3" style="width:60px" />
+        <button id="hrLatenessBtn">تحديث</button>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الفرع</th><th>عدد أيام التأخير</th><th>إجمالي دقائق التأخير</th><th>آخر تأخير</th></tr></thead>
+        <tbody id="hrLatenessBody"></tbody>
+      </table>
+    </div>
+
     <h2>سجل الإنذارات</h2>
     <div class="tablewrap"><table><thead><tr><th>التاريخ</th><th>الموظف</th><th>القسم</th><th>الدرجة</th><th>السبب</th></tr></thead><tbody id="hrWarningsBody"></tbody></table></div>
 
@@ -727,6 +743,10 @@ async function boot() {
   document.getElementById("hrTurnoverTo").value = todayStr();
   document.getElementById("hrHiresFrom").value = `${new Date().getFullYear()}-01-01`;
   document.getElementById("hrHiresTo").value = todayStr();
+  const latenessFromDate = new Date();
+  latenessFromDate.setMonth(latenessFromDate.getMonth() - 3);
+  document.getElementById("hrLatenessFrom").value = latenessFromDate.toISOString().slice(0, 10);
+  document.getElementById("hrLatenessTo").value = todayStr();
 
   branchesCache = await api("/api/branches/all");
   const branchOpts = branchesCache.map(b => `<option value="${b.id}">${b.name}${b.is_central_kitchen ? " (سنتر كيتشن)" : ""}</option>`).join("");
@@ -1122,6 +1142,7 @@ async function loadAllHrReports() {
   await loadHrHires();
   await loadHrTerminations();
   await loadHrLeaveBalance();
+  await loadHrLatenessReport();
   await loadHrWarningsReport();
   await loadHrLeavesReport();
 }
@@ -1176,6 +1197,20 @@ async function loadHrLeaveBalance() {
     </tr>
   `).join("") || `<tr><td colspan="6">مفيش بيانات</td></tr>`;
 }
+
+async function loadHrLatenessReport() {
+  const from = document.getElementById("hrLatenessFrom").value;
+  const to = document.getElementById("hrLatenessTo").value;
+  const minLateDays = document.getElementById("hrLatenessMinDays").value || 3;
+  const data = await api(`/api/hr/reports/repeated-lateness?${new URLSearchParams({ from, to, minLateDays })}`);
+  document.getElementById("hrLatenessBody").innerHTML = data.employees.map(e => `
+    <tr>
+      <td>${e.employeeCode || "—"}</td><td>${e.name}</td><td>${e.department}</td><td>${e.branchName || "—"}</td>
+      <td>${e.lateDaysCount}</td><td>${e.totalLateMinutes}</td><td>${e.lastLateDate ? e.lastLateDate.slice(0, 10) : "—"}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="7">مفيش موظفين متأخرين بشكل متكرر في المدى ده</td></tr>`;
+}
+document.getElementById("hrLatenessBtn").onclick = loadHrLatenessReport;
 
 async function loadHrWarningsReport() {
   const warnings = await api("/api/hr/warnings");
