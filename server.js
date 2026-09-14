@@ -107,6 +107,8 @@ app.use("/api/banks", require("./routes/banks"));
 app.use("/api/payment-control", require("./routes/payment-control"));
 // المرحلة 8.43: أتمتة واتساب - رد آلي بذكاء اصطناعي على استفسارات العملاء، وتسجيل طلبات/شكاوى معلّقة
 app.use("/api/whatsapp", require("./routes/whatsapp"));
+// CRM-1: متابعة أوردرات الدليفري بعد التسليم (مكالمة تأكيد جودة/خدمة) + شكاوى العملاء
+app.use("/api/crm", require("./routes/crm"));
 
 // المرحلة 6 (6F): /health كان بيرجّع "ok" ثابتة دايمًا حتى لو قاعدة البيانات مش شغالة خالص - ده بيخلي
 // أي مراقبة/health-check بتعتمد عليه (لوحة تحكم استضافة، uptime monitor) تعتقد السيرفر تمام رغم إن

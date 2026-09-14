@@ -58,6 +58,9 @@ const ROLE_PERMISSIONS = {
     // Payment Control & Reconciliation: مدير الفرع (Shift Supervisor) يشوف مدفوعات فرعه، يقدر يطلب
     // تعديل دفع، ويعتمد أي مبلغ - بس مش السقف العالي (ده accountant.approve_high/admin بس)
     "payment_control.view", "payment_control.adjustment.request", "payment_control.adjustment.approve",
+    // CRM-1: مدير الفرع يقدر يشوف/يسجّل متابعة أوردرات فرعه ويدير شكاوى فرعه زي الكول سنتر بالظبط
+    // (مفيش فرق هنا - مدير الفرع كتير بيغطي دور الكول سنتر برضو في فروع صغيرة، زي KDS بالظبط)
+    "crm.followups.view", "crm.followups.record", "crm.complaints.view", "crm.complaints.manage",
   ],
   accountant: [
     "inventory.view", "recipes.view",
@@ -136,6 +139,9 @@ const ROLE_PERMISSIONS = {
     // المرحلة 8.49: نفس السبب بالظبط بتاع الكاشير فوق - شاشة الكول سنتر هي مين بيستخدم زرار "خروج مع
     // الطيار" فعليًا يوميًا (مقفولة على دور callcenter/admin بس)، وكانت هتفشل بـ403 من غير الصلاحية دي
     "deliveries.assign",
+    // CRM-1: الكول سنتر هو صاحب شاشة الـCRM الجديدة - بيسجّل متابعة الأوردرات المتسلّمة ويدير الشكاوى
+    // من الاتصال لحد الحل (مفيش تقسيم "تسجيل بس" منفصل عن "حل" هنا - في مطعم صغير نفس الموظف بيعمل الاتنين)
+    "crm.followups.view", "crm.followups.record", "crm.complaints.view", "crm.complaints.manage",
   ],
   // المرحلة 7F: السائق أضيق دور في النظام عمدًا - طلباته المُسندة له بس (deliveries.view_own/update_own،
   // مقفولة كمان على مستوى الكود بمطابقة drivers.user_id مع req.user.id، مش الصلاحية دي بس)، وسجل
@@ -301,6 +307,12 @@ const PERMISSION_CATALOG = [
     { key: "payment_control.reconciliation.enter", label: "إدخال كشوف مطابقة خارجية" },
     { key: "payment_control.exceptions.resolve", label: "حل استثناءات المطابقة" },
     { key: "payment_control.audit.view", label: "رؤية سجل تدقيق المدفوعات" },
+  ] },
+  { group: "crm", groupLabel: "متابعة العملاء (CRM)", permissions: [
+    { key: "crm.followups.view", label: "رؤية طابور/سجل متابعة الأوردرات" },
+    { key: "crm.followups.record", label: "تسجيل نتيجة مكالمة متابعة" },
+    { key: "crm.complaints.view", label: "رؤية شكاوى العملاء" },
+    { key: "crm.complaints.manage", label: "تحديث حالة/حل شكوى" },
   ] },
   { group: "payslips", groupLabel: "قسائم الرواتب", permissions: [
     { key: "payslips.view_own", label: "رؤية قسيمة راتبه (موظف)" },
