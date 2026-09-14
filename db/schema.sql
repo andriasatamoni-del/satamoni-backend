@@ -150,7 +150,11 @@ CREATE TABLE menu_categories (
   id             SERIAL PRIMARY KEY,
   name           TEXT NOT NULL UNIQUE,             -- بيتزا / الفطير الحادق / البرجر ...
   display_order  INTEGER NOT NULL DEFAULT 0,        -- ترتيب ظهور القسم في شاشة البيع (تصاعديًا)
-  menu_group     TEXT NOT NULL DEFAULT 'regular' CHECK (menu_group IN ('regular', 'fasting')) -- منيو عادي أو منيو صيامي منفصل
+  menu_group     TEXT NOT NULL DEFAULT 'regular' CHECK (menu_group IN ('regular', 'fasting')), -- منيو عادي أو منيو صيامي منفصل
+  -- تعطيل قسم كامل (بدل ما تتعطّل كل أصنافه واحد واحد) - نفس فلسفة menu_items.is_active بالظبط. القسم
+  -- المعطّل بيختفي من GET /api/menu وGET /api/config/full (الموقع/الكاشير/الكول سنتر) بس - شاشة الإدارة
+  -- (شاشة المنيو) لسه بتوريه عشان يتقدر يتفعّل تاني بسهولة
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 CREATE TABLE menu_items (

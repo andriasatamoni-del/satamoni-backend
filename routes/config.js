@@ -67,7 +67,7 @@ router.get("/full", async (req, res) => {
         FROM menu_items mi
         JOIN menu_categories mc ON mc.id = mi.category_id
         JOIN menu_item_variants v ON v.item_id = mi.id
-        WHERE mi.is_active = TRUE
+        WHERE mi.is_active = TRUE AND mc.is_active = TRUE
         GROUP BY mi.id, mc.name, mc.display_order, mc.menu_group
         ORDER BY mc.display_order, mc.name, mi.id
       `),
