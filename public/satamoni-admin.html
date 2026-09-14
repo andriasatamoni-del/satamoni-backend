@@ -89,6 +89,7 @@
   <div class="brand">🍕 ستاموني — إدارة المستخدمين</div>
   <div id="userInfo">
     <span id="userName"></span>
+    <a id="selfServiceBtn" href="satamoni-employee-self.html" style="display:none;background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700;text-decoration:none">🏠 بياناتي</a>
     <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -281,9 +282,18 @@ document.getElementById("loginBtn").onclick = async () => {
 
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
 
+// HR-1: زرار "بياناتي" - بيظهر بس لو الحساب ده مرتبط فعليًا بملف موظف (وعنده صلاحية payslips.view_own)
+async function checkSelfServiceLink() {
+  try {
+    await api("/api/employee-self/profile");
+    document.getElementById("selfServiceBtn").style.display = "inline-block";
+  } catch (e) { /* تجاهل - الزرار بيفضل مخفي وده سلوك آمن */ }
+}
+
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
+  checkSelfServiceLink();
   await loadBranches();
   await loadUsers();
   await loadPosSettings();

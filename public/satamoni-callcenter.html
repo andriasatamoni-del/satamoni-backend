@@ -220,6 +220,7 @@
   <button id="ordersOpenBtn" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🛵 الطلبات الجارية</button>
   <div id="userInfo">
     <span id="userName"></span>
+    <a id="selfServiceBtn" href="satamoni-employee-self.html" style="display:none;background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700;text-decoration:none">🏠 بياناتي</a>
     <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -498,7 +499,16 @@ document.getElementById("loginBtn").onclick = async () => {
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
 
+// HR-1: زرار "بياناتي" - بيظهر بس لو الحساب ده مرتبط فعليًا بملف موظف (وعنده صلاحية payslips.view_own)
+async function checkSelfServiceLink() {
+  try {
+    await api("/api/employee-self/profile");
+    document.getElementById("selfServiceBtn").style.display = "inline-block";
+  } catch (e) { /* تجاهل - الزرار بيفضل مخفي وده سلوك آمن */ }
+}
+
 async function loadConfig() {
+  checkSelfServiceLink();
   try {
     const data = await api("/api/config/full");
     state.menu = data.menu;

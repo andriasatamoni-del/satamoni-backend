@@ -453,6 +453,7 @@
   <button id="newOrderBannerBtn">🔴 <span id="newOrderBannerCount"></span> طلب جديد - اضغط للقبول</button>
   <div id="userInfo">
     <span id="userName"></span>
+    <a id="selfServiceBtn" href="satamoni-employee-self.html" style="display:none;background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700;text-decoration:none">🏠 بياناتي</a>
     <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
     <button id="logoutBtn">خروج</button>
   </div>
@@ -851,10 +852,21 @@ document.querySelectorAll("#mobilePaneTabs button").forEach((b) => {
   b.onclick = () => setMobilePane(b.dataset.pane);
 });
 
+// HR-1: زرار "بياناتي" (قسيمة راتب/حضور/إجازة) - بيظهر بس لو الحساب ده مرتبط فعليًا بملف موظف (وعنده
+// صلاحية payslips.view_own) - نفس فحص GET /api/employee-self/profile اللي شاشة الموظف الذاتية بتعمله،
+// بس هنا بس عشان نعرف نوري الزرار من عدمه، مش لعرض البيانات نفسها
+async function checkSelfServiceLink() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/employee-self/profile`, { headers: { Authorization: `Bearer ${auth.token}` } });
+    if (res.ok) document.getElementById("selfServiceBtn").style.display = "inline-block";
+  } catch (e) { /* تجاهل - الزرار بيفضل مخفي وده سلوك آمن */ }
+}
+
 async function loadConfig() {
   document.getElementById("main").style.display = "flex";
   document.getElementById("accessDenied").style.display = "none";
   setMobilePane(mobilePane);
+  checkSelfServiceLink();
   try {
     const res = await fetch(`${API_BASE_URL}/api/config/full`);
     if (!res.ok) throw new Error("bad response");

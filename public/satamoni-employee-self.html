@@ -163,13 +163,10 @@ document.getElementById("loginBtn").onclick = async () => {
   errBox.textContent = "";
   try {
     const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
-    if (data.user.role !== "employee") {
-      errBox.textContent = "الشاشة دي لحسابات الدخول الذاتي للموظفين بس";
-      return;
-    }
     setSession(data.token, data.user);
-    hideLogin();
-    boot();
+    // نفس فحص tryBoot تحت بالظبط - الصلاحية الفعلية (payslips.view_own + ملف موظف مرتبط) هي المعيار،
+    // مش اسم الدور، عشان أي حساب (كاشير/كول سنتر/مدير فرع...) اتضافله وصول ذاتي صراحة يقدر يستخدم الشاشة
+    await tryBoot();
   } catch (e) { errBox.textContent = e.message; }
 };
 document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
@@ -279,14 +276,27 @@ async function loadLeaveRequests() {
   }
 }
 
-if (auth.token && auth.user) {
-  if (auth.user.role !== "employee") {
-    document.getElementById("accessDenied").style.display = "block";
-  } else {
-    document.getElementById("userName").textContent = auth.user.name;
+// باج حقيقي كان هنا: الشاشة كانت بتتحقق من role==='employee' حرفيًا - أي حساب تاني (كاشير/كول سنتر/مدير
+// فرع...) اتضافله وصول ذاتي بصلاحية payslips.view_own صراحة (من شاشة إدارة المستخدمين) كان بيوصّل هنا
+// ومبيشوفش حتى رسالة "معندكش صلاحية" - لأن الفرع ده مكنش بينادي hideLogin() خالص، فشاشة تسجيل الدخول
+// (اللي ظاهرة افتراضيًا لحد ما hideLogin() تتنادى) كانت بتفضل فوق كل حاجة وتغطي رسالة accessDenied
+// اللي وراها. الإصلاح: نعتمد على الصلاحية الفعلية (نفس فحص الـAPI) بدل اسم الدور، ونضمن hideLogin()
+// تتنادى في الحالتين (نجاح أو فشل) عشان محدش يتحبس على شاشة دخول فاضية من غير أي تفسير
+async function tryBoot() {
+  document.getElementById("userName").textContent = auth.user.name;
+  try {
+    await api("/api/employee-self/profile");
     hideLogin();
     boot();
+  } catch (e) {
+    hideLogin();
+    document.getElementById("accessDenied").textContent = e.message || "الشاشة دي للموظفين اللي عندهم حساب دخول ذاتي بس.";
+    document.getElementById("accessDenied").style.display = "block";
   }
+}
+
+if (auth.token && auth.user) {
+  tryBoot();
 } else {
   showLogin();
 }
