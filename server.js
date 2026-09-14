@@ -73,6 +73,7 @@ app.use("/api/hr", require("./routes/hr"));
 app.use("/api/sync", require("./routes/sync"));
 app.use("/api/reports", require("./routes/reports"));
 app.use("/api/payroll", require("./routes/payroll"));
+app.use("/api/attendance-sync", require("./routes/attendance-sync"));
 app.use("/api/config", require("./routes/config"));
 app.use("/api/pos-settings", require("./routes/pos-settings"));
 app.use("/api/audit-logs", require("./routes/audit"));
