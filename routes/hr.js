@@ -6,6 +6,7 @@ const { logAudit } = require("../db/audit");
 const { recordEmployeeHistoryChanges } = require("../db/employee-history");
 const { getCairoBusinessDate } = require("../db/business-date");
 const { checkTerminationBlockers, applyTerminationCascade } = require("../db/employee-termination");
+const { computeLatenessReport } = require("../services/payroll-engine");
 
 const canManageStaff = requireRole("admin", "branch_manager");
 const anyStaff = requireRole("admin", "branch_manager", "accountant", "cashier", "callcenter");
@@ -782,6 +783,32 @@ router.get("/reports/leave-balance", requireAuth, canManageStaff, async (req, re
       };
     });
     res.json({ asOf, paidLeaveDaysPerMonth: perMonth, employees: rows, note: "رصيد تقديري (Estimated) - مش نظام استحقاق قانوني كامل، ومش بيتخصم منه أي حاجة أوتوماتيك في الرواتب" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/hr/reports/repeated-lateness?from=&to=&minLateDays=&branchId=&department= - مين بيتأخر
+// كتير بشكل متكرر (موظفي البصمة التلقائي بس - التأخير مفهوم مالوش معنى لموظف يدوي/بدون تتبع) عبر مدى
+// تاريخ مرن (افتراضيًا آخر 3 شهور) - للمتابعة الإدارية (إنذار/محادثة) مش لحساب خصم راتب
+router.get("/reports/repeated-lateness", requireAuth, canManageStaff, async (req, res) => {
+  let { branchId, department } = req.query;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  const minLateDays = Math.max(1, Number(req.query.minLateDays) || 3);
+  const to = req.query.to || getCairoBusinessDate();
+  const from = req.query.from || (() => {
+    const d = new Date(to);
+    d.setMonth(d.getMonth() - 3);
+    return d.toISOString().slice(0, 10);
+  })();
+  try {
+    const all = await computeLatenessReport(pool, from, to);
+    const filtered = all.filter((r) =>
+      r.lateDaysCount >= minLateDays &&
+      (!branchId || r.branchId === Number(branchId)) &&
+      (!department || r.department === department)
+    );
+    res.json({ from, to, minLateDays, employees: filtered });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -13,6 +13,7 @@ const {
   computeNoTrackingPayroll,
   computePayrollCostByBranch: computePayrollCostByBranchRaw,
 } = require("../services/payroll-engine");
+const { computeRevenueAndCogsByBranch: computeRevenueAndCogsByBranchRaw } = require("../services/revenue-engine");
 
 const canSeeReports = requireRole("admin", "accountant", "branch_manager");
 
@@ -20,6 +21,12 @@ const canSeeReports = requireRole("admin", "accountant", "branch_manager");
 // (المرحلة 4C) من مصدر واحد بس (services/payroll-engine.js) عشان الاتنين ميختلفوش عن بعض
 function computePayrollCostByBranch(year, month) {
   return computePayrollCostByBranchRaw(pool, year, month);
+}
+
+// نفس الفكرة - الإيراد الفعلي بالمبيعات مستخدم هنا وفي routes/payroll.js (مقارنة تكلفة الرواتب
+// بالمبيعات) من مصدر واحد بس (services/revenue-engine.js)
+function computeRevenueAndCogsByBranch(from, to) {
+  return computeRevenueAndCogsByBranchRaw(pool, from, to);
 }
 
 // كل تقارير مركز التقارير الجديدة بتقبل مدى تاريخ مرن (from/to) بدل ما تتقفل على شهر كامل بس -
@@ -139,54 +146,6 @@ router.get("/menu-cost-analysis", requireAuth, canSeeReports, async (req, res) =
     res.status(500).json({ error: err.message });
   }
 });
-
-// حساب الإيرادات وتكلفة البضاعة المباعة لكل فرع في مدى تاريخ معين (from/to)، من بيانات الطلبات الفعلية
-// (مش من قيود يدوية) - العروض/الكومبو بتتفكّ لأصنافها الأصلية لحساب تكلفتها الحقيقية
-async function computeRevenueAndCogsByBranch(from, to) {
-  // تكلفة البضاعة المباعة بتتاخد من cost_at_sale المسجّلة على كل سطر طلب وقت البيع نفسه (مش لحظيًا وقت التقرير)
-  // عشان لو الريسبي أو تركيبة عرض اتغيرت بعد كدة، الطلبات القديمة تفضل بتكلفتها الحقيقية وقتها
-  // المرحلة 7H: الإيراد هنا صافي من ضريبة القيمة المضافة (total - vat_amount) - الضريبة تحصيل بالنيابة
-  // عن مصلحة الضرائب مش إيراد حقيقي للمنشأة، ونفس المنطق مطبّق في دفتر الأستاذ (routes/orders.js بيقيّد
-  // الضريبة على حساب 2300 المستحق مش على حسابات الإيراد 4100/4200). لازم الاتنين يفضلوا متطابقين عشان
-  // تقرير accounting-reconciliation (اللي بيقارن الإيراد التشغيلي هنا بصافي المبيعات في دفتر الأستاذ)
-  // يفضل صحيح - قبل الضريبة كان الرقمين متطابقين تلقائيًا لأن total نفسه كان هو الإيراد الكامل
-  const result = await pool.query(
-    `WITH qualifying_orders AS (
-       SELECT o.id, o.branch_id, (o.total - COALESCE(o.vat_amount, 0)) AS net_total
-       FROM orders o
-       WHERE o.status <> 'cancelled'
-         AND o.created_at::date BETWEEN $1 AND $2
-     ),
-     order_cost_totals AS (
-       SELECT oi.order_id,
-              SUM(COALESCE(oi.cost_at_sale, 0)) AS cost,
-              BOOL_OR(oi.cost_at_sale IS NULL OR oi.cost_at_sale_incomplete) AS missing_cost
-       FROM order_items oi
-       JOIN qualifying_orders qo ON qo.id = oi.order_id
-       GROUP BY oi.order_id
-     )
-     SELECT qo.branch_id,
-            COALESCE(b.name, 'غير مرتبط بفرع') AS branch_name,
-            COUNT(*) AS orders_count,
-            SUM(qo.net_total) AS revenue,
-            COALESCE(SUM(oct.cost), 0) AS cogs,
-            COUNT(*) FILTER (WHERE oct.missing_cost) AS orders_missing_cost_data
-     FROM qualifying_orders qo
-     LEFT JOIN branches b ON b.id = qo.branch_id
-     LEFT JOIN order_cost_totals oct ON oct.order_id = qo.id
-     GROUP BY qo.branch_id, b.name
-     ORDER BY b.name`,
-    [from, to]
-  );
-  return result.rows.map((r) => ({
-    branchId: r.branch_id,
-    branchName: r.branch_name,
-    ordersCount: Number(r.orders_count),
-    revenue: Number(r.revenue),
-    cogs: Number(r.cogs),
-    ordersMissingCostData: Number(r.orders_missing_cost_data),
-  }));
-}
 
 // GET /api/reports/income-statement?from=&to=&branchId= (أو year=&month= كاختصار) - قائمة الدخل
 // (إيرادات - تكلفة البضاعة - مصروفات) لفرع واحد لو اتحدد branchId، أو مجمّع لكل الفروع لو مفيش

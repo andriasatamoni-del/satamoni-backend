@@ -201,3 +201,76 @@ describe("طلبات الإجازة الذاتية - تقديم/إلغاء/مر�
     expect(reject.status).toBe(400);
   });
 });
+
+describe("GET /api/employee-self/attendance", () => {
+  test("موظف attendance_system=manual -> ملخص شهري من central_kitchen_manual_attendance", async () => {
+    await pool.query(
+      `INSERT INTO central_kitchen_manual_attendance (employee_id, year, month, present_days, absent_days, total_late_minutes, manual_deduction, notes)
+       VALUES ($1, 2099, 2, 26, 2, 45, 50, 'تأخير متكرر')`,
+      [employeeId]
+    );
+    const res = await request(app).get("/api/employee-self/attendance").set(authed(employeeUserToken));
+    expect(res.status).toBe(200);
+    expect(res.body.mode).toBe("manual");
+    expect(res.body.months.length).toBe(1);
+    expect(res.body.months[0].year).toBe(2099);
+    expect(res.body.months[0].month).toBe(2);
+    expect(Number(res.body.months[0].present_days)).toBe(26);
+    expect(res.body.months[0].notes).toBe("تأخير متكرر");
+  });
+
+  test("موظف attendance_system=fingerprint_auto -> بصمات يومية من attendance_punches", async () => {
+    const fpEmp = await request(app).post("/api/payroll/employees").set(authed(adminToken)).send({
+      name: "موظف-بصمة-جست", department: "التشغيل", attendanceSystem: "fingerprint_auto",
+      restrictedBranchId: branchA, baseSalary: 4000,
+    });
+    const fpEmployeeId = fpEmp.body.id;
+    const fpEmail = "fp-employee-selfservice@jest.test";
+    const created = await request(app).post("/api/users").set(authed(adminToken)).send({
+      name: "موظف-بصمة-جست", email: fpEmail, password: "test12345", role: "employee", employeeId: fpEmployeeId,
+    });
+    expect(created.status).toBe(201);
+    const fpToken = await login(fpEmail);
+
+    await pool.query(
+      "INSERT INTO employee_fingerprint_codes (employee_id, branch_id, device_code) VALUES ($1,$2,'DEV-001')",
+      [fpEmployeeId, branchA]
+    );
+    await pool.query(
+      `INSERT INTO attendance_punches (branch_id, device_code, punch_date, clock_in, clock_out, exempted)
+       VALUES ($1,'DEV-001', CURRENT_DATE, '09:00', '17:30', false)`,
+      [branchA]
+    );
+
+    const res = await request(app).get("/api/employee-self/attendance").set(authed(fpToken));
+    expect(res.status).toBe(200);
+    expect(res.body.mode).toBe("fingerprint_auto");
+    expect(res.body.punches.length).toBe(1);
+    expect(res.body.punches[0].clock_in).toBe("09:00:00");
+    expect(res.body.punches[0].clock_out).toBe("17:30:00");
+    expect(res.body.punches[0].branch_name).toBe("فرع-موظف-ذاتي-A-جست");
+  });
+
+  test("موظف attendance_system=none -> رد فاضي من غير خطأ", async () => {
+    const noneEmp = await request(app).post("/api/payroll/employees").set(authed(adminToken)).send({
+      name: "موظف-بدون-حضور-جست", department: "التشغيل", attendanceSystem: "none",
+      restrictedBranchId: branchA, baseSalary: 3000,
+    });
+    const noneEmail = "none-employee-selfservice@jest.test";
+    await request(app).post("/api/users").set(authed(adminToken)).send({
+      name: "موظف-بدون-حضور-جست", email: noneEmail, password: "test12345", role: "employee", employeeId: noneEmp.body.id,
+    });
+    const noneToken = await login(noneEmail);
+    const res = await request(app).get("/api/employee-self/attendance").set(authed(noneToken));
+    expect(res.status).toBe(200);
+    expect(res.body.mode).toBe("none");
+    expect(res.body.punches).toEqual([]);
+    expect(res.body.months).toEqual([]);
+  });
+
+  test("دور تاني معندوش صلاحية attendance.view_own -> 403", async () => {
+    const ccToken = await login("callcenter-empself@jest.test");
+    const res = await request(app).get("/api/employee-self/attendance").set(authed(ccToken));
+    expect(res.status).toBe(403);
+  });
+});

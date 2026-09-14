@@ -181,6 +181,62 @@ async function computeFingerprintPayroll(pool, year, month) {
   }));
 }
 
+// تقرير التأخيرات المتكررة (HR-4) - مختلف عن total_late_minutes في computeFingerprintPayroll: ده بيرجع
+// شهر واحد بس ومربوط بحساب الخصم المالي، أما هنا الهدف متابعة إدارية (مين بيتأخر كتير بشكل متكرر عبر مدى
+// تاريخ مرن) مش حساب راتب - فمفيش داعي لـgenerate_series (تعبئة أيام الغياب) ولا سلم خصم/راتب يومي،
+// بس نفس منطق حساب "التأخير" بالظبط (فرق clock_in عن بداية شيفت الموظف) عشان الرقمين ميختلفوش عن بعض.
+// employee.exempted بيتم استبعاده من العد زي الراتب بالظبط (إذن تأخير رسمي مش تأخير حقيقي)
+async function computeLatenessReport(pool, from, to) {
+  const result = await pool.query(
+    `WITH punches AS (
+       SELECT efc.employee_id, ap.punch_date, ap.clock_in, ap.exempted
+       FROM employee_fingerprint_codes efc
+       JOIN attendance_punches ap ON ap.branch_id = efc.branch_id AND ap.device_code = efc.device_code
+       WHERE ap.punch_date BETWEEN $1 AND $2 AND ap.clock_in IS NOT NULL
+     ),
+     collapsed AS (
+       -- لو الموظف بيتنقل بين فروع في نفس اليوم، ناخد سطر بصمة واحد بس لكل يوم (نفس منطق computeFingerprintPayroll)
+       SELECT DISTINCT ON (employee_id, punch_date) employee_id, punch_date, clock_in, exempted
+       FROM punches
+       ORDER BY employee_id, punch_date
+     ),
+     late_days AS (
+       SELECT c.employee_id, c.punch_date, c.exempted,
+         GREATEST(0, ROUND(EXTRACT(EPOCH FROM (
+           c.clock_in - (CASE e.shift WHEN 'morning' THEN ps.morning_shift_start WHEN 'evening' THEN ps.evening_shift_start ELSE NULL END)
+         )) / 60))::int AS late_minutes
+       FROM collapsed c
+       JOIN employees e ON e.id = c.employee_id
+       CROSS JOIN payroll_settings ps
+       WHERE (CASE e.shift WHEN 'morning' THEN ps.morning_shift_start WHEN 'evening' THEN ps.evening_shift_start ELSE NULL END) IS NOT NULL
+     )
+     SELECT e.id AS employee_id, e.employee_code, e.name, e.department, e.job_title,
+            e.restricted_branch_id AS branch_id, b.name AS branch_name,
+            COUNT(*) FILTER (WHERE ld.late_minutes > 0 AND NOT ld.exempted) AS late_days_count,
+            COALESCE(SUM(ld.late_minutes) FILTER (WHERE NOT ld.exempted), 0) AS total_late_minutes,
+            MAX(ld.punch_date) FILTER (WHERE ld.late_minutes > 0 AND NOT ld.exempted) AS last_late_date
+     FROM late_days ld
+     JOIN employees e ON e.id = ld.employee_id
+     LEFT JOIN branches b ON b.id = e.restricted_branch_id
+     GROUP BY e.id, e.employee_code, e.name, e.department, e.job_title, e.restricted_branch_id, b.name
+     HAVING COUNT(*) FILTER (WHERE ld.late_minutes > 0 AND NOT ld.exempted) > 0
+     ORDER BY late_days_count DESC, total_late_minutes DESC`,
+    [from, to]
+  );
+  return result.rows.map((r) => ({
+    employeeId: r.employee_id,
+    employeeCode: r.employee_code,
+    name: r.name,
+    department: r.department,
+    jobTitle: r.job_title,
+    branchId: r.branch_id,
+    branchName: r.branch_name,
+    lateDaysCount: Number(r.late_days_count),
+    totalLateMinutes: Number(r.total_late_minutes),
+    lastLateDate: r.last_late_date,
+  }));
+}
+
 // موظفي المطبخ المركزي (يدوي - بدون بصمة): الحضور/الغياب بيتدخل يدويًا شهريًا لكل موظف،
 // خصم الغياب بيتحسب بمعدل يوم العمل زي الفينجربرنت، لكن مفيش مفهوم "أيام عمل إضافية" هنا
 // ومفيش هدر ساعات/أوفر تايم (مفيش بصمة تفصيلية أصلًا) - الخصم اليدوي الإضافي بييجي كرقم جاهز بالجنيه.
@@ -375,5 +431,5 @@ async function computePayrollCostByBranch(pool, year, month) {
 
 module.exports = {
   computeFingerprintPayroll, computeManualPayroll, computeNoTrackingPayroll,
-  computePayrollCostByBranch, computePayrollSummary, toCents,
+  computePayrollCostByBranch, computePayrollSummary, computeLatenessReport, toCents,
 };

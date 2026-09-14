@@ -111,4 +111,43 @@ router.post("/leave-requests/:id/cancel", requirePermission("leave_requests.mana
   }
 });
 
+// GET /api/employee-self/attendance?months=3 - سجل حضور/انصراف آخر عدد شهور (3 افتراضيًا) - الشكل بيختلف
+// حسب نظام حضور الموظف (attendance_system): بصمة تلقائي = بصمات يومية، مطعم/سنتر كيتشن يدوي = ملخص شهري،
+// none = مفيش حاجة تتعرض أصلًا
+router.get("/attendance", requirePermission("attendance.view_own"), async (req, res) => {
+  const months = Math.min(Math.max(Number(req.query.months) || 3, 1), 12);
+  try {
+    const employee = await loadOwnEmployee(req.user.id);
+    if (!employee) return res.status(404).json({ error: "الحساب ده مش مربوط بملف موظف" });
+
+    if (employee.attendance_system === "fingerprint_auto") {
+      const result = await pool.query(
+        `SELECT ap.punch_date, ap.clock_in, ap.clock_out, ap.exempted, b.name AS branch_name
+         FROM employee_fingerprint_codes efc
+         JOIN attendance_punches ap ON ap.branch_id = efc.branch_id AND ap.device_code = efc.device_code
+         JOIN branches b ON b.id = ap.branch_id
+         WHERE efc.employee_id = $1 AND ap.punch_date >= (CURRENT_DATE - ($2 || ' months')::interval)
+         ORDER BY ap.punch_date DESC`,
+        [employee.id, months]
+      );
+      return res.json({ mode: "fingerprint_auto", punches: result.rows });
+    }
+
+    if (employee.attendance_system === "manual") {
+      const result = await pool.query(
+        `SELECT year, month, present_days, absent_days, total_late_minutes, manual_deduction, notes
+         FROM central_kitchen_manual_attendance
+         WHERE employee_id = $1
+         ORDER BY year DESC, month DESC LIMIT $2`,
+        [employee.id, months]
+      );
+      return res.json({ mode: "manual", months: result.rows });
+    }
+
+    res.json({ mode: "none", punches: [], months: [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

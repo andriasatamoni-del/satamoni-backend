@@ -55,6 +55,9 @@ const ROLE_PERMISSIONS = {
     // مدير فرع حقيقي عادي، مفيش نوع حساب "خدمة" منفصل في النظام) - claim/printed/failed على طابور فرعه بس
     "printers.view", "printers.manage", "print_routing.view", "print_routing.manage",
     "print_jobs.view", "print_jobs.manage_queue", "print_jobs.trigger",
+    // HR-5: نفس فلسفة print_jobs.manage_queue بالظبط - جهاز بصمة فعلي في فرعه، الـAgent المحلي (attendance-agent/)
+    // بيسجّل دخول بحساب مدير فرع حقيقي عادي ويزامن بصمات فرعه بس
+    "attendance.sync_device",
     // Payment Control & Reconciliation: مدير الفرع (Shift Supervisor) يشوف مدفوعات فرعه، يقدر يطلب
     // تعديل دفع، ويعتمد أي مبلغ - بس مش السقف العالي (ده accountant.approve_high/admin بس)
     "payment_control.view", "payment_control.adjustment.request", "payment_control.adjustment.approve",
@@ -154,7 +157,7 @@ const ROLE_PERMISSIONS = {
   // بمطابقة employees.user_id مع req.user.id في routes/employee-self.js). مفيش أي وصول لبيانات موظفين
   // تانيين أو أي جزء تاني من النظام - قسائم راتبه وطلبات إجازته بس
   employee: [
-    "payslips.view_own", "leave_requests.manage_own",
+    "payslips.view_own", "leave_requests.manage_own", "attendance.view_own",
   ],
 };
 
@@ -319,6 +322,10 @@ const PERMISSION_CATALOG = [
   ] },
   { group: "leave_requests", groupLabel: "طلبات الإجازة", permissions: [
     { key: "leave_requests.manage_own", label: "تقديم/متابعة طلبات إجازته (موظف)" },
+  ] },
+  { group: "attendance", groupLabel: "الحضور والانصراف", permissions: [
+    { key: "attendance.view_own", label: "رؤية سجل حضوره/انصرافه (موظف)" },
+    { key: "attendance.sync_device", label: "مزامنة بصمة الفرع من جهاز البصمة (Attendance Agent)" },
   ] },
 ];
 

@@ -1,0 +1,15 @@
+{
+  "name": "satamoni-attendance-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Branch Attendance Agent - يشتغل على جهاز/سيرفر الفرع، بيسحب بصمات جهاز ZKTeco المتصل بالشبكة كل فترة معينة، ويبعتها للباك إند بالـHTTP API بس (مفيش وصول مباشر لقاعدة البيانات خالص) - بديل الاستيراد اليدوي/رفع ملف شهري.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "node-zklib": "^0.2.14"
+  }
+}
