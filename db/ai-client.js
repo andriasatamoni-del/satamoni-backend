@@ -1,78 +1,88 @@
-// المرحلة 8.43: عميل خفيف لـAnthropic Messages API (بدون SDK رسمي - نفس فلسفة db/sms-provider.js/
-// db/whatsapp-client.js: نداء HTTP مباشر بدل تبعية مكتبة كاملة لخدمة واحدة بنستخدم منها جزء بسيط).
-// بيدعم حلقة "استخدام أدوات" (tool use): الموديل ممكن يطلب ينفّذ أداة (زي "هات المنيو الحالي من
-// القاعدة")، إحنا بننفذها فعليًا ونرجّعله النتيجة، وهو بيكمل بناءً عليها - لحد ما يوصل لرد نصي نهائي
-// (stop_reason = 'end_turn') أو نوصل لحد أقصى لعدد الدورات (حماية من حلقة لا نهائية لو الموديل عالق).
+// المرحلة 8.43 (وتحديث 8.46 - التحويل لـGoogle Gemini): عميل خفيف لـGemini API (بدون SDK رسمي - نفس
+// فلسفة db/sms-provider.js/db/whatsapp-client.js: نداء HTTP مباشر بدل تبعية مكتبة كاملة لخدمة واحدة
+// بنستخدم منها جزء بسيط). اتحول من Anthropic لـGemini عشان عنده مستوى مجاني حقيقي (من غير بطاقة/رصيد
+// مسبق) كفاية لحجم مطعم واحد أو اتنين - القرار موثّق في docs/WHATSAPP-AUTOMATION.md.
+//
+// بيدعم حلقة "استخدام أدوات" (function calling): الموديل ممكن يطلب ينفّذ أداة (زي "هات المنيو الحالي
+// من القاعدة")، إحنا بننفذها فعليًا ونرجّعله النتيجة، وهو بيكمل بناءً عليها - لحد ما يوصل لرد نصي نهائي
+// (من غير functionCall في الرد) أو نوصل لحد أقصى لعدد الدورات (حماية من حلقة لا نهائية لو الموديل عالق).
+//
+// واجهة الموديول (isConfigured/runToolLoop) نفسها زي أي عميل ذكاء اصطناعي تاني عشان services/whatsapp-bot
+// (والقنوات الجاية زي فيسبوك/إنستجرام) يستخدموها من غير ما يعرفوا تفاصيل مزوّد الخدمة.
 //
 // متغيرات البيئة:
-//   ANTHROPIC_API_KEY - مفتاح API (راجع docs/whatsapp-automation.md لطريقة الحصول عليه)
-//   ANTHROPIC_MODEL    - اسم الموديل، افتراضيًا claude-sonnet-5 لو مش محدد
-const API_VERSION = "2023-06-01";
-const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+//   GEMINI_API_KEY - مفتاح مجاني من aistudio.google.com/apikey (راجع docs/WHATSAPP-AUTOMATION.md)
+//   GEMINI_MODEL    - اسم الموديل، افتراضيًا gemini-2.0-flash لو مش محدد
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const MAX_TOOL_TURNS = 6;
 
 function isConfigured() {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  return Boolean(process.env.GEMINI_API_KEY);
 }
 
-async function callMessagesApi({ system, messages, tools, maxTokens }) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+// Gemini بياخد تعريف الأدوات بشكل functionDeclarations{parameters} - نفس شكل input_schema بتاعنا
+// بالظبط (كلاهما JSON Schema)، فبس بنعيد تسميته من غير أي تحويل فعلي في البيانات
+function toGeminiTools(tools) {
+  if (!tools || tools.length === 0) return undefined;
+  return [{
+    functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema })),
+  }];
+}
+
+async function callGenerateContent({ system, contents, tools, maxTokens }) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+  const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": API_VERSION,
-      "content-type": "application/json",
-    },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      model: DEFAULT_MODEL,
-      max_tokens: maxTokens || 1024,
-      system,
-      messages,
-      tools: tools && tools.length > 0 ? tools : undefined,
+      systemInstruction: { parts: [{ text: system }] },
+      contents,
+      tools: toGeminiTools(tools),
+      generationConfig: { maxOutputTokens: maxTokens || 1024 },
     }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data?.error?.message || `Anthropic API error: HTTP ${res.status}`);
+    throw new Error(data?.error?.message || `Gemini API error: HTTP ${res.status}`);
   }
   return data;
 }
 
 // بيشغّل الحوار كامل لحد ما يوصل لرد نصي نهائي - executeTool(name, input) لازم ترجع نص (النتيجة اللي
-// هتتبعت للموديل كـtool_result). بيرجّع {replyText, updatedMessages} - updatedMessages مفيدة لو حابب
-// تسجّل كل خطوة، بس المتصل عندنا (services/whatsapp-bot/conversation.js) بيسجّل بس الرد النهائي للعميل
+// هتتبعت للموديل كـfunctionResponse). بيرجّع {replyText, updatedMessages} - updatedMessages مفيدة لو
+// حابب تسجّل كل خطوة، بس المتصل عندنا (services/whatsapp-bot/conversation.js) بيسجّل بس الرد النهائي
 async function runToolLoop({ system, messages, tools, executeTool, maxTokens }) {
-  let currentMessages = [...messages];
+  let contents = messages.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }],
+  }));
 
   for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-    const data = await callMessagesApi({ system, messages: currentMessages, tools, maxTokens });
-    const toolUses = (data.content || []).filter((block) => block.type === "tool_use");
+    const data = await callGenerateContent({ system, contents, tools, maxTokens });
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    const functionCalls = parts.filter((p) => p.functionCall);
 
-    if (toolUses.length === 0 || data.stop_reason !== "tool_use") {
-      const replyText = (data.content || [])
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("\n")
-        .trim();
-      return { replyText, updatedMessages: currentMessages };
+    if (functionCalls.length === 0) {
+      const replyText = parts.filter((p) => p.text).map((p) => p.text).join("\n").trim();
+      return { replyText, updatedMessages: contents };
     }
 
-    currentMessages.push({ role: "assistant", content: data.content });
+    contents.push({ role: "model", parts });
 
-    const toolResults = [];
-    for (const toolUse of toolUses) {
+    const responseParts = [];
+    for (const fc of functionCalls) {
       let resultText;
       try {
-        resultText = await executeTool(toolUse.name, toolUse.input || {});
+        resultText = await executeTool(fc.functionCall.name, fc.functionCall.args || {});
       } catch (err) {
         resultText = `خطأ: ${err.message}`;
       }
-      toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: String(resultText) });
+      responseParts.push({ functionResponse: { name: fc.functionCall.name, response: { result: String(resultText) } } });
     }
-    currentMessages.push({ role: "user", content: toolResults });
+    contents.push({ role: "function", parts: responseParts });
   }
 
-  return { replyText: "معلش، ممكن تعيد سؤالك؟ حصلت مشكلة مؤقتة عندي.", updatedMessages: currentMessages };
+  return { replyText: "معلش، ممكن تعيد سؤالك؟ حصلت مشكلة مؤقتة عندي.", updatedMessages: contents };
 }
 
 module.exports = { isConfigured, runToolLoop };
