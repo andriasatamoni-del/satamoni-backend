@@ -5,7 +5,7 @@
 
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ستاموني — طلبات وشكاوى واتساب</title>
+<title>ستاموني — طلبات وشكاوى المحادثات</title>
 <style>
   :root {
     --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
@@ -60,7 +60,7 @@
 <body>
 
 <div id="topbar">
-  <div class="brand">💬 ستاموني — طلبات وشكاوى واتساب</div>
+  <div class="brand">💬 ستاموني — طلبات وشكاوى المحادثات</div>
   <div id="userInfo">
     <span id="userName"></span>
     <button id="themeToggleBtn" title="الوضع الليلي">🌙</button>
@@ -85,12 +85,12 @@
   </div>
 
   <div class="panel active" id="panel-pending">
-    <div class="meta">أوردرات جمّعها البوت من محادثات واتساب - لسه محتاجة مراجعة وتسجيل فعلي (مفيش خصم مخزون أو حساب بيحصل غير بعد ما تتسجل هنا).</div>
+    <div class="meta">أوردرات جمّعها البوت من محادثات واتساب/ماسنجر/إنستجرام - لسه محتاجة مراجعة وتسجيل فعلي (مفيش خصم مخزون أو حساب بيحصل غير بعد ما تتسجل هنا).</div>
     <div id="pendingList"></div>
   </div>
 
   <div class="panel" id="panel-complaints">
-    <div class="meta">شكاوى وصلت من واتساب - محتاجة متابعة من الفريق.</div>
+    <div class="meta">شكاوى وصلت من واتساب/ماسنجر/إنستجرام - محتاجة متابعة من الفريق.</div>
     <div id="complaintsList"></div>
   </div>
 </div>
@@ -167,6 +167,8 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 const dt = (s) => s ? new Date(s).toLocaleString("ar-EG", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const money = (n) => `${Number(n).toFixed(2)} ج.م`;
 const CATEGORY_LABEL = { late_order: "تأخير", wrong_item: "غلط في الطلب", quality: "جودة", other: "أخرى" };
+const CHANNEL_LABEL = { whatsapp: "💬 واتساب", messenger: "📘 ماسنجر", instagram: "📸 إنستجرام" };
+const channelPill = (channel) => `<span class="pill">${CHANNEL_LABEL[channel] || channel || "واتساب"}</span>`;
 
 let paymentMethods = [];
 
@@ -199,7 +201,7 @@ async function loadPending() {
       <div class="card" data-id="${o.id}">
         <div class="cardHead">
           <span class="id">طلب #${o.id} - ${o.customer_name || "بدون اسم"} (${o.customer_phone})</span>
-          <span class="pill">${o.order_type === "delivery" ? "توصيل" : "استلام"}</span>
+          <span>${channelPill(o.channel)} <span class="pill">${o.order_type === "delivery" ? "توصيل" : "استلام"}</span></span>
         </div>
         <div class="meta">${dt(o.created_at)} — ${o.branch_name ? "فرع " + o.branch_name : "فرع غير محدد"}${o.area_name ? " — منطقة " + o.area_name : ""}</div>
         ${o.order_type === "delivery" ? `<div class="meta">📍 ${o.address_details || "—"}${o.distinguishing_mark ? " (" + o.distinguishing_mark + ")" : ""}</div>` : ""}
@@ -270,7 +272,7 @@ async function loadComplaints() {
       <div class="card" data-id="${c.id}">
         <div class="cardHead">
           <span class="id">شكوى #${c.id} - ${c.customer_phone}</span>
-          <span class="pill">${CATEGORY_LABEL[c.category] || c.category}</span>
+          <span>${channelPill(c.channel)} <span class="pill">${CATEGORY_LABEL[c.category] || c.category}</span></span>
         </div>
         <div class="meta">${dt(c.created_at)}${c.order_id ? " — طلب #" + c.order_id : ""}</div>
         <div class="items">${c.description}</div>
