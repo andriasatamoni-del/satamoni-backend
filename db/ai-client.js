@@ -20,12 +20,24 @@ function isConfigured() {
   return Boolean(process.env.GEMINI_API_KEY);
 }
 
-// Gemini بياخد تعريف الأدوات بشكل functionDeclarations{parameters} - نفس شكل input_schema بتاعنا
-// بالظبط (كلاهما JSON Schema)، فبس بنعيد تسميته من غير أي تحويل فعلي في البيانات
+// Gemini بياخد تعريف الأدوات بشكل functionDeclarations{parameters} - شكله زي input_schema بتاعنا
+// (كلاهما JSON Schema) بس Gemini بيرفض حقل additionalProperties تحديدًا (مش من ضمن الـOpenAPI subset
+// اللي بيدعمه) - لازم نشيله (على أي عمق، مش السطح بس) قبل ما نبعت التعريف، وإلا كل استدعاء بيفشل فورًا
+// بـ"Invalid JSON payload" من غير ما الموديل حتى يشوف رسالة العميل
+function stripAdditionalProperties(schema) {
+  if (Array.isArray(schema)) return schema.map(stripAdditionalProperties);
+  if (schema && typeof schema === "object") {
+    const { additionalProperties, ...rest } = schema;
+    for (const key of Object.keys(rest)) rest[key] = stripAdditionalProperties(rest[key]);
+    return rest;
+  }
+  return schema;
+}
+
 function toGeminiTools(tools) {
   if (!tools || tools.length === 0) return undefined;
   return [{
-    functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema })),
+    functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parameters: stripAdditionalProperties(t.input_schema) })),
   }];
 }
 
@@ -85,4 +97,4 @@ async function runToolLoop({ system, messages, tools, executeTool, maxTokens }) 
   return { replyText: "معلش، ممكن تعيد سؤالك؟ حصلت مشكلة مؤقتة عندي.", updatedMessages: contents };
 }
 
-module.exports = { isConfigured, runToolLoop };
+module.exports = { isConfigured, runToolLoop, stripAdditionalProperties };
