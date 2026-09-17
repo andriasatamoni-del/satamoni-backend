@@ -12,8 +12,9 @@
 //
 // متغيرات البيئة:
 //   GEMINI_API_KEY - مفتاح مجاني من aistudio.google.com/apikey (راجع docs/WHATSAPP-AUTOMATION.md)
-//   GEMINI_MODEL    - اسم الموديل، افتراضيًا gemini-2.0-flash لو مش محدد
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+//   GEMINI_MODEL    - اسم الموديل، افتراضيًا gemini-3.6-flash لو مش محدد (لو Google قفلت الموديل ده
+//                     كمان مستقبلًا، غيّر GEMINI_MODEL في Render مباشرة من غير أي ديبلوي كود جديد)
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const MAX_TOOL_TURNS = 6;
 
 function isConfigured() {
