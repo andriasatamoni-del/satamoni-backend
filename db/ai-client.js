@@ -51,7 +51,11 @@ async function callGenerateContent({ system, contents, tools, maxTokens }) {
       systemInstruction: { parts: [{ text: system }] },
       contents,
       tools: toGeminiTools(tools),
-      generationConfig: { maxOutputTokens: maxTokens || 1024 },
+      // maxOutputTokens كان 1024 وبيتقطع في نص الرد فعليًا - موديلات Gemini الحديثة بتستهلك جزء من
+      // نفس الحد ده في "تفكير" داخلي (thinking) قبل الرد النهائي حتى لو مش محتاج تفكير معقد لسؤال
+      // بسيط، فبنعطّله صراحة (thinkingBudget: 0) عشان كل الحد يروح للرد الظاهر للعميل بدل ما ياكله
+      // تفكير مالوش داعي لخدمة عملاء مطعم، وكمان رفعنا الحد نفسه احتياطًا
+      generationConfig: { maxOutputTokens: maxTokens || 2048, thinkingConfig: { thinkingBudget: 0 } },
     }),
   });
   const data = await res.json().catch(() => ({}));
