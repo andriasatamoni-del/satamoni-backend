@@ -92,7 +92,10 @@ async function runToolLoop({ system, messages, tools, executeTool, maxTokens }) 
       }
       responseParts.push({ functionResponse: { name: fc.functionCall.name, response: { result: String(resultText) } } });
     }
-    contents.push({ role: "function", parts: responseParts });
+    // "function" مش من ضمن الـroles المقبولة في نسخة الـAPI الحالية (اتلقطت فعليًا من رسالة خطأ Gemini
+    // نفسها: "Role 'function' is not supported... use SYSTEM/USER/ASSISTANT/MODEL/..."). "user" هو
+    // المكافئ المدعوم لإرجاع نتيجة الأداة للموديل
+    contents.push({ role: "user", parts: responseParts });
   }
 
   return { replyText: "معلش، ممكن تعيد سؤالك؟ حصلت مشكلة مؤقتة عندي.", updatedMessages: contents };
