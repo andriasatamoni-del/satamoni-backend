@@ -284,6 +284,11 @@ router.delete("/reconciliation-records/:id", requirePermission("payment_control.
       return res.status(400).json({ error: "السطر ده اتطابق بالفعل - مينفعش يتمسح مباشرة" });
     }
     await pool.query("DELETE FROM payment_reconciliation_records WHERE id = $1", [req.params.id]);
+    await pool.query(
+      `INSERT INTO payment_audit_logs (branch_id, actor_id, actor_role, action_type, before_state)
+       VALUES ($1,$2,$3,'RECONCILIATION_DELETED',$4)`,
+      [record.rows[0].branch_id, req.user.id, req.user.role, JSON.stringify(record.rows[0])]
+    );
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -303,6 +308,11 @@ router.patch("/reconciliation-records/:id/match", requirePermission("payment_con
     const result = await pool.query(
       `UPDATE payment_reconciliation_records SET matched_payment_id = $1, match_status = 'MATCHED' WHERE id = $2 RETURNING *`,
       [paymentId, req.params.id]
+    );
+    await pool.query(
+      `INSERT INTO payment_audit_logs (payment_id, branch_id, actor_id, actor_role, action_type, before_state, after_state)
+       VALUES ($1,$2,$3,$4,'RECONCILIATION_MATCHED_MANUAL',$5,$6)`,
+      [paymentId, record.rows[0].branch_id, req.user.id, req.user.role, JSON.stringify(record.rows[0]), JSON.stringify(result.rows[0])]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -430,6 +440,11 @@ router.delete("/reconciliation-records/import-batches/:batchId", requirePermissi
       return res.status(400).json({ error: "الدفعة دي فيها سطور اتطابقت بالفعل - لازم تتراجع يدويًا سطر سطر" });
     }
     await pool.query("DELETE FROM payment_reconciliation_records WHERE import_batch_id = $1", [req.params.batchId]);
+    await pool.query(
+      `INSERT INTO payment_audit_logs (branch_id, actor_id, actor_role, action_type, before_state)
+       VALUES ($1,$2,$3,'RECONCILIATION_IMPORT_BATCH_CANCELLED',$4)`,
+      [branchIds.length === 1 ? branchIds[0] : null, req.user.id, req.user.role, JSON.stringify({ batchId: req.params.batchId, deleted: rows.rows.length, branchIds })]
+    );
     res.json({ deleted: rows.rows.length });
   } catch (err) {
     res.status(500).json({ error: err.message });

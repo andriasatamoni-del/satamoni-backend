@@ -2674,7 +2674,8 @@ CREATE TABLE payment_audit_logs (
   actor_id      INTEGER REFERENCES users(id),
   actor_role    TEXT,
   action_type   TEXT NOT NULL, -- LOCK | ADJUSTMENT_REQUESTED | ADJUSTMENT_APPROVED | ADJUSTMENT_REJECTED |
-                                -- RECONCILIATION_ENTERED | EXCEPTION_RESOLVED
+                                -- RECONCILIATION_ENTERED | RECONCILIATION_DELETED | RECONCILIATION_MATCHED_MANUAL |
+                                -- RECONCILIATION_IMPORT_BATCH_CANCELLED | EXCEPTION_RESOLVED
   before_state  JSONB,
   after_state   JSONB,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
