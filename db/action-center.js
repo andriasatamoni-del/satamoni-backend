@@ -111,6 +111,30 @@ async function findFoodCostVarianceAlerts(pool, { branchId, from, to }) {
     }));
 }
 
+// أصناف من غير تكلفة وحدة (unit_cost) بس مستخدمة فعليًا في وصفة نشطة - أي حساب تكلفة تصنيع/طعام
+// بيستخدم الصنف ده بيتعلّم عليه أصلًا بعلم "incomplete" (راجع db/food-cost-engine.js) بدل ما يفترض
+// صفر، لكن محدش بيشوف إن في أصناف ناقصاها البيانات دي أصلًا من غير ما يفتح كل تقرير ويلاحظ الفجوة.
+// بيانات الصنف الأساسي (تكلفة الوحدة) شركة-wide مش خاصة بفرع - نفس فلسفة inventory-comparison/
+// branch-health بالظبط: مفيش معنى لعزل الفرع هنا، فالتنبيه ده بيظهر بس في عرض "كل الفروع" (أدمن/محاسب)
+async function findItemsMissingCostAlerts(pool, { branchId }) {
+  if (branchId) return [];
+  const result = await pool.query(
+    `SELECT DISTINCT ii.id, ii.name
+     FROM inventory_items ii
+     JOIN recipe_ingredients ri ON ri.ingredient_item_id = ii.id
+     JOIN recipe_versions rv ON rv.id = ri.recipe_version_id AND rv.status = 'ACTIVE'
+     WHERE ii.unit_cost IS NULL
+     ORDER BY ii.name`
+  );
+  if (result.rows.length === 0) return [];
+  return [{
+    type: "ITEMS_MISSING_COST", severity: "HIGH", branchId: null, branchName: "كل الفروع",
+    description: `${result.rows.length} صنف مستخدم في وصفات نشطة من غير تكلفة وحدة مسجّلة - بيأثر على دقة تكلفة الطعام لأي وصفة بتستخدمه`,
+    detail: result.rows.slice(0, 8).map((r) => r.name).join("، "),
+    link: "/satamoni-items.html",
+  }];
+}
+
 const SEVERITY_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
 // المدى الافتراضي (لو مفيش from/to) آخر 7 أيام - المركز ده معمول يتفتح من غير إعدادات، مش تقرير
@@ -123,12 +147,13 @@ function defaultRange() {
 
 async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
   const range = from && to ? { from, to } : defaultRange();
-  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance] = await Promise.all([
+  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance, itemsMissingCost] = await Promise.all([
     findNegativeStockAlerts(pool, { branchId }),
     computeExceptions(pool, { branchId, from: range.from, to: range.to }),
     findProductionVarianceAlerts(pool, { branchId, from: range.from, to: range.to }),
     findExpenseAnomalies(pool, { branchId, from: range.from, to: range.to }),
     findFoodCostVarianceAlerts(pool, { branchId, from: range.from, to: range.to }),
+    findItemsMissingCostAlerts(pool, { branchId }),
   ]);
 
   const paymentAlerts = paymentControl.exceptions.map((e) => ({
@@ -137,7 +162,7 @@ async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
     link: "/satamoni-payment-control.html",
   }));
 
-  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance]
+  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance, ...itemsMissingCost]
     .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 
   return {

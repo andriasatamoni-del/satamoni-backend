@@ -134,6 +134,32 @@ test("مدير فرع بيشوف تنبيهات فرعه بس حتى لو حدد
   expect(ownAlert).toBeDefined();
 });
 
+test("صنف مستخدم في وصفة نشطة من غير تكلفة وحدة - بيظهر كتنبيه HIGH في عرض كل الفروع بس", async () => {
+  const noCostIngredient = await pool.query(
+    "INSERT INTO inventory_items (name, unit, unit_cost) VALUES ('صنف-من-غير-تكلفة-جست', 'KG', NULL) RETURNING id"
+  );
+  const cake = await pool.query(
+    "INSERT INTO inventory_items (name, unit, unit_cost, item_type) VALUES ('كيكة-تنبيهات-جست', 'KG', NULL, 'manufactured') RETURNING id"
+  );
+  await createActiveRecipe({
+    inventoryItemId: cake.rows[0].id, yieldQuantity: 1,
+    ingredients: [{ ingredientItemId: noCostIngredient.rows[0].id, quantity: 1 }],
+  });
+
+  const allBranchesRes = await request(app).get("/api/reports/action-center").set(authed(adminToken));
+  expect(allBranchesRes.status).toBe(200);
+  const costAlert = allBranchesRes.body.alerts.find((a) => a.type === "ITEMS_MISSING_COST");
+  expect(costAlert).toBeDefined();
+  expect(costAlert.severity).toBe("HIGH");
+  expect(costAlert.detail).toContain("صنف-من-غير-تكلفة-جست");
+
+  const scopedRes = await request(app).get(`/api/reports/action-center?branchId=${branchId}`).set(authed(adminToken));
+  expect(scopedRes.body.alerts.find((a) => a.type === "ITEMS_MISSING_COST")).toBeUndefined();
+
+  const managerRes = await request(app).get("/api/reports/action-center").set(authed(managerToken));
+  expect(managerRes.body.alerts.find((a) => a.type === "ITEMS_MISSING_COST")).toBeUndefined();
+});
+
 test("مدى افتراضي (آخر 7 أيام) لو from/to مش مبعوتين - مفيش رفض 400", async () => {
   const res = await request(app).get("/api/reports/action-center").set(authed(adminToken));
   expect(res.status).toBe(200);
