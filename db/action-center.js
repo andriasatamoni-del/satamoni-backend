@@ -163,6 +163,38 @@ async function findOverduePurchaseOrdersAlerts(pool, { branchId }) {
   }));
 }
 
+// فواتير موردين اتعدّى معاد استحقاقها (due_date) ولسه فيها مبلغ متبقي غير مسدد - مختلف عن GET
+// /api/reports/ap-aging الموجود أصلًا: ap-aging بيقسّم الديون على أعمار زمنية من تاريخ الحركة نفسه
+// (0-30/31-60...)، مش من معاد الاستحقاق الفعلي بتاع كل فاتورة (فاتورة عمرها 20 يوم بشروط سداد 15 يوم
+// متأخرة فعلًا، لكن هتظهر في bucket "0-30" العادي وتفوت تحت الرادار). ده بيسد الفجوة دي - خطر حقيقي
+// على علاقة المورد واستمرار التوريد لو اتجاهل
+async function findOverdueSupplierInvoicesAlerts(pool, { branchId }) {
+  const result = await pool.query(
+    `SELECT si.branch_id, b.name AS branch_name, COUNT(DISTINCT si.id) AS invoice_count,
+            SUM(si.total - COALESCE(sp.paid, 0)) AS remaining_value,
+            array_agg(DISTINCT s.name) AS suppliers
+     FROM supplier_invoices si
+     JOIN branches b ON b.id = si.branch_id
+     JOIN suppliers s ON s.id = si.supplier_id
+     LEFT JOIN (
+       SELECT supplier_invoice_id, SUM(amount) AS paid FROM supplier_payments
+       WHERE supplier_invoice_id IS NOT NULL GROUP BY supplier_invoice_id
+     ) sp ON sp.supplier_invoice_id = si.id
+     WHERE si.status IN ('MATCHED', 'VARIANCE_PENDING', 'APPROVED', 'PARTIALLY_PAID')
+       AND si.due_date IS NOT NULL AND si.due_date < CURRENT_DATE
+       AND ($1::int IS NULL OR si.branch_id = $1)
+     GROUP BY si.branch_id, b.name
+     HAVING SUM(si.total - COALESCE(sp.paid, 0)) > 0`,
+    [branchId || null]
+  );
+  return result.rows.map((r) => ({
+    type: "OVERDUE_SUPPLIER_INVOICES", severity: "MEDIUM", branchId: r.branch_id, branchName: r.branch_name,
+    description: `${r.invoice_count} فاتورة مورد فات معاد استحقاقها في ${r.branch_name} - مبلغ متبقي ${Number(r.remaining_value).toFixed(2)} ج.م`,
+    detail: r.suppliers.slice(0, 5).join("، "),
+    link: "/satamoni-purchasing.html",
+  }));
+}
+
 const SEVERITY_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
 // المدى الافتراضي (لو مفيش from/to) آخر 7 أيام - المركز ده معمول يتفتح من غير إعدادات، مش تقرير
@@ -175,7 +207,7 @@ function defaultRange() {
 
 async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
   const range = from && to ? { from, to } : defaultRange();
-  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance, itemsMissingCost, overduePurchaseOrders] = await Promise.all([
+  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance, itemsMissingCost, overduePurchaseOrders, overdueSupplierInvoices] = await Promise.all([
     findNegativeStockAlerts(pool, { branchId }),
     computeExceptions(pool, { branchId, from: range.from, to: range.to }),
     findProductionVarianceAlerts(pool, { branchId, from: range.from, to: range.to }),
@@ -183,6 +215,7 @@ async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
     findFoodCostVarianceAlerts(pool, { branchId, from: range.from, to: range.to }),
     findItemsMissingCostAlerts(pool, { branchId }),
     findOverduePurchaseOrdersAlerts(pool, { branchId }),
+    findOverdueSupplierInvoicesAlerts(pool, { branchId }),
   ]);
 
   const paymentAlerts = paymentControl.exceptions.map((e) => ({
@@ -191,7 +224,7 @@ async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
     link: "/satamoni-payment-control.html",
   }));
 
-  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance, ...itemsMissingCost, ...overduePurchaseOrders]
+  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance, ...itemsMissingCost, ...overduePurchaseOrders, ...overdueSupplierInvoices]
     .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 
   return {

@@ -187,6 +187,38 @@ test("أمر شراء APPROVED فات معاد تسليمه المتوقع ول�
   expect(afterReceipt.body.alerts.find((a) => a.type === "OVERDUE_PURCHASE_ORDERS" && a.branchId === branchId)).toBeUndefined();
 });
 
+test("فاتورة مورد فات معاد استحقاقها ولسه فيها مبلغ متبقي - بيظهر كتنبيه MEDIUM، ويختفي بعد السداد الكامل", async () => {
+  const supplier = await pool.query("INSERT INTO suppliers (name) VALUES ('مورد-فاتورة-متأخرة-جست') RETURNING id");
+  const invoice = await pool.query(
+    `INSERT INTO supplier_invoices (supplier_id, branch_id, supplier_invoice_number, due_date, total, status)
+     VALUES ($1,$2,'INV-OVERDUE-JEST-1', CURRENT_DATE - INTERVAL '5 days', 1000, 'APPROVED') RETURNING id`,
+    [supplier.rows[0].id, branchId]
+  );
+
+  const res = await request(app).get(`/api/reports/action-center?branchId=${branchId}`).set(authed(adminToken));
+  expect(res.status).toBe(200);
+  const overdueInvoiceAlert = res.body.alerts.find((a) => a.type === "OVERDUE_SUPPLIER_INVOICES" && a.branchId === branchId);
+  expect(overdueInvoiceAlert).toBeDefined();
+  expect(overdueInvoiceAlert.severity).toBe("MEDIUM");
+  expect(overdueInvoiceAlert.detail).toContain("مورد-فاتورة-متأخرة-جست");
+
+  // سداد جزئي بس - لسه لازم يظهر
+  await pool.query(
+    "INSERT INTO supplier_payments (supplier_id, branch_id, amount, supplier_invoice_id) VALUES ($1,$2,400,$3)",
+    [supplier.rows[0].id, branchId, invoice.rows[0].id]
+  );
+  const afterPartial = await request(app).get(`/api/reports/action-center?branchId=${branchId}`).set(authed(adminToken));
+  expect(afterPartial.body.alerts.find((a) => a.type === "OVERDUE_SUPPLIER_INVOICES" && a.branchId === branchId)).toBeDefined();
+
+  // سداد المتبقي بالكامل - مايظهرش تاني
+  await pool.query(
+    "INSERT INTO supplier_payments (supplier_id, branch_id, amount, supplier_invoice_id) VALUES ($1,$2,600,$3)",
+    [supplier.rows[0].id, branchId, invoice.rows[0].id]
+  );
+  const afterFull = await request(app).get(`/api/reports/action-center?branchId=${branchId}`).set(authed(adminToken));
+  expect(afterFull.body.alerts.find((a) => a.type === "OVERDUE_SUPPLIER_INVOICES" && a.branchId === branchId)).toBeUndefined();
+});
+
 test("مدى افتراضي (آخر 7 أيام) لو from/to مش مبعوتين - مفيش رفض 400", async () => {
   const res = await request(app).get("/api/reports/action-center").set(authed(adminToken));
   expect(res.status).toBe(200);
