@@ -152,6 +152,13 @@ async function api(path, opts = {}) {
   return data;
 }
 function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
+// اسم العميل بيتحكم فيه هو نفسه (طلب الموقع/واتساب) وبيترندر هنا كـinnerHTML - لازم escaping قبل
+// الحقن عشان محدش يقدر يعمل stored XSS بمجرد ما يسجل طلب باسم فيه HTML
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 
 document.getElementById("loginBtn").onclick = async () => {
   const email = document.getElementById("loginEmail").value.trim();
@@ -204,10 +211,10 @@ function renderCard(o) {
       <span class="orderNum">#${o.id}</span>
       <span class="pill ${DISPATCH_CLASS[o.dispatch_status] || ""}">${DISPATCH_LABELS[o.dispatch_status] || o.dispatch_status}</span>
     </div>
-    <div class="field">العميل: <b>${o.customer_name || "—"}</b></div>
-    <div class="field">التليفون: <b>${o.customer_phone || "—"}</b></div>
-    <div class="field">العنوان: <b>${o.address_details || "—"}</b>${o.delivery_area_name ? ` (${o.delivery_area_name})` : ""}</div>
-    ${o.distinguishing_mark ? `<div class="field">علامة مميزة: <b>${o.distinguishing_mark}</b></div>` : ""}
+    <div class="field">العميل: <b>${esc(o.customer_name) || "—"}</b></div>
+    <div class="field">التليفون: <b>${esc(o.customer_phone) || "—"}</b></div>
+    <div class="field">العنوان: <b>${esc(o.address_details) || "—"}</b>${o.delivery_area_name ? ` (${esc(o.delivery_area_name)})` : ""}</div>
+    ${o.distinguishing_mark ? `<div class="field">علامة مميزة: <b>${esc(o.distinguishing_mark)}</b></div>` : ""}
     <div class="field">الدفع: <b>${o.payment_method_name || "—"}</b> ${isCod ? "(كاش عند الاستلام)" : "(محصّل بالفعل)"}</div>
     <div class="field">الإجمالي: <b>${money(o.total)}</b></div>
     <div class="err" data-err></div>

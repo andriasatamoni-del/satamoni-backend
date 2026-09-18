@@ -11,8 +11,11 @@ test("8G: إيصال الكاشير - نافذة الطباعة بتتفتح ف�
   await page.click("#loginBtn");
   await expect(page.locator("#loginOverlay")).toBeHidden({ timeout: 10000 });
 
+  // المرحلة 8.10 (لاحقة، وشرعية): المودال بقى بيفتح لكل صنف - لازم نأكّد الإضافة منه
   await page.waitForSelector(".item-card", { timeout: 10000 });
   await page.click(".item-card");
+  await expect(page.locator("#itemModalOverlay")).toHaveClass(/show/);
+  await page.click("#itemModalAdd");
   await page.click("#submitBtn");
   await expect(page.locator("#confirmOverlay")).toHaveClass(/show/, { timeout: 10000 });
   const orderIdText = await page.locator("#confirmOrderId").textContent();
@@ -32,6 +35,9 @@ test("8G: إيصال الكاشير - نافذة الطباعة بتتفتح ف�
     card.locator('button[data-oact="receipt"]').click(),
   ]);
   await popup.waitForLoadState("domcontentloaded");
+  // print-tickets.js: window.open() بيتنفذ فورًا بشكل مبدئي (".loading") قبل ما تفاصيل الطلب توصل
+  // بالـfetch الـasync وتستبدل #body بالإيصال الفعلي - لازم نستنى ده يختفي قبل ما نقرا المحتوى
+  await popup.waitForSelector(".loading", { state: "detached", timeout: 10000 });
   const content = await popup.content();
   expect(content).toContain("ستاموني");
   expect(content).toContain(`#${orderId}`);

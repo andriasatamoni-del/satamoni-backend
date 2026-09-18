@@ -157,6 +157,15 @@ test("6) إلغاء دفعة استيراد: بينجح لو كل السطور �
     "SELECT * FROM payment_reconciliation_records WHERE import_batch_id = $1", [commitRes.body.batchId]
   );
   expect(remaining.rows.length).toBe(0);
+
+  const auditLog = await pool.query(
+    "SELECT * FROM payment_audit_logs WHERE action_type = 'RECONCILIATION_IMPORT_BATCH_CANCELLED' AND branch_id = $1 ORDER BY id DESC LIMIT 1",
+    [branchId]
+  );
+  expect(auditLog.rows.length).toBe(1);
+  expect(auditLog.rows[0].actor_id).toBeTruthy();
+  expect(auditLog.rows[0].before_state.batchId).toBe(commitRes.body.batchId);
+  expect(auditLog.rows[0].before_state.deleted).toBe(2);
 });
 
 test("7) إلغاء دفعة فيها سطر اتطابق بالفعل - مرفوض", async () => {
@@ -272,6 +281,38 @@ test("13) حذف سطر UNMATCHED بينجح ويشيله من القايمة", 
 
   const check = await pool.query("SELECT * FROM payment_reconciliation_records WHERE id = $1", [created.body.id]);
   expect(check.rows.length).toBe(0);
+
+  const auditLog = await pool.query(
+    "SELECT * FROM payment_audit_logs WHERE action_type = 'RECONCILIATION_DELETED' AND branch_id = $1 ORDER BY id DESC LIMIT 1",
+    [branchId]
+  );
+  expect(auditLog.rows.length).toBe(1);
+  expect(auditLog.rows[0].before_state.external_reference).toBe("TO-DELETE");
+});
+
+test("13ب) مطابقة يدوية صريحة (PATCH /:id/match) بتسجّل في سجل التدقيق", async () => {
+  const orderId = await makeOrder(visaMethodId);
+  const payment = await paymentForOrder(orderId);
+  await pool.query("UPDATE payments SET amount = 733.5 WHERE id = $1", [payment.id]);
+
+  const created = await request(app).post("/api/payment-control/reconciliation-records").set(authed(accountantToken)).send({
+    branchId, source: "visa_settlement", externalAmount: 733.5, externalDate: "2026-01-27", externalReference: "MANUAL-MATCH-TEST",
+  });
+  expect(created.status).toBe(201);
+
+  const matchRes = await request(app).patch(`/api/payment-control/reconciliation-records/${created.body.id}/match`)
+    .set(authed(accountantToken)).send({ paymentId: payment.id });
+  expect(matchRes.status).toBe(200);
+  expect(matchRes.body.match_status).toBe("MATCHED");
+  expect(matchRes.body.matched_payment_id).toBe(payment.id);
+
+  const auditLog = await pool.query(
+    "SELECT * FROM payment_audit_logs WHERE action_type = 'RECONCILIATION_MATCHED_MANUAL' AND payment_id = $1 ORDER BY id DESC LIMIT 1",
+    [payment.id]
+  );
+  expect(auditLog.rows.length).toBe(1);
+  expect(auditLog.rows[0].before_state.match_status).toBe("UNMATCHED");
+  expect(auditLog.rows[0].after_state.match_status).toBe("MATCHED");
 });
 
 test("14) حذف سطر MATCHED بالفعل مرفوض", async () => {

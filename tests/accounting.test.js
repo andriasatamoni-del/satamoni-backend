@@ -171,7 +171,9 @@ describe("3) بيع تلقائي: قيد متزن + idempotency + عكس عند 
     expect(totalDebit).toBe(totalCredit);
 
     const cashLine = lines.rows.find((l) => l.code.startsWith("1100"));
-    const salesLine = lines.rows.find((l) => l.code === "4100");
+    // حساب 4100 بيدي سطرين لو الضريبة مفعّلة (دائن بالإيراد الإجمالي + مدين باستقطاع الضريبة) - لازم
+    // نحدد سطر الدائن تحديدًا، مش أول سطر بالصدفة (ترتيب رجوع الصفوف من SELECT من غير ORDER BY مش مضمون)
+    const salesLine = lines.rows.find((l) => l.code === "4100" && Number(l.credit) > 0);
     const cogsLine = lines.rows.find((l) => l.code === "5100");
     const invLine = lines.rows.find((l) => l.code === "1400");
     expect(Number(cashLine.debit)).toBe(100);

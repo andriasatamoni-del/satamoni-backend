@@ -40,7 +40,9 @@ test.describe("8.7-POS: وضوح السلة مع اسم صنف طويل جدًا
     await login(page, "/satamoni-pos.html", "pw-cashier87@test.local");
     await page.waitForSelector(".item-card", { timeout: 10000 });
     await page.locator(".item-card", { hasText: "سوبر مكس" }).click();
-    // الصنف له مقاس واحد بس، من غير مرفقات - المفروض يتضاف للسلة مباشرة من غير مودال
+    // المرحلة 8.10 (لاحقة، وشرعية): المودال بقى بيفتح لكل صنف (مش بس لو فيه مقاسات/مرفقات) - لازم نأكّد الإضافة منه
+    await expect(page.locator("#itemModalOverlay")).toHaveClass(/show/);
+    await page.click("#itemModalAdd");
     await expect(page.locator(".cart-row")).toHaveCount(1, { timeout: 5000 });
 
     const overflowsX = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2);
@@ -60,6 +62,11 @@ for (const vp of [
       await page.waitForSelector(".item-card", { timeout: 10000 });
       const overflowsX = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2);
       expect(overflowsX).toBe(false);
+      // المرحلة 8.54 (لاحقة، وشرعية): تحت 900px بقى فيه تابات سفلية (مودالات/منيو/سلة) - عمود واحد
+      // بس ظاهر في المرة الواحدة، والافتراضي هو المنيو. لازم نفتح تاب السلة الأول عشان submitBtn يظهر
+      if (vp.width <= 900) {
+        await page.click('#mobilePaneTabs button[data-pane="cartPane"]');
+      }
       await expect(page.locator("#submitBtn")).toBeVisible();
     });
 

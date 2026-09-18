@@ -126,6 +126,9 @@
       و`POST /api/inventory/reconcile-check` لكل فرع، على الأقل أسبوعيًا، حتى لو مفيش شكوى ظاهرة.
       اتأكد المرحلة 8I من إن الأداة دي فعليًا بتكشف فروق حقيقية (مش بس نظرية) - أي `matched: false` أو
       `discrepanciesFound > 0` لازم يترجعله سبب واضح موثّق، مش يتجاهل.
+- [ ] مركز التنبيهات (`GET /api/reports/action-center`) مُراجَع يوميًا لكل فرع، ومصفوفة الملكية
+      ([`docs/ACTION-CENTER-OWNERSHIP.md`](./ACTION-CENTER-OWNERSHIP.md)) موزّعة على الفريق - أي تنبيه
+      severity=HIGH لازم يكون له مالك واضح، مش معلّق.
 
 ---
 

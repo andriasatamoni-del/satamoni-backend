@@ -34,8 +34,11 @@ test.describe("8F-POS: نقطة البيع", () => {
     await login(page, "/satamoni-pos.html", "pw-cashier@test.local");
     await expect(page.locator("#loginOverlay")).toBeHidden({ timeout: 10000 });
 
+    // المرحلة 8.10 (لاحقة، وشرعية): المودال بقى بيفتح لكل صنف - لازم نأكّد الإضافة منه
     await page.waitForSelector(".item-card", { timeout: 10000 });
     await page.click(".item-card");
+    await expect(page.locator("#itemModalOverlay")).toHaveClass(/show/);
+    await page.click("#itemModalAdd");
     await expect(page.locator("#cartList .cart-empty")).toHaveCount(0);
 
     await page.click("#submitBtn");

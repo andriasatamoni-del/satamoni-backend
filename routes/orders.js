@@ -170,6 +170,22 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
       return res.status(403).json({ error: "معندكش صلاحية تسجل طلب على فرع تاني" });
     }
 
+    // PHASE 4 (External Channel Reconciliation): talabat_order_id مكتوب يدوي من الكاشير - رسالة واضحة
+    // هنا بدل ما نسيب الإدخال يرمي خطأ Postgres خام (23505) من الـindex الفريد الجزئي في db/schema.sql
+    // (idx_orders_talabat_order_id_live) لما نفس رقم الأوردر يتكرر بالغلط على طلب لسه حيّ (مش ملغي)
+    if (source === "talabat" && talabatOrderId && String(talabatOrderId).trim()) {
+      const dupTalabat = await client.query(
+        "SELECT id FROM orders WHERE source = 'talabat' AND talabat_order_id = $1 AND voided = FALSE",
+        [String(talabatOrderId).trim()]
+      );
+      if (dupTalabat.rows.length > 0) {
+        return res.status(409).json({
+          error: `رقم أوردر طلبات ده مسجّل بالفعل (طلب #${dupTalabat.rows[0].id}) - لو ده تصحيح غلطة، ألغي (void) الطلب القديم الأول`,
+          code: "DUPLICATE_TALABAT_ORDER_ID",
+        });
+      }
+    }
+
     // باج حقيقي كان موجود: البحث في شاشة الكول سنتر بيقبل رقم العميل الأساسي أو التاني (phone2) ويعرض
     // بروفايله صح في الحالتين، بس لو الموظف دوّر بالرقم التاني وسجّل الطلب، customerPhone هنا كان بييجي
     // = الرقم التاني نفسه - وده مختلف عن customers.phone (الأساسي)، يعني: (1) خصم نقاط الولاء تحت كان

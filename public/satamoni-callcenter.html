@@ -468,6 +468,13 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || "حصل خطأ");
   return data;
 }
+// اسم/تليفون/عنوان العميل بيتحكم فيه هو نفسه (طلب الموقع/واتساب) وبيترندر هنا كـinnerHTML - لازم
+// escaping قبل الحقن عشان محدش يقدر يعمل stored XSS بمجرد ما يسجل طلب باسم/عنوان فيه HTML
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 
 // المرحلة 7F: سائقين مسجّلين فعليًا بدل الاسم الحر - بيتحمّلوا مرة واحدة لكل فرع ويتخزّنوا هنا
 const driversCache = {};
@@ -1147,7 +1154,7 @@ async function loadComplaintBanner(phone) {
     const statusLabels = { open: "مفتوحة", in_progress: "تحت المعالجة", resolved: "اتحلت" };
     const date = new Date(complaint.created_at).toLocaleDateString("ar-EG");
     banner.innerHTML = `⚠️ العميل ده كان عنده شكوى يوم ${date} من أوردر #${complaint.order_id} (${categoryLabels[complaint.category] || complaint.category}) -
-      ${complaint.description ? `السبب: ${complaint.description} - ` : ""}الحالة: ${statusLabels[complaint.status] || complaint.status}`;
+      ${complaint.description ? `السبب: ${esc(complaint.description)} - ` : ""}الحالة: ${statusLabels[complaint.status] || complaint.status}`;
     banner.style.display = "block";
   } catch (e) { /* تجاهل - مش المفروض توقف تسجيل الأوردر */ }
 }
@@ -1319,7 +1326,7 @@ function renderActiveOrders(orders) {
           <span class="obadge ${o.payment_status}">${orderPaymentLabels[o.payment_status] || o.payment_status}</span>
         </span>
       </div>
-      <div class="meta">${o.customer_name || "بدون اسم"} — ${o.customer_phone || "—"}${o.address_details ? " — " + o.address_details : ""}</div>
+      <div class="meta">${esc(o.customer_name) || "بدون اسم"} — ${esc(o.customer_phone) || "—"}${o.address_details ? " — " + esc(o.address_details) : ""}</div>
       ${o.driver_name ? `<div class="meta">🛵 الطيار: ${o.driver_name}</div>` : ""}
       ${o.voided ? `<div class="meta" style="color:var(--err)">🗑️ استرجاع: ${o.void_reason || "—"}</div>` : ""}
       <div class="meta">الإجمالي: ${money(o.total)} — ${new Date(o.created_at).toLocaleString("ar-EG")}</div>

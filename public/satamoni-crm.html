@@ -216,6 +216,13 @@ async function api(path, opts = {}) {
 }
 function money(v) { return `${Number(v || 0).toFixed(2)} ج.م`; }
 function dt(v) { return v ? new Date(v).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" }) : "—"; }
+// اسم/تليفون/عنوان العميل ورسايل الشكاوى بيانات العميل بيتحكم فيها بنفسه (طلب الموقع/واتساب) وبتترندر
+// هنا كـinnerHTML - لازم escaping قبل الحقن عشان محدش يقدر يعمل stored XSS بمجرد ما يسجل طلب/شكوى باسم فيه HTML
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 
 document.getElementById("loginBtn").onclick = async () => {
   const email = document.getElementById("loginEmail").value.trim();
@@ -258,8 +265,8 @@ async function loadQueue() {
       <tr>
         <td>#${r.orderId}</td>
         <td>${r.branchName}</td>
-        <td>${r.customerName || "—"}<br><span style="color:var(--faint)">${r.customerPhone || "—"}</span></td>
-        <td>${r.addressDetails || "—"}${r.distinguishingMark ? ` (${r.distinguishingMark})` : ""}</td>
+        <td>${esc(r.customerName) || "—"}<br><span style="color:var(--faint)">${esc(r.customerPhone) || "—"}</span></td>
+        <td>${esc(r.addressDetails) || "—"}${r.distinguishingMark ? ` (${esc(r.distinguishingMark)})` : ""}</td>
         <td>${money(r.total)}</td>
         <td>${dt(r.deliveredAt)}</td>
         <td>${r.lastCallResult ? `مردّش (${dt(r.lastCalledAt)})` : "—"}</td>
@@ -334,10 +341,10 @@ async function loadComplaints() {
     body.innerHTML = rows.map(r => `
       <tr>
         <td>#${r.orderId}</td>
-        <td>${r.customerName || "—"}<br><span style="color:var(--faint)">${r.customerPhone}</span></td>
-        <td>${r.branchName || "—"}</td>
-        <td>${CATEGORY_LABELS[r.category] || r.category}</td>
-        <td>${r.description || "—"}</td>
+        <td>${esc(r.customerName) || "—"}<br><span style="color:var(--faint)">${esc(r.customerPhone)}</span></td>
+        <td>${esc(r.branchName) || "—"}</td>
+        <td>${esc(CATEGORY_LABELS[r.category] || r.category)}</td>
+        <td>${esc(r.description) || "—"}</td>
         <td>
           <select data-status-for="${r.id}">
             <option value="open" ${r.status === "open" ? "selected" : ""}>مفتوحة</option>

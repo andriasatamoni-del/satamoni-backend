@@ -4,6 +4,8 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { computeConsumptionBreakdown, aggregateBreakdown } = require("../db/food-cost-engine");
+const { computeActionCenter } = require("../db/action-center");
+const { computeBranchHealth } = require("../db/branch-health");
 const { getCairoBusinessDate } = require("../db/business-date");
 const { convertQuantity } = require("../db/unit-conversion");
 const { computeProductionPlan, computeRawMaterialRequirement } = require("../db/production-planning");
@@ -980,7 +982,7 @@ router.get("/waste", requireAuth, canSeeReports, async (req, res) => {
       ),
       pool.query(
         `SELECT im.id, im.branch_id, b.name AS branch_name, ii.name AS item_name, ii.unit,
-                -im.quantity AS quantity, im.business_date, im.notes, u.name AS recorded_by
+                -im.quantity AS quantity, im.business_date, im.reason, im.notes, u.name AS recorded_by
          FROM inventory_movements im
          JOIN inventory_items ii ON ii.id = im.inventory_item_id
          LEFT JOIN branches b ON b.id = im.branch_id
@@ -1001,7 +1003,7 @@ router.get("/waste", requireAuth, canSeeReports, async (req, res) => {
       })),
       entries: entries.rows.map((r) => ({
         id: r.id, branchId: r.branch_id, branchName: r.branch_name, itemName: r.item_name, unit: r.unit,
-        quantity: Number(r.quantity), businessDate: r.business_date, notes: r.notes, recordedBy: r.recorded_by,
+        quantity: Number(r.quantity), businessDate: r.business_date, wasteReason: r.reason, notes: r.notes, recordedBy: r.recorded_by,
       })),
     });
   } catch (err) {
@@ -1231,6 +1233,21 @@ router.get("/expiring-batches", requireAuth, canSeeReports, async (req, res) => 
   }
 });
 
+// GET /api/reports/action-center?branchId=&from=&to= - مركز تنبيهات واحد بيجمّع كل استثناء يستاهل
+// انتباه فوري (مخزون سالب، استثناءات مدفوعات، فرق تصنيع من غير سبب، مصروف متجاوز حده، فرق تكلفة طعام)
+// من غير من تكرار المنطق - راجع db/action-center.js. مدى افتراضي (آخر 7 أيام) لو from/to مش مبعوتين،
+// عكس باقي التقارير هنا اللي بترفض من غير مدى صريح - المركز ده معمول يتفتح يوميًا من غير إعدادات
+router.get("/action-center", requireAuth, canSeeReports, async (req, res) => {
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    const result = await computeActionCenter(pool, { branchId, from: req.query.from, to: req.query.to });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/reports/negative-stock?branchId= - أي صنف رصيده سالب دلوقتي (تنبيه - يحتاج مراجعة)
 router.get("/negative-stock", requireAuth, canSeeReports, async (req, res) => {
   let branchId = req.query.branchId ? Number(req.query.branchId) : null;
@@ -1247,6 +1264,22 @@ router.get("/negative-stock", requireAuth, canSeeReports, async (req, res) => {
       [branchId]
     );
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/branch-health?from=&to= - بطاقة مقارنة كل الفروع جنب بعض (إيراد/فرق كاش/مخزون سالب/
+// شكاوى مفتوحة/تأخير موظفين/نسبة تكلفة طعام) - نفس منطق inventory-comparison تحت: أدمن/محاسب بس، مش
+// مدير فرع (مقارنة بين فروع مالهاش معنى لمدير فرع واحد أصلًا). مدى افتراضي آخر 7 أيام زي action-center
+router.get("/branch-health", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
+  const range = resolveDateRange(req.query) || {
+    from: getCairoBusinessDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)),
+    to: getCairoBusinessDate(),
+  };
+  try {
+    const result = await computeBranchHealth(pool, { from: range.from, to: range.to });
+    res.json({ from: range.from, to: range.to, branches: result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1986,6 +2019,25 @@ function foldProfitAndLoss(rows) {
   };
 }
 
+// تحكم مالي حقيقي، مش مجرد تنبيه: كل تقرير ربحية هنا (P&L/gross-profit/net-operating-profit) بيبني
+// الـCOGS بتاعه من قيود البيع المرحّلة، اللي cost_at_sale بتاعها ممكن يكون incomplete (صنف من غير
+// unit_cost - راجع ITEMS_MISSING_COST في db/action-center.js) - ساعتها الـCOGS المرحّل نفسه أقل من
+// الحقيقي، والقيد لسه متزن (مفيش خطأ محاسبي)، بس الرقم اللي المدير بيشوفه (هامش ربح إجمالي/تشغيلي)
+// بيبان دقيق وهو مش كده. من غير العلم ده، محدش هيعرف يشكك في رقم ربح غلط. بيرجع IDs الفروع اللي فيها
+// COGS incomplete في المدى ده (مش true/false واحد بس) عشان branch-profit-and-loss يقدر يعلّم كل فرع لوحده
+async function fetchCogsIncompleteBranchIds({ from, to }) {
+  const result = await pool.query(
+    `SELECT DISTINCT je.branch_id
+     FROM journal_entries je
+     JOIN order_items oi ON oi.order_id = je.source_id
+     WHERE je.source_type = 'order_sale' AND je.status <> 'DRAFT'
+       AND je.entry_date BETWEEN $1 AND $2
+       AND oi.cost_at_sale_incomplete = TRUE`,
+    [from, to]
+  );
+  return new Set(result.rows.map((r) => r.branch_id));
+}
+
 // FIFO aging: بياخد كل سطور حساب مورد معيّن (دائن = فاتورة/GRN زوّدت المديونية، مدين = سداد قلّلها) مرتبة
 // بالتاريخ، وبيطفي كل سداد على أقدم فاتورة لسه فيها رصيد - زي ما بيحصل فعليًا مع أغلب الموردين (مفيش ربط
 // فاتورة بسداد بعينه في النظام الحالي - المورد بياخد سداد إجمالي مش لسداد GRN معيّن)
@@ -2292,7 +2344,9 @@ router.get("/profit-and-loss", requireAuth, canSeeAccounting, async (req, res) =
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
   try {
     const rows = await fetchPostedLines({ from: range.from, to: range.to, branchId });
-    res.json({ from: range.from, to: range.to, branchId, ...foldProfitAndLoss(rows) });
+    const incompleteBranchIds = await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to });
+    const cogsIncomplete = branchId ? incompleteBranchIds.has(branchId) : incompleteBranchIds.size > 0;
+    res.json({ from: range.from, to: range.to, branchId, ...foldProfitAndLoss(rows), cogsIncomplete });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2310,14 +2364,19 @@ router.get("/branch-profit-and-loss", requireAuth, requireRole("admin", "account
     const branchesRes = await pool.query("SELECT id, name FROM branches");
     const names = {};
     branchesRes.rows.forEach((b) => { names[b.id] = b.name; });
+    const incompleteBranchIds = await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to });
 
     const branches = Object.entries(byBranch).map(([key, branchRows]) => ({
       branchId: key === "unassigned" ? null : Number(key),
       branchName: key === "unassigned" ? "غير محدد" : (names[key] || `فرع ${key}`),
       ...foldProfitAndLoss(branchRows),
+      cogsIncomplete: key !== "unassigned" && incompleteBranchIds.has(Number(key)),
     })).sort((a, b) => b.netSales - a.netSales);
 
-    res.json({ from: range.from, to: range.to, branches, consolidated: foldProfitAndLoss(rows) });
+    res.json({
+      from: range.from, to: range.to, branches,
+      consolidated: { ...foldProfitAndLoss(rows), cogsIncomplete: incompleteBranchIds.size > 0 },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2336,6 +2395,8 @@ function makeByBranchMetricReport(metricKey) {
       const branchesRes = await pool.query("SELECT id, name FROM branches");
       const names = {};
       branchesRes.rows.forEach((b) => { names[b.id] = b.name; });
+      const incompleteBranchIds = metricKey === "cogs"
+        ? await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to }) : null;
 
       const branches = Object.entries(byBranch).map(([key, branchRows]) => {
         const pl = foldProfitAndLoss(branchRows);
@@ -2344,6 +2405,7 @@ function makeByBranchMetricReport(metricKey) {
           branchName: key === "unassigned" ? "غير محدد" : (names[key] || `فرع ${key}`),
           [metricKey]: pl[metricKey],
           ...(metricKey === "opex" ? { opexLines: pl.opexLines } : {}),
+          ...(incompleteBranchIds ? { cogsIncomplete: key !== "unassigned" && incompleteBranchIds.has(Number(key)) } : {}),
         };
       }).sort((a, b) => b[metricKey] - a[metricKey]);
 
@@ -2856,9 +2918,11 @@ router.get("/gross-profit", requireAuth, canSeeAccounting, async (req, res) => {
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
   try {
     const pl = foldProfitAndLoss(await fetchPostedLines({ from: range.from, to: range.to, branchId }));
+    const incompleteBranchIds = await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to });
     res.json({
       from: range.from, to: range.to, branchId,
       netSales: pl.netSales, cogs: pl.cogs, grossProfit: pl.grossProfit, grossMarginPercent: pl.grossMarginPercent,
+      cogsIncomplete: branchId ? incompleteBranchIds.has(branchId) : incompleteBranchIds.size > 0,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2872,10 +2936,12 @@ router.get("/net-operating-profit", requireAuth, canSeeAccounting, async (req, r
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
   try {
     const pl = foldProfitAndLoss(await fetchPostedLines({ from: range.from, to: range.to, branchId }));
+    const incompleteBranchIds = await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to });
     res.json({
       from: range.from, to: range.to, branchId,
       grossProfit: pl.grossProfit, opex: pl.opex, operatingProfit: pl.operatingProfit,
       operatingMarginPercent: pl.operatingMarginPercent,
+      cogsIncomplete: branchId ? incompleteBranchIds.has(branchId) : incompleteBranchIds.size > 0,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
