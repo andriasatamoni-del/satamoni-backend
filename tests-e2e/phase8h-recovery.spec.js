@@ -14,8 +14,11 @@ test("8H: مفتاح idempotency بيتولد مرة واحدة بس ويفضل 
   await page.fill("#loginPassword", "Pw12345678");
   await page.click("#loginBtn");
   await expect(page.locator("#loginOverlay")).toBeHidden({ timeout: 10000 });
+  // المرحلة 8.10 (لاحقة، وشرعية): المودال بقى بيفتح لكل صنف - لازم نأكّد الإضافة منه عشان submitBtn يتفعّل
   await page.waitForSelector(".item-card", { timeout: 10000 });
   await page.click(".item-card");
+  await expect(page.locator("#itemModalOverlay")).toHaveClass(/show/);
+  await page.click("#itemModalAdd");
 
   const key1 = await page.evaluate(() => getOrderAttemptKey());
   const key2 = await page.evaluate(() => getOrderAttemptKey());
@@ -49,8 +52,11 @@ test("8H: طلبين حقيقيين بنفس مفتاح idempotency (زي ما �
   await page.fill("#loginPassword", "Pw12345678");
   await page.click("#loginBtn");
   await expect(page.locator("#loginOverlay")).toBeHidden({ timeout: 10000 });
+  // المرحلة 8.10 (لاحقة، وشرعية): المودال بقى بيفتح لكل صنف - لازم نأكّد الإضافة منه عشان state.cart يتملي
   await page.waitForSelector(".item-card", { timeout: 10000 });
   await page.click(".item-card");
+  await expect(page.locator("#itemModalOverlay")).toHaveClass(/show/);
+  await page.click("#itemModalAdd");
 
   // بنحاكي "دبل كليك/إعادة محاولة بعد فشل شبكة" حرفيًا زي ما هيحصل في الإنتاج: نفس البايلود اللي
   // الكود الحقيقي بيبنيه، بنداء fetch مباشر مرتين بنفس المفتاح (مش من غير المفتاح)
