@@ -17,6 +17,9 @@ const FOOD_COST_MIN_COST_EGP = 50; // تجاهل فروق صغيرة القيم�
 // نفس فلسفة FOOD_COST_VARIANCE_ALERT_PERCENT بالظبط - مفيش عمود إعدادات مخصص لحد الآن لمدة بقاء الشكوى
 // مفتوحة، رقم مقترح افتراضي قابل للمراجعة
 const STALE_COMPLAINT_DAYS = 3;
+// فرق تحويل (شحن/استلام) OPEN لسه من غير قرار (ACKNOWLEDGED/RESOLVED/REJECTED) - مخزون فعليًا مش متطابق
+// بين السنتر كيتشن والفرع لحد اللحظة دي، أعجل من شكوى عميل عادةً (يستاهل حد أقصر)
+const STALE_TRANSFER_DISCREPANCY_DAYS = 2;
 
 async function findNegativeStockAlerts(pool, { branchId }) {
   const result = await pool.query(
@@ -220,6 +223,29 @@ async function findStaleComplaintsAlerts(pool, { branchId }) {
   }));
 }
 
+// فروقات تحويل بين الفروع/السنتر كيتشن لسه OPEN من غير قرار - نفس شرط WHERE اللي GET
+// /api/reports/transfer-discrepancies بيستخدمه (status/kitchen_transfers.to_branch_id)، بس من غير
+// تقييد بمدى تاريخي (التقرير الأصلي بيفلتر بـreported_at BETWEEN، فأي فرق قديم OPEN بيفوت من عرض
+// "آخر 7 أيام" مثلًا) - هنا القصد بالظبط هو "لسه مفتوح مهما كان قديم" مش "حصل في المدى ده"
+async function findStaleTransferDiscrepanciesAlerts(pool, { branchId }) {
+  const result = await pool.query(
+    `SELECT kt.to_branch_id AS branch_id, b.name AS branch_name, COUNT(*) AS stale_count
+     FROM transfer_discrepancies td
+     JOIN kitchen_transfers kt ON kt.id = td.kitchen_transfer_id
+     JOIN branches b ON b.id = kt.to_branch_id
+     WHERE td.status = 'OPEN'
+       AND td.reported_at < now() - ($2 || ' days')::interval
+       AND ($1::int IS NULL OR kt.to_branch_id = $1)
+     GROUP BY kt.to_branch_id, b.name`,
+    [branchId || null, STALE_TRANSFER_DISCREPANCY_DAYS]
+  );
+  return result.rows.map((r) => ({
+    type: "STALE_TRANSFER_DISCREPANCIES", severity: "MEDIUM", branchId: r.branch_id, branchName: r.branch_name,
+    description: `${r.stale_count} فرق تحويل فاضل مفتوح من غير قرار لأكتر من ${STALE_TRANSFER_DISCREPANCY_DAYS} يوم في ${r.branch_name}`,
+    link: "/satamoni-requisitions.html",
+  }));
+}
+
 const SEVERITY_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
 // المدى الافتراضي (لو مفيش from/to) آخر 7 أيام - المركز ده معمول يتفتح من غير إعدادات، مش تقرير
@@ -232,7 +258,7 @@ function defaultRange() {
 
 async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
   const range = from && to ? { from, to } : defaultRange();
-  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance, itemsMissingCost, overduePurchaseOrders, overdueSupplierInvoices, staleComplaints] = await Promise.all([
+  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance, itemsMissingCost, overduePurchaseOrders, overdueSupplierInvoices, staleComplaints, staleTransferDiscrepancies] = await Promise.all([
     findNegativeStockAlerts(pool, { branchId }),
     computeExceptions(pool, { branchId, from: range.from, to: range.to }),
     findProductionVarianceAlerts(pool, { branchId, from: range.from, to: range.to }),
@@ -242,6 +268,7 @@ async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
     findOverduePurchaseOrdersAlerts(pool, { branchId }),
     findOverdueSupplierInvoicesAlerts(pool, { branchId }),
     findStaleComplaintsAlerts(pool, { branchId }),
+    findStaleTransferDiscrepanciesAlerts(pool, { branchId }),
   ]);
 
   const paymentAlerts = paymentControl.exceptions.map((e) => ({
@@ -250,7 +277,7 @@ async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
     link: "/satamoni-payment-control.html",
   }));
 
-  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance, ...itemsMissingCost, ...overduePurchaseOrders, ...overdueSupplierInvoices, ...staleComplaints]
+  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance, ...itemsMissingCost, ...overduePurchaseOrders, ...overdueSupplierInvoices, ...staleComplaints, ...staleTransferDiscrepancies]
     .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 
   return {

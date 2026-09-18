@@ -252,6 +252,35 @@ test("شكوى عميل فاضلة مفتوحة من غير حل لأكتر من
   expect(afterResolve.body.alerts.find((a) => a.type === "STALE_COMPLAINTS" && a.branchId === branchId)).toBeUndefined();
 });
 
+test("فرق تحويل OPEN من غير قرار من 30 يوم - بيظهر كتنبيه MEDIUM حتى مع مدى طلب ضيق (النهاردة بس)، ويختفي بعد القرار", async () => {
+  const item = await pool.query("INSERT INTO inventory_items (name, unit, unit_cost) VALUES ('صنف-فرق-تحويل-جست', 'KG', 5) RETURNING id");
+  const transfer = await pool.query(
+    `INSERT INTO kitchen_transfers (from_branch_id, to_branch_id, business_date, amount_at_cost, status)
+     VALUES ($1,$2, CURRENT_DATE - INTERVAL '30 days', 100, 'completed') RETURNING id`,
+    [otherBranchId, branchId]
+  );
+  const discrepancy = await pool.query(
+    `INSERT INTO transfer_discrepancies (kitchen_transfer_id, inventory_item_id, discrepancy_type, quantity, status, reported_at)
+     VALUES ($1,$2,'SHORTAGE',3,'OPEN', now() - INTERVAL '30 days') RETURNING id`,
+    [transfer.rows[0].id, item.rows[0].id]
+  );
+
+  const today = new Date().toISOString().slice(0, 10);
+  const res = await request(app)
+    .get(`/api/reports/action-center?branchId=${branchId}&from=${today}&to=${today}`)
+    .set(authed(adminToken));
+  expect(res.status).toBe(200);
+  const staleAlert = res.body.alerts.find((a) => a.type === "STALE_TRANSFER_DISCREPANCIES" && a.branchId === branchId);
+  expect(staleAlert).toBeDefined();
+  expect(staleAlert.severity).toBe("MEDIUM");
+
+  await pool.query("UPDATE transfer_discrepancies SET status = 'RESOLVED' WHERE id = $1", [discrepancy.rows[0].id]);
+  const afterResolve = await request(app)
+    .get(`/api/reports/action-center?branchId=${branchId}&from=${today}&to=${today}`)
+    .set(authed(adminToken));
+  expect(afterResolve.body.alerts.find((a) => a.type === "STALE_TRANSFER_DISCREPANCIES" && a.branchId === branchId)).toBeUndefined();
+});
+
 test("مدى افتراضي (آخر 7 أيام) لو from/to مش مبعوتين - مفيش رفض 400", async () => {
   const res = await request(app).get("/api/reports/action-center").set(authed(adminToken));
   expect(res.status).toBe(200);
