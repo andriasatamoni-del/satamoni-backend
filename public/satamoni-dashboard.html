@@ -53,6 +53,19 @@
   .panel.wide { grid-column: 1 / -1; }
   .panel h3 { margin: 0 0 12px; font-size: 14px; color: var(--gold-bright); }
   .panel .empty { color: var(--faint); font-size: 12px; text-align: center; padding: 20px 0; }
+  /* مركز التنبيهات - أول حاجة المدير يشوفها بدل ما يفتح عشرات شاشات التقارير المستقلة كل يوم عشان
+     يلاقي نفس المعلومة اللي النظام أصلًا بيحسبها (مخزون سالب، استثناءات مدفوعات، فرق تصنيع/تكلفة، مصروف غريب) */
+  #alertsList { display: flex; flex-direction: column; gap: 8px; }
+  .alert-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 8px; border-right: 4px solid var(--line); background: var(--bg-alt); }
+  .alert-row.HIGH { border-right-color: var(--err); }
+  .alert-row.MEDIUM { border-right-color: var(--gold); }
+  .alert-row.LOW { border-right-color: var(--faint); }
+  .alert-row .badge { font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+  .alert-row.HIGH .badge { background: rgba(194,42,36,.15); color: var(--err); }
+  .alert-row.MEDIUM .badge { background: rgba(203,161,53,.2); color: var(--gold-bright); }
+  .alert-row.LOW .badge { background: rgba(110,100,89,.15); color: var(--faint); }
+  .alert-row .text { flex: 1; font-size: 13px; }
+  .alert-row .text .detail { color: var(--faint); font-size: 11px; margin-top: 2px; }
   /* المرحلة 8.15: العمليات الحية - أدمن/المالك بس، مقفولة (لا Presence جديد) على الشيفتات المفتوحة دلوقتي بس */
   #liveOpsWrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
   #liveOpsWrap th, #liveOpsWrap td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--line); }
@@ -125,6 +138,13 @@
   <div id="loadingState" style="display:none">...جاري التحميل</div>
 
   <div id="kpiRow"></div>
+
+  <!-- مركز التنبيهات - بيجمّع كل استثناء محسوب أصلًا في مكان تاني (مخزون سالب، استثناءات مدفوعات،
+       فرق تصنيع موثّق، مصروف تجاوز حده، فرق تكلفة طعام) في مكان واحد، آخر 7 أيام افتراضيًا -->
+  <div class="panel wide" id="alertsPanel">
+    <h3>🔔 مركز التنبيهات <span id="alertsCount" style="font-size:11px;color:var(--faint);font-weight:400"></span></h3>
+    <div id="alertsWrap"><div class="empty">...جاري التحميل</div></div>
+  </div>
 
   <!-- المرحلة 8.15: العمليات الحية - أدمن/المالك بس (مش مدير فرع/محاسب)، شيفتات مفتوحة دلوقتي عبر كل
        الفروع. "موظفين Online" اتشال عمدًا - النظام مفيش فيه أي تتبع حضور/Presence حقيقي (last_seen/
@@ -213,6 +233,11 @@ async function api(path, opts = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "حصل خطأ");
   return data;
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
 }
 
 document.getElementById("loginBtn").onclick = async () => {
@@ -331,7 +356,38 @@ async function boot() {
     } catch (e) { /* تجاهل - الفلتر هيفضل "كل الفروع" بس */ }
   }
   loadLiveOps();
+  loadAlerts();
   await loadDashboard();
+}
+
+const SEVERITY_LABEL = { HIGH: "عالي", MEDIUM: "متوسط", LOW: "منخفض" };
+
+// مركز التنبيهات - نفس فلتر الفرع بتاع باقي الداش بورد (عكس العمليات الحية اللي مقفولة على أدمن ومش
+// بتتأثر بالفلاتر عمدًا) - مدير الفرع أصلًا بيشوف تنبيهات فرعه بس من الباك إند نفسه
+async function loadAlerts() {
+  const wrap = document.getElementById("alertsWrap");
+  const branchId = document.getElementById("branchSelect").value;
+  try {
+    const qs = new URLSearchParams(branchId ? { branchId } : {});
+    const data = await api(`/api/reports/action-center?${qs.toString()}`);
+    document.getElementById("alertsCount").textContent =
+      data.alerts.length > 0 ? `(${data.alerts.length} تنبيه - آخر 7 أيام)` : "";
+    if (data.alerts.length === 0) {
+      wrap.innerHTML = `<div class="empty">مفيش أي تنبيه محتاج مراجعة دلوقتي 🎉</div>`;
+      return;
+    }
+    wrap.innerHTML = `<div id="alertsList">${data.alerts.map((a) => `
+      <div class="alert-row ${a.severity}">
+        <span class="badge">${SEVERITY_LABEL[a.severity] || a.severity}</span>
+        <div class="text">
+          ${esc(a.description)}
+          ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
+        </div>
+      </div>
+    `).join("")}</div>`;
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty" style="color:var(--err)">${esc(e.message)}</div>`;
+  }
 }
 
 // المرحلة 8.15: أدمن/المالك بس - الشيفتات المفتوحة دلوقتي عبر كل الفروع (GET /api/shifts/open-all،
@@ -363,7 +419,7 @@ async function loadLiveOps() {
     wrap.innerHTML = `<div class="empty" style="color:var(--err)">${e.message}</div>`;
   }
 }
-document.getElementById("refreshBtn").onclick = () => { loadDashboard(); loadLiveOps(); };
+document.getElementById("refreshBtn").onclick = () => { loadDashboard(); loadLiveOps(); loadAlerts(); };
 document.getElementById("dashClearRange").onclick = () => {
   document.getElementById("dashFrom").value = "";
   document.getElementById("dashTo").value = "";

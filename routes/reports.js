@@ -4,6 +4,7 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { computeConsumptionBreakdown, aggregateBreakdown } = require("../db/food-cost-engine");
+const { computeActionCenter } = require("../db/action-center");
 const { getCairoBusinessDate } = require("../db/business-date");
 const { convertQuantity } = require("../db/unit-conversion");
 const { computeProductionPlan, computeRawMaterialRequirement } = require("../db/production-planning");
@@ -1226,6 +1227,21 @@ router.get("/expiring-batches", requireAuth, canSeeReports, async (req, res) => 
       [days, branchId]
     );
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/action-center?branchId=&from=&to= - مركز تنبيهات واحد بيجمّع كل استثناء يستاهل
+// انتباه فوري (مخزون سالب، استثناءات مدفوعات، فرق تصنيع من غير سبب، مصروف متجاوز حده، فرق تكلفة طعام)
+// من غير من تكرار المنطق - راجع db/action-center.js. مدى افتراضي (آخر 7 أيام) لو from/to مش مبعوتين،
+// عكس باقي التقارير هنا اللي بترفض من غير مدى صريح - المركز ده معمول يتفتح يوميًا من غير إعدادات
+router.get("/action-center", requireAuth, canSeeReports, async (req, res) => {
+  let branchId = req.query.branchId ? Number(req.query.branchId) : null;
+  if (req.user.role === "branch_manager") branchId = req.user.branchId;
+  try {
+    const result = await computeActionCenter(pool, { branchId, from: req.query.from, to: req.query.to });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
