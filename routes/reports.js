@@ -5,6 +5,7 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { computeConsumptionBreakdown, aggregateBreakdown } = require("../db/food-cost-engine");
 const { computeActionCenter } = require("../db/action-center");
+const { computeBranchHealth } = require("../db/branch-health");
 const { getCairoBusinessDate } = require("../db/business-date");
 const { convertQuantity } = require("../db/unit-conversion");
 const { computeProductionPlan, computeRawMaterialRequirement } = require("../db/production-planning");
@@ -1263,6 +1264,22 @@ router.get("/negative-stock", requireAuth, canSeeReports, async (req, res) => {
       [branchId]
     );
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/branch-health?from=&to= - بطاقة مقارنة كل الفروع جنب بعض (إيراد/فرق كاش/مخزون سالب/
+// شكاوى مفتوحة/تأخير موظفين/نسبة تكلفة طعام) - نفس منطق inventory-comparison تحت: أدمن/محاسب بس، مش
+// مدير فرع (مقارنة بين فروع مالهاش معنى لمدير فرع واحد أصلًا). مدى افتراضي آخر 7 أيام زي action-center
+router.get("/branch-health", requireAuth, requireRole("admin", "accountant"), async (req, res) => {
+  const range = resolveDateRange(req.query) || {
+    from: getCairoBusinessDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)),
+    to: getCairoBusinessDate(),
+  };
+  try {
+    const result = await computeBranchHealth(pool, { from: range.from, to: range.to });
+    res.json({ from: range.from, to: range.to, branches: result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

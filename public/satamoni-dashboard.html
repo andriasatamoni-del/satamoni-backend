@@ -70,6 +70,11 @@
   #liveOpsWrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
   #liveOpsWrap th, #liveOpsWrap td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--line); }
   #liveOpsWrap th { color: var(--faint); font-weight: 600; }
+  /* بطاقة صحة الفروع - أدمن/محاسب بس (مقارنة بين فروع، زي inventory-comparison في الباك إند بالظبط) */
+  #branchHealthWrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #branchHealthWrap th, #branchHealthWrap td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  #branchHealthWrap th { color: var(--faint); font-weight: 600; }
+  #branchHealthWrap td.warn { color: var(--err); font-weight: 700; }
   #liveOpsNote { font-size: 11px; color: var(--faint); margin-bottom: 10px; }
 
   /* Bar chart (horizontal) */
@@ -144,6 +149,13 @@
   <div class="panel wide" id="alertsPanel">
     <h3>🔔 مركز التنبيهات <span id="alertsCount" style="font-size:11px;color:var(--faint);font-weight:400"></span></h3>
     <div id="alertsWrap"><div class="empty">...جاري التحميل</div></div>
+  </div>
+
+  <!-- بطاقة صحة الفروع - أدمن/محاسب بس (مقارنة بين فروع، نفس قيد inventory-comparison في الباك إند) -
+       مدير فرع بيشوف فرعه بالفعل في كل مكان تاني، مقارنة بين فروع مالهاش معنى ليه -->
+  <div class="panel wide" id="branchHealthPanel" style="display:none">
+    <h3>🏢 صحة الفروع (آخر 7 أيام افتراضيًا - أو نفس المدى المخصص فوق)</h3>
+    <div id="branchHealthWrap"><div class="empty">...جاري التحميل</div></div>
   </div>
 
   <!-- المرحلة 8.15: العمليات الحية - أدمن/المالك بس (مش مدير فرع/محاسب)، شيفتات مفتوحة دلوقتي عبر كل
@@ -357,7 +369,49 @@ async function boot() {
   }
   loadLiveOps();
   loadAlerts();
+  loadBranchHealth();
   await loadDashboard();
+}
+
+// بطاقة صحة الفروع - أدمن/محاسب بس (نفس قيد GET /api/reports/branch-health في الباك إند) - بتاخد نفس
+// مدى الفترة المختار فوق (from/to أو year/month) لو موجود، عشان تفضل متسقة مع باقي أرقام الداش بورد
+async function loadBranchHealth() {
+  if (!["admin", "accountant"].includes(auth.user.role)) return;
+  document.getElementById("branchHealthPanel").style.display = "block";
+  const wrap = document.getElementById("branchHealthWrap");
+  try {
+    const from = document.getElementById("dashFrom").value;
+    const to = document.getElementById("dashTo").value;
+    const qs = new URLSearchParams(from && to ? { from, to } : {});
+    const data = await api(`/api/reports/branch-health?${qs.toString()}`);
+    if (data.branches.length === 0) { wrap.innerHTML = `<div class="empty">مفيش فروع</div>`; return; }
+    wrap.innerHTML = `
+      <table>
+        <thead><tr>
+          <th>الفرع</th><th>الإيراد</th><th>عدد الطلبات</th><th>متوسط الطلب</th>
+          <th>نسبة تكلفة الطعام</th><th>فرق الكاش</th><th>شيفتات محتاجة مراجعة</th>
+          <th>مخزون سالب</th><th>شكاوى مفتوحة</th><th>أيام تأخير موظفين</th>
+        </tr></thead>
+        <tbody>
+          ${data.branches.map((b) => `
+            <tr>
+              <td>${esc(b.branchName)}</td>
+              <td>${money(b.revenue)}</td>
+              <td>${b.ordersCount}</td>
+              <td>${money(b.avgOrderValue)}</td>
+              <td>${b.foodCostPercent != null ? b.foodCostPercent.toFixed(1) + "%" : "—"}</td>
+              <td class="${b.cashVariance < 0 ? "warn" : ""}">${money(b.cashVariance)}</td>
+              <td class="${b.shiftsPendingReview > 0 ? "warn" : ""}">${b.shiftsPendingReview}</td>
+              <td class="${b.negativeStockItems > 0 ? "warn" : ""}">${b.negativeStockItems}</td>
+              <td class="${b.openComplaints > 0 ? "warn" : ""}">${b.openComplaints}</td>
+              <td class="${b.lateDaysCount > 0 ? "warn" : ""}">${b.lateDaysCount}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty" style="color:var(--err)">${esc(e.message)}</div>`;
+  }
 }
 
 const SEVERITY_LABEL = { HIGH: "عالي", MEDIUM: "متوسط", LOW: "منخفض" };
@@ -419,7 +473,7 @@ async function loadLiveOps() {
     wrap.innerHTML = `<div class="empty" style="color:var(--err)">${e.message}</div>`;
   }
 }
-document.getElementById("refreshBtn").onclick = () => { loadDashboard(); loadLiveOps(); loadAlerts(); };
+document.getElementById("refreshBtn").onclick = () => { loadDashboard(); loadLiveOps(); loadAlerts(); loadBranchHealth(); };
 document.getElementById("dashClearRange").onclick = () => {
   document.getElementById("dashFrom").value = "";
   document.getElementById("dashTo").value = "";
