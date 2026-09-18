@@ -45,9 +45,11 @@ test.describe("8.6-POS: السلة واضحة - إجمالي السطر بارز
   test("إضافة صنف - إجمالي السطر ظاهر، وزرار الشيل بيشيله فعليًا", async ({ page }) => {
     await login(page, "/satamoni-pos.html", "pw-cashier86@test.local");
     await page.waitForSelector(".item-card", { timeout: 10000 });
-    // صنف "بطاطس" بدون مرفقات/مقاسات - بيتضاف للسلة مباشرة من غير مودال اختيار (عكس البيتزا اللي
-    // ليها مرفق "إضافة جبنة" فبتفتح مودال اختيار الأول)
+    // المرحلة 8.10: المودال بقى بيفتح لكل صنف عادي (مش بس لو فيه أكتر من حجم أو مرفقات) عشان الكاشير
+    // يقدر يضيف ملاحظة/استبعاد وقت الطلب - لازم نأكّد الإضافة من المودال مش نتوقع إضافة مباشرة للسلة
     await page.locator(".item-card", { hasText: "بطاطس" }).click();
+    await expect(page.locator("#itemModalOverlay")).toHaveClass(/show/);
+    await page.click("#itemModalAdd");
     await expect(page.locator(".cart-row")).toHaveCount(1, { timeout: 5000 });
     await expect(page.locator(".cart-row .line-total")).toBeVisible();
     const lineTotalText = await page.locator(".cart-row .line-total").textContent();
