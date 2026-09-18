@@ -382,6 +382,12 @@ CREATE INDEX idx_orders_kitchen_status ON orders(branch_id, kitchen_status) WHER
 -- created_at المباشرة (زي GET /api/orders) والفلترة بـbranch_id
 CREATE INDEX idx_orders_branch_created_at ON orders (branch_id, created_at);
 CREATE INDEX idx_orders_created_at ON orders (created_at);
+-- تحسينات الإنتاج (PHASE 4: External Channel Reconciliation): talabat_order_id مكتوب يدوي من الكاشير
+-- (مش FK ولا مقيّد بصيغة) وكان مفيش حماية من تسجيل نفس أوردر طلبات الحقيقي مرتين بالغلط. فريد جزئي بين
+-- الطلبات الحيّة (مش الملغاة) بس - طلب اتلغى وأعيد تسجيله بنفس الرقم (تصحيح غلطة) لسه مسموح عمدًا.
+-- راجع db/migrations/0048_talabat_order_id_uniqueness.js لتطبيقها على قواعد بيانات موجودة بالفعل
+CREATE UNIQUE INDEX idx_orders_talabat_order_id_live
+  ON orders(talabat_order_id) WHERE source = 'talabat' AND talabat_order_id IS NOT NULL AND talabat_order_id <> '' AND voided = FALSE;
 
 -- سجل كل تغيير في حالة الطلب (بديل "نقدر نرجع لكل سجل الأوردرات")
 CREATE TABLE order_status_log (

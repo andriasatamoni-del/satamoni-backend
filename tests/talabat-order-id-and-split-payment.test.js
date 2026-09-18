@@ -68,6 +68,24 @@ describe("رقم أوردر طلبات (talabatOrderId)", () => {
     const row = await pool.query("SELECT talabat_order_id FROM orders WHERE id=$1", [res.body.orderId]);
     expect(row.rows[0].talabat_order_id).toBeNull();
   });
+
+  // PHASE 4 (External Channel Reconciliation): كان مفيش أي حماية تمنع تسجيل نفس أوردر طلبات الحقيقي
+  // مرتين بالغلط (نفس فئة duplicate invoice number اللي supplier_invoices فيها حماية مماثلة بالفعل)
+  test("نفس الرقم تاني على طلب لسه حيّ - 409 مرفوض", async () => {
+    const first = await createTalabatOrder({ talabatOrderId: "TLB-DUP-1" });
+    expect(first.status).toBe(201);
+    const second = await createTalabatOrder({ talabatOrderId: "TLB-DUP-1" });
+    expect(second.status).toBe(409);
+    expect(second.body.code).toBe("DUPLICATE_TALABAT_ORDER_ID");
+  });
+
+  test("نفس الرقم مسموح تاني بعد ما الطلب الأول اتلغى (void) - تصحيح غلطة إدخال مقصود", async () => {
+    const first = await createTalabatOrder({ talabatOrderId: "TLB-DUP-2" });
+    expect(first.status).toBe(201);
+    await pool.query("UPDATE orders SET voided = TRUE WHERE id = $1", [first.body.orderId]);
+    const second = await createTalabatOrder({ talabatOrderId: "TLB-DUP-2" });
+    expect(second.status).toBe(201);
+  });
 });
 
 describe("تقسيم دفع أوردر طلبات (جزء نقدي + الباقي على 1350)", () => {
