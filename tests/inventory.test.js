@@ -351,6 +351,25 @@ describe("Waste / Adjustment / Reconciliation / Unauthorized actions", () => {
     expect(res.body.reason).toBe("DAMAGED");
   });
 
+  // تحسينات الإنتاج (محاسبة حقيقية على الهالك - PHASE 6/10): wasteReason كان اختياري تمامًا وبيترك
+  // فاضي بيتسجل "UNKNOWN" بصمت من غير ما حد يختارها بوعي - دلوقتي فئة إجبارية (UNKNOWN لسه فئة صالحة
+  // لو مختارة بوعي، بس مش افتراضي صامت)
+  test("Waste: بدون فئة سبب - 400 (مش مسموح تسجيل هالك من غير فئة واعية)", async () => {
+    const res = await request(app)
+      .post("/api/inventory/waste")
+      .set(authed(kitchenManagerToken))
+      .send({ branchId: kitchenId, inventoryItemId: flourId, quantity: 2, reason: "وقع" });
+    expect(res.status).toBe(400);
+  });
+
+  test("Waste: فئة سبب غير معروفة (مش في القايمة المقنّنة) - 400", async () => {
+    const res = await request(app)
+      .post("/api/inventory/waste")
+      .set(authed(kitchenManagerToken))
+      .send({ branchId: kitchenId, inventoryItemId: flourId, quantity: 2, wasteReason: "NOT_A_REAL_REASON" });
+    expect(res.status).toBe(400);
+  });
+
   test("Adjustment: كاشير ممنوع، مدير فرع مسموح", async () => {
     const denied = await request(app)
       .post("/api/inventory/stock/adjust")

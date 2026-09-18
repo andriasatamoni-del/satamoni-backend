@@ -394,8 +394,11 @@ router.post("/waste", requireAuth, stockManagers, async (req, res) => {
   if (!branchId || !inventoryItemId || !quantity || quantity <= 0) {
     return res.status(400).json({ error: "بيانات ناقصة أو الكمية لازم تكون أكبر من صفر" });
   }
-  if (wasteReason !== undefined && wasteReason !== null && !WASTE_REASONS.includes(wasteReason)) {
-    return res.status(400).json({ error: "سبب الهالك غير معروف" });
+  // تحسينات الإنتاج (PHASE 6/10 - محاسبة الموظف على الهالك): wasteReason كان اختياري تمامًا وبيترك
+  // فاضي بيتسجل "UNKNOWN" بصمت (UNKNOWN فئة صريحة صالحة زي أي فئة تانية - الفرق إن محدش كان مجبر
+  // يختارها بوعي). هالك من غير أي فئة مسجّلة معناه مفيش أثر حقيقي لمراجعة لاحقة لو الأرقام مش مطابقة
+  if (!wasteReason || !WASTE_REASONS.includes(wasteReason)) {
+    return res.status(400).json({ error: "لازم تحدد فئة سبب الهالك (اختر 'سبب غير معروف' لو مش متأكد، بس لازم اختيار واعي)" });
   }
   if (!assertOwnBranch(req.user, branchId)) {
     return res.status(403).json({ error: "معندكش صلاحية تسجل هالك على فرع تاني" });

@@ -982,7 +982,7 @@ router.get("/waste", requireAuth, canSeeReports, async (req, res) => {
       ),
       pool.query(
         `SELECT im.id, im.branch_id, b.name AS branch_name, ii.name AS item_name, ii.unit,
-                -im.quantity AS quantity, im.business_date, im.notes, u.name AS recorded_by
+                -im.quantity AS quantity, im.business_date, im.reason, im.notes, u.name AS recorded_by
          FROM inventory_movements im
          JOIN inventory_items ii ON ii.id = im.inventory_item_id
          LEFT JOIN branches b ON b.id = im.branch_id
@@ -1003,7 +1003,7 @@ router.get("/waste", requireAuth, canSeeReports, async (req, res) => {
       })),
       entries: entries.rows.map((r) => ({
         id: r.id, branchId: r.branch_id, branchName: r.branch_name, itemName: r.item_name, unit: r.unit,
-        quantity: Number(r.quantity), businessDate: r.business_date, notes: r.notes, recordedBy: r.recorded_by,
+        quantity: Number(r.quantity), businessDate: r.business_date, wasteReason: r.reason, notes: r.notes, recordedBy: r.recorded_by,
       })),
     });
   } catch (err) {

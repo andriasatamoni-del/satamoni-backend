@@ -265,7 +265,11 @@
         <input id="wasteQty" type="number" placeholder="الكمية" />
         <input id="wasteDate" type="date" />
       </div>
-      <div class="row"><input id="wasteReason" placeholder="السبب (اختياري)" /><button id="wasteSubmit">تسجيل الهالك</button></div>
+      <div class="row">
+        <select id="wasteReasonSelect"></select>
+        <input id="wasteReason" placeholder="تفاصيل إضافية (اختياري)" />
+        <button id="wasteSubmit">تسجيل الهالك</button>
+      </div>
       <div class="err" id="wasteErr"></div>
       <div class="ok" id="wasteOk"></div>
     </div>
@@ -275,7 +279,8 @@
       <div class="row">
         <input id="bulkWasteSearch" placeholder="بحث عن صنف..." />
         <input id="bulkWasteDate" type="date" />
-        <input id="bulkWasteReason" placeholder="السبب المشترك (اختياري)" />
+        <select id="bulkWasteReasonSelect"></select>
+        <input id="bulkWasteReason" placeholder="تفاصيل إضافية (اختياري)" />
       </div>
       <table>
         <thead><tr><th></th><th>الصنف</th><th>الوحدة</th><th>الكمية</th></tr></thead>
@@ -287,7 +292,7 @@
     </div>
 
     <h1>آخر عمليات الهالك المسجّلة</h1>
-    <table><thead><tr><th>التاريخ</th><th>الصنف</th><th>الكمية</th><th>السبب</th><th>سجّله</th></tr></thead><tbody id="wasteBody"></tbody></table>
+    <table><thead><tr><th>التاريخ</th><th>الصنف</th><th>الكمية</th><th>الفئة</th><th>تفاصيل</th><th>سجّله</th></tr></thead><tbody id="wasteBody"></tbody></table>
   </div>
 </div>
 
@@ -298,6 +303,18 @@
 <script>
 const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
 const allowedRoles = ["admin", "branch_manager", "cashier"];
+
+// نفس WASTE_REASONS في routes/inventory.js بالظبط - فئة مقنّنة إجبارية لكل هالك (تحسينات الإنتاج:
+// محاسبة حقيقية على الهالك، مش نص حر اختياري ممكن يتسيب فاضي)
+const WASTE_REASON_LABELS = {
+  EXPIRED: "منتهي الصلاحية", DAMAGED: "تالف", BURNED: "محروق", PREPARATION_WASTE: "هالك تحضير",
+  OVERPRODUCTION: "إنتاج زيادة عن اللزوم", QUALITY_ISSUE: "مشكلة جودة", CUSTOMER_RETURN: "إرجاع عميل",
+  UNKNOWN: "سبب غير معروف",
+};
+function wasteReasonOptions() {
+  return `<option value="">اختر فئة السبب...</option>` +
+    Object.entries(WASTE_REASON_LABELS).map(([k, label]) => `<option value="${k}">${label}</option>`).join("");
+}
 
 const auth = {
   token: sessionStorage.getItem("satamoni_token") || null,
@@ -450,6 +467,8 @@ async function boot() {
   if (auth.user.role === "admin" || auth.user.role === "branch_manager") {
     document.querySelector('[data-tab="waste"]').style.display = "block";
     document.getElementById("wasteItem").innerHTML = itemOptions();
+    document.getElementById("wasteReasonSelect").innerHTML = wasteReasonOptions();
+    document.getElementById("bulkWasteReasonSelect").innerHTML = wasteReasonOptions();
     document.getElementById("wasteDate").value = new Date().toISOString().slice(0, 10);
     document.getElementById("bulkWasteDate").value = new Date().toISOString().slice(0, 10);
     renderBulkWasteTable();
@@ -970,11 +989,13 @@ document.getElementById("bulkWasteSearch").addEventListener("input", renderBulkW
 document.getElementById("bulkWasteSubmit").onclick = async () => {
   const branchId = currentBranchId();
   const businessDate = document.getElementById("bulkWasteDate").value;
+  const wasteReason = document.getElementById("bulkWasteReasonSelect").value;
   const reason = document.getElementById("bulkWasteReason").value.trim();
   const errBox = document.getElementById("bulkWasteErr");
   const okBox = document.getElementById("bulkWasteOk");
   errBox.textContent = ""; okBox.textContent = "";
   if (!branchId) { errBox.textContent = "لازم تحدد الفرع"; return; }
+  if (!wasteReason) { errBox.textContent = "لازم تختار فئة سبب الهالك المشترك"; return; }
 
   const selected = Array.from(document.querySelectorAll("[data-bulkwastecheck]:checked")).map((cb) => ({
     inventoryItemId: cb.dataset.bulkwastecheck,
@@ -991,7 +1012,7 @@ document.getElementById("bulkWasteSubmit").onclick = async () => {
     try {
       await api("/api/inventory/waste", {
         method: "POST",
-        body: JSON.stringify({ branchId, inventoryItemId: item.inventoryItemId, quantity: item.quantity, reason: reason || null, businessDate }),
+        body: JSON.stringify({ branchId, inventoryItemId: item.inventoryItemId, quantity: item.quantity, wasteReason, reason: reason || null, businessDate }),
       });
       succeeded++;
     } catch (e) {
@@ -1018,28 +1039,31 @@ async function loadWasteEntries() {
   try {
     const data = await api(`/api/reports/waste?from=${from}&to=${to}&branchId=${branchId}`);
     body.innerHTML = data.entries.map(e => `
-      <tr><td>${String(e.businessDate).slice(0, 10)}</td><td>${e.itemName}</td><td>${Number(e.quantity)} ${e.unit}</td><td>${e.notes || "—"}</td><td>${e.recordedBy || "—"}</td></tr>
-    `).join("") || `<tr><td colspan="5">مفيش هالك مسجّل الشهر ده</td></tr>`;
-  } catch (e) { body.innerHTML = `<tr><td colspan="5">${apiErrorMessage(e)}</td></tr>`; }
+      <tr><td>${String(e.businessDate).slice(0, 10)}</td><td>${e.itemName}</td><td>${Number(e.quantity)} ${e.unit}</td><td>${WASTE_REASON_LABELS[e.wasteReason] || e.wasteReason || "—"}</td><td>${e.notes || "—"}</td><td>${e.recordedBy || "—"}</td></tr>
+    `).join("") || `<tr><td colspan="6">مفيش هالك مسجّل الشهر ده</td></tr>`;
+  } catch (e) { body.innerHTML = `<tr><td colspan="6">${apiErrorMessage(e)}</td></tr>`; }
 }
 document.getElementById("wasteSubmit").onclick = async () => {
   const branchId = currentBranchId();
   const inventoryItemId = document.getElementById("wasteItem").value;
   const quantity = Number(document.getElementById("wasteQty").value);
   const businessDate = document.getElementById("wasteDate").value;
+  const wasteReason = document.getElementById("wasteReasonSelect").value;
   const reason = document.getElementById("wasteReason").value.trim();
   const errBox = document.getElementById("wasteErr");
   const okBox = document.getElementById("wasteOk");
   errBox.textContent = ""; okBox.textContent = "";
   if (!branchId) { errBox.textContent = "لازم تحدد الفرع"; return; }
   if (!inventoryItemId || !quantity || quantity <= 0) { errBox.textContent = "لازم تختار صنف وتدخل كمية أكبر من صفر"; return; }
+  if (!wasteReason) { errBox.textContent = "لازم تختار فئة سبب الهالك"; return; }
   try {
     await api("/api/inventory/waste", {
       method: "POST",
-      body: JSON.stringify({ branchId, inventoryItemId, quantity, reason: reason || null, businessDate }),
+      body: JSON.stringify({ branchId, inventoryItemId, quantity, wasteReason, reason: reason || null, businessDate }),
     });
     okBox.textContent = "اتسجّل";
     document.getElementById("wasteQty").value = "";
+    document.getElementById("wasteReasonSelect").value = "";
     document.getElementById("wasteReason").value = "";
     await loadWasteEntries();
   } catch (e) { errBox.textContent = apiErrorMessage(e); }
