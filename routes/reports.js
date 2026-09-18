@@ -2019,6 +2019,25 @@ function foldProfitAndLoss(rows) {
   };
 }
 
+// تحكم مالي حقيقي، مش مجرد تنبيه: كل تقرير ربحية هنا (P&L/gross-profit/net-operating-profit) بيبني
+// الـCOGS بتاعه من قيود البيع المرحّلة، اللي cost_at_sale بتاعها ممكن يكون incomplete (صنف من غير
+// unit_cost - راجع ITEMS_MISSING_COST في db/action-center.js) - ساعتها الـCOGS المرحّل نفسه أقل من
+// الحقيقي، والقيد لسه متزن (مفيش خطأ محاسبي)، بس الرقم اللي المدير بيشوفه (هامش ربح إجمالي/تشغيلي)
+// بيبان دقيق وهو مش كده. من غير العلم ده، محدش هيعرف يشكك في رقم ربح غلط. بيرجع IDs الفروع اللي فيها
+// COGS incomplete في المدى ده (مش true/false واحد بس) عشان branch-profit-and-loss يقدر يعلّم كل فرع لوحده
+async function fetchCogsIncompleteBranchIds({ from, to }) {
+  const result = await pool.query(
+    `SELECT DISTINCT je.branch_id
+     FROM journal_entries je
+     JOIN order_items oi ON oi.order_id = je.source_id
+     WHERE je.source_type = 'order_sale' AND je.status <> 'DRAFT'
+       AND je.entry_date BETWEEN $1 AND $2
+       AND oi.cost_at_sale_incomplete = TRUE`,
+    [from, to]
+  );
+  return new Set(result.rows.map((r) => r.branch_id));
+}
+
 // FIFO aging: بياخد كل سطور حساب مورد معيّن (دائن = فاتورة/GRN زوّدت المديونية، مدين = سداد قلّلها) مرتبة
 // بالتاريخ، وبيطفي كل سداد على أقدم فاتورة لسه فيها رصيد - زي ما بيحصل فعليًا مع أغلب الموردين (مفيش ربط
 // فاتورة بسداد بعينه في النظام الحالي - المورد بياخد سداد إجمالي مش لسداد GRN معيّن)
@@ -2325,7 +2344,9 @@ router.get("/profit-and-loss", requireAuth, canSeeAccounting, async (req, res) =
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
   try {
     const rows = await fetchPostedLines({ from: range.from, to: range.to, branchId });
-    res.json({ from: range.from, to: range.to, branchId, ...foldProfitAndLoss(rows) });
+    const incompleteBranchIds = await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to });
+    const cogsIncomplete = branchId ? incompleteBranchIds.has(branchId) : incompleteBranchIds.size > 0;
+    res.json({ from: range.from, to: range.to, branchId, ...foldProfitAndLoss(rows), cogsIncomplete });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2343,14 +2364,19 @@ router.get("/branch-profit-and-loss", requireAuth, requireRole("admin", "account
     const branchesRes = await pool.query("SELECT id, name FROM branches");
     const names = {};
     branchesRes.rows.forEach((b) => { names[b.id] = b.name; });
+    const incompleteBranchIds = await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to });
 
     const branches = Object.entries(byBranch).map(([key, branchRows]) => ({
       branchId: key === "unassigned" ? null : Number(key),
       branchName: key === "unassigned" ? "غير محدد" : (names[key] || `فرع ${key}`),
       ...foldProfitAndLoss(branchRows),
+      cogsIncomplete: key !== "unassigned" && incompleteBranchIds.has(Number(key)),
     })).sort((a, b) => b.netSales - a.netSales);
 
-    res.json({ from: range.from, to: range.to, branches, consolidated: foldProfitAndLoss(rows) });
+    res.json({
+      from: range.from, to: range.to, branches,
+      consolidated: { ...foldProfitAndLoss(rows), cogsIncomplete: incompleteBranchIds.size > 0 },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2369,6 +2395,8 @@ function makeByBranchMetricReport(metricKey) {
       const branchesRes = await pool.query("SELECT id, name FROM branches");
       const names = {};
       branchesRes.rows.forEach((b) => { names[b.id] = b.name; });
+      const incompleteBranchIds = metricKey === "cogs"
+        ? await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to }) : null;
 
       const branches = Object.entries(byBranch).map(([key, branchRows]) => {
         const pl = foldProfitAndLoss(branchRows);
@@ -2377,6 +2405,7 @@ function makeByBranchMetricReport(metricKey) {
           branchName: key === "unassigned" ? "غير محدد" : (names[key] || `فرع ${key}`),
           [metricKey]: pl[metricKey],
           ...(metricKey === "opex" ? { opexLines: pl.opexLines } : {}),
+          ...(incompleteBranchIds ? { cogsIncomplete: key !== "unassigned" && incompleteBranchIds.has(Number(key)) } : {}),
         };
       }).sort((a, b) => b[metricKey] - a[metricKey]);
 
@@ -2889,9 +2918,11 @@ router.get("/gross-profit", requireAuth, canSeeAccounting, async (req, res) => {
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
   try {
     const pl = foldProfitAndLoss(await fetchPostedLines({ from: range.from, to: range.to, branchId }));
+    const incompleteBranchIds = await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to });
     res.json({
       from: range.from, to: range.to, branchId,
       netSales: pl.netSales, cogs: pl.cogs, grossProfit: pl.grossProfit, grossMarginPercent: pl.grossMarginPercent,
+      cogsIncomplete: branchId ? incompleteBranchIds.has(branchId) : incompleteBranchIds.size > 0,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2905,10 +2936,12 @@ router.get("/net-operating-profit", requireAuth, canSeeAccounting, async (req, r
   const branchId = scopeBranchId(req, req.query.branchId ? Number(req.query.branchId) : null);
   try {
     const pl = foldProfitAndLoss(await fetchPostedLines({ from: range.from, to: range.to, branchId }));
+    const incompleteBranchIds = await fetchCogsIncompleteBranchIds({ from: range.from, to: range.to });
     res.json({
       from: range.from, to: range.to, branchId,
       grossProfit: pl.grossProfit, opex: pl.opex, operatingProfit: pl.operatingProfit,
       operatingMarginPercent: pl.operatingMarginPercent,
+      cogsIncomplete: branchId ? incompleteBranchIds.has(branchId) : incompleteBranchIds.size > 0,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

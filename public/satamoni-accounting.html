@@ -526,6 +526,9 @@
       </div>
       <div class="err" id="plErr"></div>
     </div>
+    <div id="plCogsIncompleteWarn" style="display:none;background:rgba(230,180,40,.15);border:1px solid #e6b428;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:13px">
+      ⚠ في المدى ده أصناف اتباعت من غير تكلفة وحدة مسجّلة (راجع تنبيه "أصناف بدون تكلفة" في مركز التنبيهات) - تكلفة البضاعة المباعة والأرباح هنا أقل من الحقيقي فعليًا، مش دقيقة 100%.
+    </div>
     <table style="margin-bottom:20px">
       <tbody>
         <tr><td>صافي المبيعات</td><td id="plNetSales" style="text-align:left"></td></tr>
@@ -1995,6 +1998,7 @@ async function loadLedgerPL() {
     document.getElementById("plCogs").textContent = money(data.cogs);
     document.getElementById("plGrossProfit").innerHTML = `<b>${money(data.grossProfit)}</b>`;
     document.getElementById("plGrossMargin").textContent = pct(data.grossMarginPercent);
+    document.getElementById("plCogsIncompleteWarn").style.display = data.cogsIncomplete ? "block" : "none";
     document.getElementById("plOpexBody").innerHTML = data.opexLines.map(l => `<tr><td>${l.name}</td><td>${money(l.amount)}</td></tr>`).join("") || `<tr><td colspan="2">مفيش مصروفات مرحّلة في المدى ده</td></tr>`;
     document.getElementById("plOpex").textContent = money(data.opex);
     document.getElementById("plOperatingProfit").innerHTML = `<b class="${data.operatingProfit < 0 ? "diffneg" : "diffpos"}">${money(data.operatingProfit)}</b>`;
@@ -2005,7 +2009,7 @@ async function loadLedgerPL() {
       const rows = [...cmp.branches, { branchName: "الإجمالي المجمّع", ...cmp.consolidated }];
       document.getElementById("plBranchCompareBody").innerHTML = rows.map(r => `
         <tr>
-          <td>${r.branchName}</td><td>${money(r.netSales)}</td><td>${money(r.cogs)}</td><td>${money(r.grossProfit)}</td>
+          <td>${r.branchName}${r.cogsIncomplete ? " ⚠" : ""}</td><td>${money(r.netSales)}</td><td>${money(r.cogs)}</td><td>${money(r.grossProfit)}</td>
           <td>${money(r.opex)}</td><td class="${r.operatingProfit < 0 ? "diffneg" : "diffpos"}">${money(r.operatingProfit)}</td>
         </tr>
       `).join("");
