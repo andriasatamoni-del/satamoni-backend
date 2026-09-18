@@ -17,6 +17,7 @@ describe("customer-auth", () => {
   afterAll(async () => {
     await pool.query("DELETE FROM customers WHERE phone LIKE '0101112%'");
     await pool.query("UPDATE pos_settings SET loyalty_points_per_egp = $1 WHERE id = 1", [originalLoyaltyRate]);
+    await pool.end();
   });
 
   test("register creates a real account and returns a usable token", async () => {
