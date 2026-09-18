@@ -265,6 +265,13 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || "حصل خطأ");
   return data;
 }
+// اسم/تليفون/عنوان العميل بيتحكم فيه هو نفسه (طلب الموقع/واتساب) وبيترندر هنا كـinnerHTML - لازم
+// escaping قبل الحقن عشان محدش يقدر يعمل stored XSS بمجرد ما يسجل طلب/عنوان فيه HTML
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 
 document.getElementById("loginBtn").onclick = async () => {
   const email = document.getElementById("loginEmail").value.trim();
@@ -322,8 +329,8 @@ async function loadDirectory(q) {
     const qs = q ? `?q=${encodeURIComponent(q)}` : "";
     const customers = await api(`/api/customers${qs}`);
     body.innerHTML = customers.map(c => `
-      <tr class="clickable" data-phone="${c.phone}">
-        <td>${c.name || "بدون اسم"}${(c.isBlocked ?? c.is_blocked) ? ' <span class="pill" style="background:var(--red);color:#fff">محظور</span>' : ""}</td><td>${c.phone}</td>
+      <tr class="clickable" data-phone="${esc(c.phone)}">
+        <td>${esc(c.name) || "بدون اسم"}${(c.isBlocked ?? c.is_blocked) ? ' <span class="pill" style="background:var(--red);color:#fff">محظور</span>' : ""}</td><td>${esc(c.phone)}</td>
         <td>${c.ordersCount ?? c.orders_count ?? 0}</td>
         <td>${money(c.totalSpent ?? c.total_spent)}</td>
         <td><span class="pill">${c.loyaltyPoints ?? c.loyalty_points ?? 0}</span></td>
@@ -430,8 +437,8 @@ async function loadAddressBook(phone) {
     const addrs = await api(`/api/customers/${encodeURIComponent(phone)}/addresses`);
     box.innerHTML = addrs.map(a => `
       <div class="field" style="border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:6px">
-        <div><b>${a.label || "بدون مسمى"}</b>${a.isDefault ? ' <span class="pill">افتراضي</span>' : ""}</div>
-        <div style="font-size:12px;color:var(--faint)">${a.addressDetails}${a.deliveryAreaName ? " — " + a.deliveryAreaName : ""}${a.distinguishingMark ? " — " + a.distinguishingMark : ""}</div>
+        <div><b>${esc(a.label) || "بدون مسمى"}</b>${a.isDefault ? ' <span class="pill">افتراضي</span>' : ""}</div>
+        <div style="font-size:12px;color:var(--faint)">${esc(a.addressDetails)}${a.deliveryAreaName ? " — " + esc(a.deliveryAreaName) : ""}${a.distinguishingMark ? " — " + esc(a.distinguishingMark) : ""}</div>
         <div style="display:flex;gap:6px;margin-top:6px">
           ${a.isDefault ? "" : `<button type="button" data-setdefault="${a.id}">اجعله افتراضي</button>`}
           <button type="button" data-deladdr="${a.id}">حذف</button>
@@ -514,8 +521,8 @@ async function loadDormant() {
   try {
     const data = await api(`/api/customers/dormant?days=${days}`);
     body.innerHTML = data.customers.map(c => `
-      <tr class="clickable" data-phone="${c.phone}">
-        <td>${c.name || "بدون اسم"}</td><td>${c.phone}</td>
+      <tr class="clickable" data-phone="${esc(c.phone)}">
+        <td>${esc(c.name) || "بدون اسم"}</td><td>${esc(c.phone)}</td>
         <td>${c.daysSinceLastOrder} يوم (${dt(c.lastOrderAt)})</td>
         <td>${c.ordersCount}</td><td>${money(c.totalSpent)}</td>
         <td><span class="pill">${c.loyaltyPoints}</span></td>

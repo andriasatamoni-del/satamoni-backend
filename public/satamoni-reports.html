@@ -416,6 +416,13 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || "حصل خطأ");
   return data;
 }
+// اسم/تليفون العميل وملاحظات الطلبات بيتحكم فيها العميل نفسه (طلب الموقع/واتساب) وبتترندر هنا
+// كـinnerHTML - لازم escaping قبل الحقن عشان محدش يقدر يعمل stored XSS بمجرد ما يسجل طلب باسم فيه HTML
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 
 document.getElementById("loginBtn").onclick = async () => {
   const email = document.getElementById("loginEmail").value.trim();
@@ -641,7 +648,7 @@ const loaders = {
       <tr>
         <td>#${o.id}</td><td>${o.branch_name || "—"}</td><td>${o.order_type}</td><td>${money(o.total)}</td>
         <td><span class="badge ${o.voided ? "void" : "cancel"}">${o.voided ? "استرجاع (Void)" : "إلغاء قبل التنفيذ"}</span></td>
-        <td>${o.void_reason || "—"}</td><td>${o.customer_name || o.customer_phone || "—"}</td><td>${dt(o.created_at)}</td>
+        <td>${esc(o.void_reason) || "—"}</td><td>${esc(o.customer_name) || esc(o.customer_phone) || "—"}</td><td>${dt(o.created_at)}</td>
       </tr>
     `).join("") || `<tr><td colspan="8" class="empty">مفيش طلبات ملغاة في الفترة دي</td></tr>`;
   },
@@ -659,7 +666,7 @@ const loaders = {
     document.getElementById("delaysBody").innerHTML = data.delayedOrders.map(o => `
       <tr class="warnrow">
         <td>#${o.id}</td><td>${o.branch_name || "—"}</td><td>${o.order_type}</td>
-        <td>${statusLabels[o.status] || o.status}</td><td>${o.customer_name || "—"}</td>
+        <td>${statusLabels[o.status] || o.status}</td><td>${esc(o.customer_name) || "—"}</td>
         <td>${dt(o.created_at)}</td><td>${num(o.prep_minutes)}</td>
       </tr>
     `).join("") || `<tr><td colspan="7" class="empty">مفيش تأخيرات في الفترة دي 🎉</td></tr>`;

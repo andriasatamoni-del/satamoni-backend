@@ -2605,6 +2605,13 @@ async function ordersApi(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || "حصل خطأ");
   return data;
 }
+// اسم/تليفون/عنوان العميل بيتحكم فيه هو نفسه (طلب الموقع/واتساب) وبيترندر هنا كـinnerHTML - لازم
+// escaping قبل الحقن عشان محدش يقدر يعمل stored XSS بمجرد ما يسجل طلب باسم/عنوان فيه HTML
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 
 // المرحلة 8.49: سائقين مسجّلين فعليًا بدل الاسم الحر وقت "خروج مع الطيار" - نفس نمط
 // satamoni-callcenter.html/satamoni-delivery.html بالظبط (المرحلة 7F)
@@ -2736,7 +2743,7 @@ function renderActiveOrders(orders) {
           <span class="obadge ${o.payment_status}">${orderPaymentLabels[o.payment_status] || o.payment_status}</span>
         </span>
       </div>
-      <div class="meta">${o.customer_name || "بدون اسم"} — ${o.customer_phone || "—"}${o.address_details ? " — " + o.address_details : ""}</div>
+      <div class="meta">${esc(o.customer_name) || "بدون اسم"} — ${esc(o.customer_phone) || "—"}${o.address_details ? " — " + esc(o.address_details) : ""}</div>
       ${o.talabat_order_id ? `<div class="meta">🛵 رقم أوردر طلبات: ${o.talabat_order_id}${Number(o.talabat_cash_collected) > 0 ? ` — نقدي: ${money(o.talabat_cash_collected)}` : ""}</div>` : ""}
       ${o.driver_name ? `<div class="meta">🛵 الطيار: ${o.driver_name}</div>` : ""}
       ${o.voided ? `<div class="meta" style="color:var(--err)">🗑️ استرجاع: ${o.void_reason || "—"}</div>` : ""}
@@ -2871,7 +2878,7 @@ function openNewOrderAlertModal() {
   document.getElementById("noaSourceLabel").textContent = sourceLabel;
   document.getElementById("noaMeta").innerHTML = `
     <div class="noaMeta"><b>#${order.id}</b> — ${orderTypeLabels2[order.order_type] || order.order_type}${order.table_number ? ` (ترابيزة ${order.table_number})` : ""}</div>
-    <div class="noaMeta">${order.customer_name || "بدون اسم"} — ${order.customer_phone || "—"}</div>
+    <div class="noaMeta">${esc(order.customer_name) || "بدون اسم"} — ${esc(order.customer_phone) || "—"}</div>
     <div class="noaMeta" style="color:var(--faint)">من ${Math.max(0, Math.round(minutesSince(order.created_at)))} دقيقة</div>
   `;
   document.getElementById("noaItems").innerHTML = (order.items || []).map(it => `

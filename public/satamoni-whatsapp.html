@@ -130,6 +130,13 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || "حصل خطأ");
   return data;
 }
+// اسم العميل ونص رسايله (شكاوى/محادثات) بيتحكم فيه العميل نفسه بالكامل عبر واتساب - لازم escaping
+// قبل الحقن هنا كـinnerHTML عشان محدش يقدر يعمل stored XSS بمجرد ما يبعت رسالة/اسم فيه HTML
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 
 document.getElementById("loginBtn").onclick = async () => {
   const email = document.getElementById("loginEmail").value.trim();
@@ -198,11 +205,11 @@ async function loadPending() {
     list.innerHTML = orders.map(o => `
       <div class="card" data-id="${o.id}">
         <div class="cardHead">
-          <span class="id">طلب #${o.id} - ${o.customer_name || "بدون اسم"} (${o.customer_phone})</span>
+          <span class="id">طلب #${o.id} - ${esc(o.customer_name) || "بدون اسم"} (${esc(o.customer_phone)})</span>
           <span class="pill">${o.order_type === "delivery" ? "توصيل" : "استلام"}</span>
         </div>
         <div class="meta">${dt(o.created_at)} — ${o.branch_name ? "فرع " + o.branch_name : "فرع غير محدد"}${o.area_name ? " — منطقة " + o.area_name : ""}</div>
-        ${o.order_type === "delivery" ? `<div class="meta">📍 ${o.address_details || "—"}${o.distinguishing_mark ? " (" + o.distinguishing_mark + ")" : ""}</div>` : ""}
+        ${o.order_type === "delivery" ? `<div class="meta">📍 ${esc(o.address_details) || "—"}${o.distinguishing_mark ? " (" + esc(o.distinguishing_mark) + ")" : ""}</div>` : ""}
         <div class="items">${itemsSummary(o.items)}\n\nالإجمالي: ${money(o.total)}${o.order_type === "delivery" ? ` (شامل توصيل ${money(o.delivery_fee)})` : ""}</div>
         <div class="rowActions">
           ${canRegister ? `
@@ -269,11 +276,11 @@ async function loadComplaints() {
     list.innerHTML = complaints.map(c => `
       <div class="card" data-id="${c.id}">
         <div class="cardHead">
-          <span class="id">شكوى #${c.id} - ${c.customer_phone}</span>
+          <span class="id">شكوى #${c.id} - ${esc(c.customer_phone)}</span>
           <span class="pill">${CATEGORY_LABEL[c.category] || c.category}</span>
         </div>
         <div class="meta">${dt(c.created_at)}${c.order_id ? " — طلب #" + c.order_id : ""}</div>
-        <div class="items">${c.description}</div>
+        <div class="items">${esc(c.description)}</div>
         <div class="rowActions">
           <button class="act resolve" data-action="resolve">✅ اتحلت</button>
         </div>

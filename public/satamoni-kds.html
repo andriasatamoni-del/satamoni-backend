@@ -255,7 +255,7 @@ function renderCard(o) {
 
   const orderLabel = o.order_type === "dinein" && o.table_number
     ? `ترابيزة ${o.table_number}`
-    : (o.customer_name || orderTypeLabels[o.order_type] || o.order_type);
+    : (escapeHtml(o.customer_name) || orderTypeLabels[o.order_type] || o.order_type);
 
   return `
     <div class="card" data-id="${o.id}">

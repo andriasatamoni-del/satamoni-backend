@@ -253,6 +253,13 @@ async function api(path, opts = {}) {
   return data;
 }
 function money(n) { return `${Number(n).toFixed(2)} ج.م`; }
+// اسم/تليفون/عنوان العميل بيتحكم فيه هو نفسه (طلب الموقع) وبيترندر هنا كـinnerHTML - لازم escaping
+// عشان محدش يقدر يعمل stored XSS بمجرد ما يسجل طلب باسم/عنوان فيه HTML
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 function guardedClick(btn, handler) {
   return async (...args) => {
     if (btn.disabled) return;
@@ -374,7 +381,7 @@ async function loadBoard() {
       return `
       <tr>
         <td>#${o.id}</td>
-        <td>${o.customer_name || "—"}<div style="color:var(--faint);font-size:11px">${o.customer_phone || ""}</div></td>
+        <td>${esc(o.customer_name) || "—"}<div style="color:var(--faint);font-size:11px">${esc(o.customer_phone)}</div></td>
         <td>${o.delivery_area_name || "—"}</td>
         <td>${money(o.delivery_fee)}</td>
         <td>${o.payment_method_name || "—"} <span style="color:var(--faint)">(${o.payment_status === "collected" ? "محصّل" : "تحت التحصيل"})</span></td>
@@ -521,9 +528,9 @@ async function loadUnassigned() {
         <td>${o.id}</td>
         <td>${new Date(o.created_at).toLocaleString("ar-EG")}</td>
         <td>${o.source}</td>
-        <td>${o.customer_name || "—"}</td>
-        <td>${o.customer_phone || "—"}</td>
-        <td>${o.address_details || "—"}</td>
+        <td>${esc(o.customer_name) || "—"}</td>
+        <td>${esc(o.customer_phone) || "—"}</td>
+        <td>${esc(o.address_details) || "—"}</td>
         <td>${money(o.total)}</td>
         <td><select data-branchpick="${o.id}">${branchOptions}</select></td>
         <td><button class="smallbtn approve" data-assign="${o.id}">تعيين</button></td>
