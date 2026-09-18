@@ -7,7 +7,11 @@ const pool = require("../db/pool");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { validateIdParam } = require("../middleware/validate-id-param");
 const whatsappClient = require("../db/whatsapp-client");
-const { handleInboundMessage } = require("../services/whatsapp-bot/conversation");
+const { handleInboundMessage, sendReply } = require("../services/whatsapp-bot/conversation");
+
+// المرحلة 8.46: نفس تطبيق ميتا الواحد بيبعت كل إشعارات كل منتجاته (واتساب/ماسنجر/إنستجرام) لنفس رابط
+// الـwebhook المسجّل - مفروقين بحقل "object" في جسم الطلب، مش برابط مختلف لكل قناة. عشان كده مفيش
+// راوت جديد هنا خالص، بس فرع جوه POST /webhook تحت
 
 router.param("id", validateIdParam);
 
@@ -34,9 +38,55 @@ function extractMessageText(message) {
   return `[${LABELS[message.type] || "رسالة غير مدعومة"} من العميل]`;
 }
 
-// POST /api/whatsapp/webhook - الإشعارات الفعلية (رسايل واردة، تحديثات حالة تسليم...) - لازم توقيع
-// صحيح، وبيرد 200 فورًا (قبل معالجة أي حاجة) عشان ميتا معندهاش سبب تعيد الإرسال؛ المعالجة الفعلية
-// بتحصل بعد الرد من غير ما الطلب يستناها (fire-and-forget - الأخطاء بتتسجل جوه handleInboundMessage نفسها)
+// بيحوّل شكل رسالة ماسنجر/إنستجرام لنص - نفس فكرة extractMessageText فوق بس shape الـpayload مختلف
+// (messaging[].message مش changes[].value.messages زي واتساب)
+function extractSocialMessageText(message) {
+  if (message.text) return message.text;
+  if (message.attachments?.length > 0) {
+    const LABELS = { image: "صورة", audio: "رسالة صوتية", video: "فيديو", file: "ملف" };
+    return `[${LABELS[message.attachments[0].type] || "رسالة غير مدعومة"} من العميل]`;
+  }
+  return "[رسالة غير مدعومة]";
+}
+
+function handleWhatsappEntry(entry) {
+  for (const change of entry.changes || []) {
+    const value = change.value || {};
+    const messages = value.messages || [];
+    if (messages.length === 0) continue;
+    const contactsByWaId = Object.fromEntries((value.contacts || []).map((c) => [c.wa_id, c.profile?.name]));
+    for (const message of messages) {
+      handleInboundMessage({
+        channel: "whatsapp",
+        phone: message.from,
+        profileName: contactsByWaId[message.from] || null,
+        text: extractMessageText(message),
+        waMessageId: message.id,
+      }).catch((err) => console.error("whatsapp webhook processing error:", err.message));
+    }
+  }
+}
+
+// ماسنجر وإنستجرام بيستخدموا نفس شكل payload (messaging[]) - is_echo بيبقى true للرسايل اللي الصفحة
+// نفسها بعتتها (زي الردود اللي إحنا بنبعتها)، ومفيش message خالص لإشعارات التسليم/القراءة - الاتنين
+// لازم يتجاهلوا عشان مايحصلش حلقة لا نهائية أو معالجة إشعارات مش رسايل فعلية
+function handleSocialEntry(channel, entry) {
+  for (const event of entry.messaging || []) {
+    if (!event.message || event.message.is_echo) continue;
+    handleInboundMessage({
+      channel,
+      phone: event.sender?.id,
+      profileName: null,
+      text: extractSocialMessageText(event.message),
+      waMessageId: event.message.mid || null,
+    }).catch((err) => console.error(`${channel} webhook processing error:`, err.message));
+  }
+}
+
+// POST /api/whatsapp/webhook - الإشعارات الفعلية من أي منتج مشترك فيه التطبيق (واتساب/ماسنجر/إنستجرام،
+// مفروقين بحقل object) - لازم توقيع صحيح، وبيرد 200 فورًا (قبل معالجة أي حاجة) عشان ميتا معندهاش سبب
+// تعيد الإرسال؛ المعالجة الفعلية بتحصل بعد الرد من غير ما الطلب يستناها (fire-and-forget - الأخطاء
+// بتتسجل جوه handleInboundMessage نفسها)
 router.post("/webhook", (req, res) => {
   const signature = req.headers["x-hub-signature-256"];
   if (!whatsappClient.verifySignature(req.rawBody, signature)) {
@@ -45,25 +95,19 @@ router.post("/webhook", (req, res) => {
   res.sendStatus(200);
 
   try {
+    const object = req.body?.object;
     const entries = req.body?.entry || [];
-    for (const entry of entries) {
-      for (const change of entry.changes || []) {
-        const value = change.value || {};
-        const messages = value.messages || [];
-        if (messages.length === 0) continue;
-        const contactsByWaId = Object.fromEntries((value.contacts || []).map((c) => [c.wa_id, c.profile?.name]));
-        for (const message of messages) {
-          handleInboundMessage({
-            phone: message.from,
-            profileName: contactsByWaId[message.from] || null,
-            text: extractMessageText(message),
-            waMessageId: message.id,
-          }).catch((err) => console.error("whatsapp webhook processing error:", err.message));
-        }
-      }
+
+    if (object === "page" || object === "instagram") {
+      const channel = object === "page" ? "messenger" : "instagram";
+      for (const entry of entries) handleSocialEntry(channel, entry);
+    } else {
+      // whatsapp_business_account هو الافتراضي التاريخي - القيمة دي مش مشروطة صراحة عشان توافق أي
+      // إصدار قديم من ميتا مبيرسلش object خالص لسه بيوصل بنفس السلوك القديم
+      for (const entry of entries) handleWhatsappEntry(entry);
     }
   } catch (err) {
-    console.error("whatsapp webhook parse error:", err.message);
+    console.error("webhook parse error:", err.message);
   }
 });
 
@@ -74,10 +118,11 @@ router.get("/pending-orders", requireAuth, requireRole(...REVIEW_ROLES), async (
   try {
     const status = req.query.status || "pending";
     const result = await pool.query(
-      `SELECT po.*, b.name AS branch_name, da.name AS area_name
+      `SELECT po.*, b.name AS branch_name, da.name AS area_name, wc.channel
        FROM whatsapp_pending_orders po
        LEFT JOIN branches b ON b.id = po.branch_id
        LEFT JOIN delivery_areas da ON da.id = po.delivery_area_id
+       LEFT JOIN whatsapp_conversations wc ON wc.id = po.conversation_id
        WHERE po.status = $1 ORDER BY po.created_at DESC`,
       [status]
     );
@@ -90,10 +135,11 @@ router.get("/pending-orders", requireAuth, requireRole(...REVIEW_ROLES), async (
 router.get("/pending-orders/:id", requireAuth, requireRole(...REVIEW_ROLES), async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT po.*, b.name AS branch_name, da.name AS area_name
+      `SELECT po.*, b.name AS branch_name, da.name AS area_name, wc.channel
        FROM whatsapp_pending_orders po
        LEFT JOIN branches b ON b.id = po.branch_id
        LEFT JOIN delivery_areas da ON da.id = po.delivery_area_id
+       LEFT JOIN whatsapp_conversations wc ON wc.id = po.conversation_id
        WHERE po.id = $1`,
       [req.params.id]
     );
@@ -111,18 +157,18 @@ router.post("/pending-orders/:id/reject", requireAuth, requireRole(...REVIEW_ROL
     const result = await pool.query(
       `UPDATE whatsapp_pending_orders SET status = 'rejected', rejection_reason = $2,
          reviewed_by = $3, reviewed_at = now(), updated_at = now()
-       WHERE id = $1 AND status = 'pending' RETURNING *`,
+       WHERE id = $1 AND status = 'pending'
+       RETURNING *, (SELECT channel FROM whatsapp_conversations WHERE id = conversation_id) AS channel`,
       [req.params.id, reason || null, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "الطلب ده مش موجود أو اتراجع بالفعل" });
 
     const pendingOrder = result.rows[0];
-    whatsappClient
-      .sendMessage({
-        to: pendingOrder.customer_phone,
-        text: `للأسف مقدرناش نأكد الأوردر بتاعك دلوقتي${reason ? ` (${reason})` : ""} - كلمنا تاني لو حابب تعدّله.`,
-      })
-      .catch(() => {});
+    sendReply({
+      channel: pendingOrder.channel,
+      phone: pendingOrder.customer_phone,
+      text: `للأسف مقدرناش نأكد الأوردر بتاعك دلوقتي${reason ? ` (${reason})` : ""} - كلمنا تاني لو حابب تعدّله.`,
+    }).catch(() => {});
 
     res.json(pendingOrder);
   } catch (err) {
@@ -144,14 +190,14 @@ router.post("/pending-orders/:id/link-order", requireAuth, requireRole(...REVIEW
     const result = await pool.query(
       `UPDATE whatsapp_pending_orders SET status = 'confirmed', confirmed_order_id = $2,
          reviewed_by = $3, reviewed_at = now(), updated_at = now()
-       WHERE id = $1 AND status = 'pending' RETURNING *`,
+       WHERE id = $1 AND status = 'pending'
+       RETURNING *, (SELECT channel FROM whatsapp_conversations WHERE id = conversation_id) AS channel`,
       [req.params.id, orderId, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "الطلب ده مش موجود أو اتعالج بالفعل" });
 
     const pendingOrder = result.rows[0];
-    whatsappClient
-      .sendMessage({ to: pendingOrder.customer_phone, text: `تمام، الأوردر بتاعك اتأكد رسميًا رقم #${orderId} 🎉` })
+    sendReply({ channel: pendingOrder.channel, phone: pendingOrder.customer_phone, text: `تمام، الأوردر بتاعك اتأكد رسميًا رقم #${orderId} 🎉` })
       .catch(() => {});
 
     res.json(pendingOrder);
@@ -165,7 +211,9 @@ router.get("/complaints", requireAuth, requireRole(...REVIEW_ROLES), async (req,
   try {
     const status = req.query.status || "open";
     const result = await pool.query(
-      "SELECT * FROM whatsapp_complaints WHERE status = $1 ORDER BY created_at DESC",
+      `SELECT c.*, wc.channel FROM whatsapp_complaints c
+       LEFT JOIN whatsapp_conversations wc ON wc.id = c.conversation_id
+       WHERE c.status = $1 ORDER BY c.created_at DESC`,
       [status]
     );
     res.json(result.rows);
@@ -181,14 +229,14 @@ router.post("/complaints/:id/resolve", requireAuth, requireRole(...REVIEW_ROLES)
     const result = await pool.query(
       `UPDATE whatsapp_complaints SET status = 'resolved', resolution_notes = $2,
          resolved_by = $3, resolved_at = now()
-       WHERE id = $1 RETURNING *`,
+       WHERE id = $1
+       RETURNING *, (SELECT channel FROM whatsapp_conversations WHERE id = conversation_id) AS channel`,
       [req.params.id, resolutionNotes || null, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "الشكوى دي مش موجودة" });
 
     const complaint = result.rows[0];
-    whatsappClient
-      .sendMessage({ to: complaint.customer_phone, text: "تم التعامل مع الشكوى بتاعتك - شكرًا لصبرك، ولو محتاج أي حاجة تانية إحنا موجودين." })
+    sendReply({ channel: complaint.channel, phone: complaint.customer_phone, text: "تم التعامل مع الشكوى بتاعتك - شكرًا لصبرك، ولو محتاج أي حاجة تانية إحنا موجودين." })
       .catch(() => {});
 
     res.json(complaint);
@@ -197,10 +245,12 @@ router.post("/complaints/:id/resolve", requireAuth, requireRole(...REVIEW_ROLES)
   }
 });
 
-// GET /api/whatsapp/conversations/:phone/messages - سياق المحادثة كامل (للمراجعة البشرية)
+// GET /api/whatsapp/conversations/:phone/messages?channel=whatsapp - سياق المحادثة كامل (للمراجعة
+// البشرية) - channel اختياري وافتراضيًا واتساب (توافقًا مع الاستخدام القديم قبل تعدد القنوات)
 router.get("/conversations/:phone/messages", requireAuth, requireRole(...REVIEW_ROLES), async (req, res) => {
   try {
-    const conv = await pool.query("SELECT id FROM whatsapp_conversations WHERE phone = $1", [req.params.phone]);
+    const channel = req.query.channel || "whatsapp";
+    const conv = await pool.query("SELECT id FROM whatsapp_conversations WHERE channel = $1 AND phone = $2", [channel, req.params.phone]);
     if (conv.rows.length === 0) return res.json([]);
     const messages = await pool.query(
       "SELECT direction, body, created_at FROM whatsapp_messages WHERE conversation_id = $1 ORDER BY created_at",

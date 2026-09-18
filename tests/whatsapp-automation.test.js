@@ -1,7 +1,9 @@
-// المرحلة 8.43: أتمتة واتساب - بيغطي الجزء اللي مينفعش يتسيب من غير اختبار (أمن الـwebhook: توقيع
-// غلط لازم يترفض، والتحقق الأولي وقت ربط الرابط في لوحة Meta) + الشاشات الإدارية (صلاحيات الوصول،
-// ودورة حياة الطلب المعلّق/الشكوى من تسجيل لحد المراجعة). مبيغطيش حلقة الذكاء الاصطناعي نفسها (Claude)
-// لأنها محتاجة استدعاء شبكة حقيقي لـAnthropic - خارج نطاق اختبار آلي بدون بيانات اعتماد حقيقية.
+// المرحلة 8.43 (وتوسيع 8.46 لفيسبوك ماسنجر وإنستجرام): أتمتة المحادثات - بيغطي الجزء اللي مينفعش يتسيب
+// من غير اختبار (أمن الـwebhook: توقيع غلط لازم يترفض، والتحقق الأولي وقت ربط الرابط في لوحة Meta،
+// وتفريع POST /webhook الصح حسب object لكل قناة) + الشاشات الإدارية (صلاحيات الوصول، ودورة حياة الطلب
+// المعلّق/الشكوى من تسجيل لحد المراجعة، وظهور القناة الصح لكل واحد) + تفرّد المحادثة لكل قناة على حدة.
+// مبيغطيش حلقة الذكاء الاصطناعي نفسها (Gemini) لأنها محتاجة استدعاء شبكة حقيقي - خارج نطاق اختبار آلي
+// بدون بيانات اعتماد حقيقية.
 const crypto = require("crypto");
 const { app, request, pool, seedUser, login, authed } = require("./helpers");
 
@@ -29,10 +31,10 @@ function nextPhone() {
   return `01000000${String(phoneCounter).padStart(3, "0")}`;
 }
 
-async function seedConversation(phone) {
+async function seedConversation(phone, channel = "whatsapp") {
   const res = await pool.query(
-    "INSERT INTO whatsapp_conversations (phone, customer_name) VALUES ($1, $2) RETURNING id",
-    [phone, "عميل جست"]
+    "INSERT INTO whatsapp_conversations (channel, phone, customer_name) VALUES ($1, $2, $3) RETURNING id",
+    [channel, phone, "عميل جست"]
   );
   return res.rows[0].id;
 }
@@ -91,6 +93,62 @@ describe("GET /api/whatsapp/webhook - التحقق الأولي (Meta handshake)
       .get("/api/whatsapp/webhook")
       .query({ "hub.mode": "subscribe", "hub.verify_token": "غلط", "hub.challenge": "12345" });
     expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/whatsapp/webhook - تفريع القنوات حسب object", () => {
+  afterEach(() => { delete process.env.WHATSAPP_APP_SECRET; });
+
+  function signedPost(body) {
+    process.env.WHATSAPP_APP_SECRET = "test-app-secret";
+    const rawBody = JSON.stringify(body);
+    const signature = "sha256=" + crypto.createHmac("sha256", "test-app-secret").update(rawBody).digest("hex");
+    return request(app)
+      .post("/api/whatsapp/webhook")
+      .set("Content-Type", "application/json")
+      .set("x-hub-signature-256", signature)
+      .send(rawBody);
+  }
+
+  it("بيقبل إشعار ماسنجر (object=page) بتوقيع صحيح", async () => {
+    const res = await signedPost({
+      object: "page",
+      entry: [{ id: "PAGE_ID", messaging: [{ sender: { id: "psid123" }, recipient: { id: "PAGE_ID" }, message: { mid: "m1", text: "أهلا" } }] }],
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("بيقبل إشعار إنستجرام (object=instagram) بتوقيع صحيح", async () => {
+    const res = await signedPost({
+      object: "instagram",
+      entry: [{ id: "IG_ID", messaging: [{ sender: { id: "igsid123" }, recipient: { id: "IG_ID" }, message: { mid: "m2", text: "أهلا" } }] }],
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("بيتجاهل إشعارات is_echo (رسايل الصفحة نفسها) وإشعارات التسليم من غير message", async () => {
+    const res = await signedPost({
+      object: "page",
+      entry: [{ id: "PAGE_ID", messaging: [
+        { sender: { id: "psid123" }, recipient: { id: "PAGE_ID" }, message: { mid: "m3", text: "رد آلي", is_echo: true } },
+        { sender: { id: "psid123" }, recipient: { id: "PAGE_ID" }, delivery: { mids: ["m3"] } },
+      ] }],
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("تعدد القنوات - تفرّد المحادثة لكل قناة", () => {
+  it("نفس المعرّف يقدر يبقى في قناتين مختلفتين من غير تعارض", async () => {
+    const id = "shared-identifier-1";
+    await expect(seedConversation(id, "whatsapp")).resolves.toBeDefined();
+    await expect(seedConversation(id, "messenger")).resolves.toBeDefined();
+  });
+
+  it("نفس المعرّف في نفس القناة مرتين بيترفض (unique constraint)", async () => {
+    const id = "shared-identifier-2";
+    await seedConversation(id, "instagram");
+    await expect(seedConversation(id, "instagram")).rejects.toThrow();
   });
 });
 
@@ -154,6 +212,20 @@ describe("دورة حياة الطلب المعلّق", () => {
     expect(res.body.confirmed_order_id).toBe(orderId);
   });
 
+  it("الطلب المعلّق بيرجّع القناة الصح بتاعت محادثته (ماسنجر مثلًا مش واتساب دايمًا)", async () => {
+    const psid = "psid-order-1";
+    const conversationId = await seedConversation(psid, "messenger");
+    const po = await pool.query(
+      `INSERT INTO whatsapp_pending_orders (conversation_id, customer_phone, customer_name, order_type, items, subtotal, total, status)
+       VALUES ($1,$2,'عميل جست','takeaway','[]',0,0,'pending') RETURNING id`,
+      [conversationId, psid]
+    );
+    const res = await request(app).get("/api/whatsapp/pending-orders").set(authed(adminToken));
+    expect(res.status).toBe(200);
+    const found = res.body.find((o) => o.id === po.rows[0].id);
+    expect(found.channel).toBe("messenger");
+  });
+
   it("مفيش مسودة مفتوحة تانية لنفس المحادثة (unique constraint)", async () => {
     const phone = nextPhone();
     const conversationId = await seedConversation(phone);
@@ -190,6 +262,20 @@ describe("PATCH /api/pos-settings - whatsapp_bot_enabled", () => {
 });
 
 describe("دورة حياة الشكاوى", () => {
+  it("الشكوى بترجّع القناة الصح بتاعت محادثتها", async () => {
+    const igsid = "igsid-complaint-1";
+    const conversationId = await seedConversation(igsid, "instagram");
+    const complaint = await pool.query(
+      `INSERT INTO whatsapp_complaints (conversation_id, customer_phone, category, description)
+       VALUES ($1,$2,'other','مشكلة من إنستجرام') RETURNING id`,
+      [conversationId, igsid]
+    );
+    const res = await request(app).get("/api/whatsapp/complaints?status=open").set(authed(adminToken));
+    expect(res.status).toBe(200);
+    const found = res.body.find((c) => c.id === complaint.rows[0].id);
+    expect(found.channel).toBe("instagram");
+  });
+
   it("تسجيل شكوى وحلها", async () => {
     const phone = nextPhone();
     const conversationId = await seedConversation(phone);

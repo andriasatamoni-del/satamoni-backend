@@ -131,7 +131,7 @@ INSERT INTO home_tiles (tile_key, href, icon, title, description, display_order)
   ('delivery', 'satamoni-delivery.html', '🛵', 'دورة حياة الدليفري', 'تحت التحضير، في الطريق، تحصيل الفلوس، وسجل كل الطلبات', 30),
   ('drivers', 'satamoni-drivers.html', '🛵', 'إدارة السائقين (أدمن/مدير فرع)', 'إضافة سائق جديد، وتفعيل/تعطيل السائقين الحاليين', 32),
   ('dispatch', 'satamoni-dispatch.html', '🛵', 'لوحة توزيع وتسوية السائقين', 'لوحة توزيع الطلبات على السائقين، ومعاينة/تسوية دفعاتهم', 34),
-  ('whatsapp', 'satamoni-whatsapp.html', '💬', 'طلبات وشكاوى واتساب', 'مراجعة الطلبات اللي جمّعها بوت واتساب من العملاء وتسجيلها فعليًا، ومتابعة الشكاوى الواردة', 36),
+  ('whatsapp', 'satamoni-whatsapp.html', '💬', 'طلبات وشكاوى المحادثات', 'مراجعة الطلبات اللي جمّعها البوت من واتساب/ماسنجر/إنستجرام وتسجيلها فعليًا، ومتابعة الشكاوى الواردة', 36),
   ('dashboard', 'satamoni-dashboard.html', '📊', 'داش بورد المالك', 'كل تفاصيل الشغل في شاشة واحدة: مبيعات، أصناف وفروع ومناطق الأكثر مبيعًا، تكلفة، ربحية', 40),
   ('items', 'satamoni-items.html', '🗂️', 'الأصناف', 'كتالوج شامل للمواد الخام والمصنّعة وأصناف المنيو - بحث سريع وتفاصيل كل صنف في مكان واحد', 45),
   ('accounting', 'satamoni-accounting.html', '💰', 'الحسابات', 'مصروفات، مشتريات، تقفيل كاش، كشف حساب المخزن', 50),
@@ -2697,12 +2697,19 @@ CREATE TABLE payment_daily_report_log (
 -- طلبات/شكاوى) ----------------
 -- محادثة واحدة لكل رقم واتساب عميل - سجل مستمر (مش بيتقفل/يتفتح لكل رسالة)، بيحمل آخر اسم معروف
 -- للعميل (من بروفايل واتساب أو من كلامه في المحادثة) عشان البوت ميسألش عليه تاني كل مرة
+-- المرحلة 8.46: عمّمنا الجدول ده (ومعاه whatsapp_messages/pending_orders/complaints تحت) ليشمل فيسبوك
+-- ماسنجر وإنستجرام كمان مش واتساب بس - قرار متعمّد نعيد استخدام نفس الجداول والمنطق (persona/tools/
+-- conversation engine) بدل تكرارهم لكل قناة، زي ما بالظبط عملنا مع POST /api/orders. عمود phone بيحمل
+-- رقم الهاتف الحقيقي لواتساب، أو معرّف المحادثة (PSID/IGSID) لفيسبوك/إنستجرام - مش رقم هاتف حقيقي في
+-- الحالة التانية دي، فمينفعش يتستخدم مباشرة كرقم تواصل فعلي إلا لو العميل قاله صراحة في المحادثة
 CREATE TABLE whatsapp_conversations (
   id               SERIAL PRIMARY KEY,
-  phone            TEXT NOT NULL UNIQUE,
+  channel          TEXT NOT NULL DEFAULT 'whatsapp' CHECK (channel IN ('whatsapp', 'messenger', 'instagram')),
+  phone            TEXT NOT NULL,
   customer_name    TEXT,
   last_message_at  TIMESTAMPTZ,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (channel, phone)
 );
 
 -- سجل كل رسالة (واردة من العميل أو صادرة من البوت) - append-only، ده اللي بيتغذّى منه سياق الذكاء
