@@ -14,6 +14,9 @@ const { getCairoBusinessDate } = require("./business-date");
 // بالظبط: "اقتراح جديد، قابل للمراجعة لاحقًا بناءً على بيانات فرع حقيقية"، مش قيمة مُسترجعة من مكان تاني
 const FOOD_COST_VARIANCE_ALERT_PERCENT = 15;
 const FOOD_COST_MIN_COST_EGP = 50; // تجاهل فروق صغيرة القيمة حتى لو نسبتها عالية (صنف رخيص باستهلاك ضئيل)
+// نفس فلسفة FOOD_COST_VARIANCE_ALERT_PERCENT بالظبط - مفيش عمود إعدادات مخصص لحد الآن لمدة بقاء الشكوى
+// مفتوحة، رقم مقترح افتراضي قابل للمراجعة
+const STALE_COMPLAINT_DAYS = 3;
 
 async function findNegativeStockAlerts(pool, { branchId }) {
   const result = await pool.query(
@@ -195,6 +198,28 @@ async function findOverdueSupplierInvoicesAlerts(pool, { branchId }) {
   }));
 }
 
+// شكاوى عملاء فاضلة مفتوحة/جاري المعالجة من غير حل لفترة أطول من اللازم - نفس مصدر GET /api/crm/complaints
+// بالظبط (customer_complaints عن طريق c.branch_id مباشرة، من غير whatsapp_complaints - ده جدول/شاشة
+// منفصلة بتدايرة الشكاوى بتاعتها لوحدها في routes/whatsapp.js، مش مصدر البيانات اللي شاشة الـCRM
+// الرئيسية بتستخدمه). شكوى عميل متأخرة = خطر سمعة/احتفاظ بالعميل حقيقي لو اتجاهلت
+async function findStaleComplaintsAlerts(pool, { branchId }) {
+  const result = await pool.query(
+    `SELECT c.branch_id, b.name AS branch_name, COUNT(*) AS stale_count
+     FROM customer_complaints c
+     JOIN branches b ON b.id = c.branch_id
+     WHERE c.status IN ('open', 'in_progress')
+       AND c.created_at < now() - ($2 || ' days')::interval
+       AND ($1::int IS NULL OR c.branch_id = $1)
+     GROUP BY c.branch_id, b.name`,
+    [branchId || null, STALE_COMPLAINT_DAYS]
+  );
+  return result.rows.map((r) => ({
+    type: "STALE_COMPLAINTS", severity: "MEDIUM", branchId: r.branch_id, branchName: r.branch_name,
+    description: `${r.stale_count} شكوى عميل فاضلة من غير حل لأكتر من ${STALE_COMPLAINT_DAYS} أيام في ${r.branch_name}`,
+    link: "/satamoni-crm.html",
+  }));
+}
+
 const SEVERITY_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
 // المدى الافتراضي (لو مفيش from/to) آخر 7 أيام - المركز ده معمول يتفتح من غير إعدادات، مش تقرير
@@ -207,7 +232,7 @@ function defaultRange() {
 
 async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
   const range = from && to ? { from, to } : defaultRange();
-  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance, itemsMissingCost, overduePurchaseOrders, overdueSupplierInvoices] = await Promise.all([
+  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance, itemsMissingCost, overduePurchaseOrders, overdueSupplierInvoices, staleComplaints] = await Promise.all([
     findNegativeStockAlerts(pool, { branchId }),
     computeExceptions(pool, { branchId, from: range.from, to: range.to }),
     findProductionVarianceAlerts(pool, { branchId, from: range.from, to: range.to }),
@@ -216,6 +241,7 @@ async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
     findItemsMissingCostAlerts(pool, { branchId }),
     findOverduePurchaseOrdersAlerts(pool, { branchId }),
     findOverdueSupplierInvoicesAlerts(pool, { branchId }),
+    findStaleComplaintsAlerts(pool, { branchId }),
   ]);
 
   const paymentAlerts = paymentControl.exceptions.map((e) => ({
@@ -224,7 +250,7 @@ async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
     link: "/satamoni-payment-control.html",
   }));
 
-  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance, ...itemsMissingCost, ...overduePurchaseOrders, ...overdueSupplierInvoices]
+  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance, ...itemsMissingCost, ...overduePurchaseOrders, ...overdueSupplierInvoices, ...staleComplaints]
     .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 
   return {

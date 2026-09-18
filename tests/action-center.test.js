@@ -219,6 +219,39 @@ test("فاتورة مورد فات معاد استحقاقها ولسه فيها
   expect(afterFull.body.alerts.find((a) => a.type === "OVERDUE_SUPPLIER_INVOICES" && a.branchId === branchId)).toBeUndefined();
 });
 
+test("شكوى عميل فاضلة مفتوحة من غير حل لأكتر من المدة الافتراضية - بيظهر كتنبيه MEDIUM، ومش الشكاوى الحديثة", async () => {
+  const staleOrder = await pool.query(
+    "INSERT INTO orders (branch_id, source, order_type, status, total) VALUES ($1,'pos','takeaway','completed',80) RETURNING id",
+    [branchId]
+  );
+  const staleComplaint = await pool.query(
+    `INSERT INTO customer_complaints (order_id, branch_id, customer_phone, category, status, created_at)
+     VALUES ($1,$2,'01055500001','quality','open', now() - INTERVAL '5 days') RETURNING id`,
+    [staleOrder.rows[0].id, branchId]
+  );
+
+  const freshOrder = await pool.query(
+    "INSERT INTO orders (branch_id, source, order_type, status, total) VALUES ($1,'pos','takeaway','completed',80) RETURNING id",
+    [branchId]
+  );
+  await pool.query(
+    `INSERT INTO customer_complaints (order_id, branch_id, customer_phone, category, status, created_at)
+     VALUES ($1,$2,'01055500002','other','open', now() - INTERVAL '1 day')`,
+    [freshOrder.rows[0].id, branchId]
+  );
+
+  const res = await request(app).get(`/api/reports/action-center?branchId=${branchId}`).set(authed(adminToken));
+  expect(res.status).toBe(200);
+  const staleAlert = res.body.alerts.find((a) => a.type === "STALE_COMPLAINTS" && a.branchId === branchId);
+  expect(staleAlert).toBeDefined();
+  expect(staleAlert.severity).toBe("MEDIUM");
+  expect(staleAlert.description).toContain("1 شكوى");
+
+  await pool.query("UPDATE customer_complaints SET status = 'resolved' WHERE id = $1", [staleComplaint.rows[0].id]);
+  const afterResolve = await request(app).get(`/api/reports/action-center?branchId=${branchId}`).set(authed(adminToken));
+  expect(afterResolve.body.alerts.find((a) => a.type === "STALE_COMPLAINTS" && a.branchId === branchId)).toBeUndefined();
+});
+
 test("مدى افتراضي (آخر 7 أيام) لو from/to مش مبعوتين - مفيش رفض 400", async () => {
   const res = await request(app).get("/api/reports/action-center").set(authed(adminToken));
   expect(res.status).toBe(200);
