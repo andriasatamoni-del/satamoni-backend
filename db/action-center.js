@@ -135,6 +135,34 @@ async function findItemsMissingCostAlerts(pool, { branchId }) {
   }];
 }
 
+// أوامر شراء متأخرة عن تاريخ التسليم المتوقع بتاعها ولسه فيها كمية متبقية - نفس شرط WHERE/HAVING
+// المستخدم فعليًا في GET /api/reports/outstanding-purchase-orders بالظبط، بس مقصور على اللي فات
+// معادها فعلًا (التقرير الأصلي بيعرض كل المستحق، ده بيلفت النظر بس للمتأخر منه) - التقرير موجود
+// أصلًا وبيوصل لنفس المعلومة، لكن محدش بيتنبّه بيها من غير ما يفتحه بنفسه كل يوم
+async function findOverduePurchaseOrdersAlerts(pool, { branchId }) {
+  const result = await pool.query(
+    `SELECT po.branch_id, b.name AS branch_name, COUNT(DISTINCT po.id) AS po_count,
+            COALESCE(SUM((poi.ordered_quantity - poi.received_quantity) * poi.unit_price), 0) AS remaining_value,
+            array_agg(DISTINCT s.name) AS suppliers
+     FROM purchase_orders po
+     JOIN suppliers s ON s.id = po.supplier_id
+     JOIN branches b ON b.id = po.branch_id
+     JOIN purchase_order_items poi ON poi.purchase_order_id = po.id
+     WHERE po.status IN ('APPROVED', 'PARTIALLY_RECEIVED')
+       AND po.expected_delivery_date IS NOT NULL AND po.expected_delivery_date < CURRENT_DATE
+       AND ($1::int IS NULL OR po.branch_id = $1)
+     GROUP BY po.branch_id, b.name
+     HAVING COALESCE(SUM(poi.ordered_quantity - poi.received_quantity), 0) > 0`,
+    [branchId || null]
+  );
+  return result.rows.map((r) => ({
+    type: "OVERDUE_PURCHASE_ORDERS", severity: "MEDIUM", branchId: r.branch_id, branchName: r.branch_name,
+    description: `${r.po_count} أمر شراء فات معاد تسليمه المتوقع في ${r.branch_name} - قيمة متبقية ${Number(r.remaining_value).toFixed(2)} ج.م`,
+    detail: r.suppliers.slice(0, 5).join("، "),
+    link: "/satamoni-purchasing.html",
+  }));
+}
+
 const SEVERITY_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
 // المدى الافتراضي (لو مفيش from/to) آخر 7 أيام - المركز ده معمول يتفتح من غير إعدادات، مش تقرير
@@ -147,13 +175,14 @@ function defaultRange() {
 
 async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
   const range = from && to ? { from, to } : defaultRange();
-  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance, itemsMissingCost] = await Promise.all([
+  const [negativeStock, paymentControl, productionVariance, expenseAnomalies, foodCostVariance, itemsMissingCost, overduePurchaseOrders] = await Promise.all([
     findNegativeStockAlerts(pool, { branchId }),
     computeExceptions(pool, { branchId, from: range.from, to: range.to }),
     findProductionVarianceAlerts(pool, { branchId, from: range.from, to: range.to }),
     findExpenseAnomalies(pool, { branchId, from: range.from, to: range.to }),
     findFoodCostVarianceAlerts(pool, { branchId, from: range.from, to: range.to }),
     findItemsMissingCostAlerts(pool, { branchId }),
+    findOverduePurchaseOrdersAlerts(pool, { branchId }),
   ]);
 
   const paymentAlerts = paymentControl.exceptions.map((e) => ({
@@ -162,7 +191,7 @@ async function computeActionCenter(pool, { branchId = null, from, to } = {}) {
     link: "/satamoni-payment-control.html",
   }));
 
-  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance, ...itemsMissingCost]
+  const alerts = [...negativeStock, ...paymentAlerts, ...productionVariance, ...expenseAnomalies, ...foodCostVariance, ...itemsMissingCost, ...overduePurchaseOrders]
     .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 
   return {

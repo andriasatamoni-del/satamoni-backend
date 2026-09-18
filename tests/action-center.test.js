@@ -160,6 +160,33 @@ test("صنف مستخدم في وصفة نشطة من غير تكلفة وحدة
   expect(managerRes.body.alerts.find((a) => a.type === "ITEMS_MISSING_COST")).toBeUndefined();
 });
 
+test("أمر شراء APPROVED فات معاد تسليمه المتوقع ولسه فيه كمية متبقية - بيظهر كتنبيه MEDIUM", async () => {
+  const supplier = await pool.query("INSERT INTO suppliers (name) VALUES ('مورد-متأخر-جست') RETURNING id");
+  const item = await pool.query("INSERT INTO inventory_items (name, unit, unit_cost) VALUES ('صنف-أمر-متأخر-جست', 'KG', 20) RETURNING id");
+  const po = await pool.query(
+    `INSERT INTO purchase_orders (supplier_id, branch_id, expected_delivery_date, status)
+     VALUES ($1,$2, CURRENT_DATE - INTERVAL '3 days', 'APPROVED') RETURNING id`,
+    [supplier.rows[0].id, branchId]
+  );
+  await pool.query(
+    `INSERT INTO purchase_order_items (purchase_order_id, inventory_item_id, ordered_quantity, unit_price, received_quantity)
+     VALUES ($1,$2,10,20,0)`,
+    [po.rows[0].id, item.rows[0].id]
+  );
+
+  const res = await request(app).get(`/api/reports/action-center?branchId=${branchId}`).set(authed(adminToken));
+  expect(res.status).toBe(200);
+  const overdueAlert = res.body.alerts.find((a) => a.type === "OVERDUE_PURCHASE_ORDERS" && a.branchId === branchId);
+  expect(overdueAlert).toBeDefined();
+  expect(overdueAlert.severity).toBe("MEDIUM");
+  expect(overdueAlert.detail).toContain("مورد-متأخر-جست");
+
+  // اتقفل بالكامل (received_quantity = ordered_quantity) - مايظهرش تاني
+  await pool.query("UPDATE purchase_order_items SET received_quantity = 10 WHERE purchase_order_id = $1", [po.rows[0].id]);
+  const afterReceipt = await request(app).get(`/api/reports/action-center?branchId=${branchId}`).set(authed(adminToken));
+  expect(afterReceipt.body.alerts.find((a) => a.type === "OVERDUE_PURCHASE_ORDERS" && a.branchId === branchId)).toBeUndefined();
+});
+
 test("مدى افتراضي (آخر 7 أيام) لو from/to مش مبعوتين - مفيش رفض 400", async () => {
   const res = await request(app).get("/api/reports/action-center").set(authed(adminToken));
   expect(res.status).toBe(200);
