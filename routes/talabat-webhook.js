@@ -12,6 +12,7 @@ const crypto = require("crypto");
 const pool = require("../db/pool");
 const webhookAuth = require("../services/talabat/talabat-webhook-auth");
 const payloadAdapter = require("../services/talabat/talabat-payload-adapter");
+const { syncNormalizedOrder } = require("../services/talabat/talabat-order-sync");
 
 async function recordIntegrationError(client, { talabatOrderId = null, branchId = null, errorType, errorMessage, rawPayload = null }) {
   await client.query(
@@ -75,15 +76,17 @@ router.post("/webhook/orders", async (req, res) => {
       return res.status(200).json({ status: "received", processing: "FAILED", error: adapterErr.code || "PAYLOAD_ADAPTER_ERROR" });
     }
 
-    // TAL-5 هيوصل الأوردر المُطبَّع ده بمحرك المزامنة (order-sync) اللي بينشئ أوردر POS فعلي عبر
-    // createOrderHandler المُصدَّر من routes/orders.js. لحد ما ده يتوصل، بنسجل الاستلام كـPROCESSED
-    // ("processed" هنا معناه: اتقرأ واتحوّل بنجاح لشكل داخلي معروف - مش لسه معناه اتحول لأوردر POS)
     await client.query(
       `UPDATE talabat_webhook_events SET processing_status = 'PROCESSED', talabat_order_id = $2, event_type = $3 WHERE id = $1`,
       [webhookEventId, normalizedOrder.talabatOrderId, normalizedOrder.orderStatus || "UNKNOWN"]
     );
     await client.query("COMMIT");
-    return res.status(200).json({ status: "received", processing: "PROCESSED" });
+
+    // محرك المزامنة (services/talabat/talabat-order-sync.js) بيفتح اتصالاته الخاصة (بيستدعي
+    // createOrderHandler اللي بيدير transaction مستقل بالكامل) - عمدًا برّه transaction الاستلام فوق،
+    // نتيجته دايمًا واحدة من IMPORTED/ALREADY_IMPORTED/MAPPING_ERROR/FAILED، أبدًا نجاح صامت
+    const syncResult = await syncNormalizedOrder(normalizedOrder, rawPayload);
+    return res.status(200).json({ status: "received", processing: "PROCESSED", sync: syncResult });
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("talabat webhook processing error:", err.message);
