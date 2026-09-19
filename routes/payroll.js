@@ -721,7 +721,17 @@ router.post("/runs", async (req, res) => {
           const existing = await client.query("SELECT * FROM payroll_runs WHERE idempotency_key = $1", [idempotencyKey]);
           if (existing.rows.length > 0) return res.status(200).json({ ...existing.rows[0], duplicate: true });
         }
-        return res.status(409).json({ error: `تشغيلة رواتب ${month}/${year} موجودة بالفعل` });
+        // HRF-2: idx_payroll_runs_active_period بيستثني CANCELLED - أي conflict هنا معناه أكيد فيه
+        // تشغيلة نشطة (DRAFT/APPROVED) فعلًا لنفس الشهر، مش مجرد "موجودة بالفعل" بغض النظر عن حالتها
+        const activeRun = await client.query(
+          `SELECT * FROM payroll_runs WHERE year = $1 AND month = $2 AND status IN ('DRAFT','APPROVED')`,
+          [year, month]
+        );
+        return res.status(409).json({
+          error: `فيه تشغيلة رواتب نشطة بالفعل لشهر ${month}/${year} (${activeRun.rows[0]?.status || "?"}) - لازم تعتمدها أو تلغيها الأول`,
+          code: "ACTIVE_PAYROLL_RUN_EXISTS",
+          activeRun: activeRun.rows[0] || null,
+        });
       }
       throw err;
     }

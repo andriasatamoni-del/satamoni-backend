@@ -1879,10 +1879,15 @@ CREATE TABLE payroll_runs (
   -- journal_entry_id: journal_entries معرّف في قسم المحاسبة تحت - الـFK بيتضاف هناك
   journal_entry_id     INTEGER,
   idempotency_key      TEXT,
-  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (year, month)
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX idx_payroll_runs_idempotency_key ON payroll_runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+-- HR Foundation Hardening (HRF-2): كان UNIQUE(year, month) عادي بيمنع أي تشغيلة جديدة لنفس الشهر للأبد
+-- حتى بعد إلغاء (CANCELLED) التشغيلة القديمة - باج مؤكد اتكشف في التدقيق. القاعدة الصحيحة: "أكتر
+-- تشغيلة واحدة نشطة لكل شهر" (نشطة = DRAFT أو APPROVED)، مش "تشغيلة واحدة للأبد بغض النظر عن حالتها".
+-- partial unique index بيستثني CANCELLED تلقائيًا - فرصة تانية للشهر تتفتح فور الإلغاء، والفهرس نفسه
+-- (مش تحقق على مستوى التطبيق) هو اللي بيمنع تشغيلتين نشطتين متزامنتين لنفس الشهر (atomic، ضد race conditions)
+CREATE UNIQUE INDEX idx_payroll_runs_active_period ON payroll_runs(year, month) WHERE status IN ('DRAFT', 'APPROVED');
 
 -- سطر واحد لكل موظف في التشغيلة - snapshot ثابت من صافي راتبه وقت الاعتماد (مش مرجع حي لـ
 -- payroll_adjustments/attendance_punches، عشان الرقم التاريخي يفضل زي ما هو حتى لو الحضور اتصحّح بعد كده)
