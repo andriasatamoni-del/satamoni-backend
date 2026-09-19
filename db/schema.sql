@@ -1583,12 +1583,52 @@ CREATE TABLE late_deduction_tiers (
 INSERT INTO late_deduction_tiers (from_minute, to_minute, deduction_fraction) VALUES
   (0, 16, 0), (16, 31, 0.25), (31, 61, 0.5), (61, 999999, 1);
 
+-- HR Foundation Hardening (HRF-6): Department/Position بقوا entities حقيقية بدل ما كانوا free-text
+-- على employees.department/job_title مباشرة (كانوا عرضة لتكرار/اختلاف كتابة زي "Kitchen"/"kitchen "
+-- من غير أي طريقة موحّدة تتحقق منهم). status='inactive' = إخفاء من قوائم الاختيار الجديدة بس - مفيش
+-- DELETE أبدًا (موظفين حاليين وemployee_history بيشيروا لهم، وحذفهم يفقد سياق تاريخي حقيقي)
+CREATE TABLE departments (
+  id          SERIAL PRIMARY KEY,
+  code        TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  description TEXT,
+  status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_departments_code ON departments(code);
+CREATE UNIQUE INDEX idx_departments_name ON departments(name);
+-- القائمة الكانونية اللي كانت أصلًا hard-coded في اختيار الفرونت إند (public/satamoni-payroll.html
+-- DEPARTMENTS) - نفس القيم بالظبط، دلوقتي بقت صفوف حقيقية بدل مصفوفة JS
+INSERT INTO departments (code, name) VALUES
+  ('PIZZA', 'بيتزا'), ('PASTRY', 'فطير'), ('BRANCH_OPS', 'تشغيل الفرع'), ('ADMIN', 'الإدارة'),
+  ('ACCOUNTS', 'حسابات'), ('CALL_CENTER', 'كول سنتر'), ('CENTRAL_KITCHEN', 'المطبخ المركزي');
+
+CREATE TABLE positions (
+  id            SERIAL PRIMARY KEY,
+  code          TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  department_id INTEGER REFERENCES departments(id),
+  description   TEXT,
+  status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_positions_code ON positions(code);
+CREATE SEQUENCE position_code_seq START 1;
+
 CREATE TABLE employees (
   id                     SERIAL PRIMARY KEY,
   -- المرحلة 7T: ربط اختياري بحساب دخول ذاتي (role='employee') - زي drivers.user_id بالظبط، مش كل موظف لازم يبقى له حساب
   user_id                INTEGER UNIQUE REFERENCES users(id),
   name                   TEXT NOT NULL,
   department             TEXT NOT NULL, -- بيتزا/فطير/تشغيل الفرع/الإدارة/حسابات/كول سنتر/المطبخ المركزي
+  -- HR Foundation Hardening (HRF-6): department_id/position_id هما مصدر الحقيقة الجديد - department/
+  -- job_title النصيين فوق فضلوا موجودين ومتزامنين تلقائيًا (trigger تحت) عشان كل استهلاك حالي ليهم
+  -- (تقارير، services/payroll-engine.js GROUP BY department...) يفضل شغال من غير أي تعديل. NULL يعني
+  -- الموظف ده لسه مربوط بالنص القديم بس (قبل الـmigration أو لسه محتاج مراجعة يدوية)
+  department_id          INTEGER REFERENCES departments(id),
+  position_id            INTEGER REFERENCES positions(id),
   job_title              TEXT,
   attendance_system      TEXT NOT NULL CHECK (attendance_system IN ('fingerprint_auto', 'manual', 'none')),
   hire_date              DATE,
@@ -1640,6 +1680,26 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_sync_employee_is_active
   BEFORE INSERT OR UPDATE ON employees
   FOR EACH ROW EXECUTE FUNCTION sync_employee_is_active();
+
+-- HR Foundation Hardening (HRF-6): نفس فلسفة sync_employee_is_active بالظبط - department_id/position_id
+-- هما مصدر الحقيقة، وعمودي department/job_title النصيين القدام بيتزامنوا تلقائيًا منهم (اتجاه واحد بس:
+-- id -> نص). لو حد لسه بيكتب على العمود النصي مباشرة من غير ما يحدد الـid (استخدام قديم)، مفيش أي تغيير
+-- في السلوك خالص - النص بيتسجل زي ما هو، والـid يفضل زي ما كان (مايتخمّنش تلقائيًا)
+CREATE OR REPLACE FUNCTION sync_employee_department_position() RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.department_id IS NOT NULL AND (TG_OP = 'INSERT' OR NEW.department_id IS DISTINCT FROM OLD.department_id) THEN
+    SELECT name INTO NEW.department FROM departments WHERE id = NEW.department_id;
+  END IF;
+  IF NEW.position_id IS NOT NULL AND (TG_OP = 'INSERT' OR NEW.position_id IS DISTINCT FROM OLD.position_id) THEN
+    SELECT name INTO NEW.job_title FROM positions WHERE id = NEW.position_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sync_employee_department_position
+  BEFORE INSERT OR UPDATE ON employees
+  FOR EACH ROW EXECUTE FUNCTION sync_employee_department_position();
 
 -- سجل تغييرات جوهرية على بيانات الموظف (فرع/قسم/وظيفة/حالة...) - append-only زي أي سجل تدقيق في
 -- المشروع، مفيش UPDATE ولا DELETE عليه أبدًا من التطبيق. سطر واحد لكل حقل اتغيّر (مش سطر واحد لكل

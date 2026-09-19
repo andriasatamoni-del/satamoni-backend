@@ -102,25 +102,28 @@ router.get("/employees", async (req, res) => {
 });
 
 // المرحلة 4D: employeeCode اختياري - لو مبعتش، بيتولّد تلقائيًا (EMP-000001...) من employee_code_seq
+// HR Foundation Hardening (HRF-6): departmentId/positionId هما الطريقة الجديدة المفضّلة (بتتحوّل تلقائيًا
+// لـdepartment/job_title النصيين عن طريق trg_sync_employee_department_position قبل ما يوصل NOT NULL check
+// - راجع db/schema.sql). department/jobTitle النصيين لسه مقبولين لتوافق رجعي كامل
 router.post("/employees", async (req, res) => {
   const {
-    name, department, jobTitle, attendanceSystem, hireDate, baseSalary = 0,
+    name, department, jobTitle, departmentId, positionId, attendanceSystem, hireDate, baseSalary = 0,
     workingDaysPerMonth = 26, shift, wageType = "fixed_monthly", hourlyRate = 0,
     phone, notes, countDay31 = false, restrictedBranchId, employeeCode,
   } = req.body;
-  if (!name || !department || !attendanceSystem) {
+  if (!name || (!department && !departmentId) || !attendanceSystem) {
     return res.status(400).json({ error: "لازم الاسم والقسم ونظام الحضور" });
   }
   try {
     const result = await pool.query(
       `INSERT INTO employees
-        (name, department, job_title, attendance_system, hire_date, base_salary,
+        (name, department, job_title, department_id, position_id, attendance_system, hire_date, base_salary,
          working_days_per_month, shift, wage_type, hourly_rate, phone, notes, count_day_31, restricted_branch_id,
          employee_code)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-         COALESCE($15, 'EMP-' || LPAD(nextval('employee_code_seq')::text, 6, '0')))
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+         COALESCE($17, 'EMP-' || LPAD(nextval('employee_code_seq')::text, 6, '0')))
        RETURNING *`,
-      [name, department, jobTitle || null, attendanceSystem, hireDate || null, baseSalary,
+      [name, department || null, jobTitle || null, departmentId || null, positionId || null, attendanceSystem, hireDate || null, baseSalary,
        workingDaysPerMonth, shift || null, wageType, hourlyRate, phone || null, notes || null,
        countDay31, restrictedBranchId || null, employeeCode || null]
     );
@@ -159,7 +162,8 @@ router.patch("/employees/:id", async (req, res) => {
     const { employee, terminationCascade } = await updateEmployee(client, {
       employeeId: Number(id), actorUser: req.user, req,
       fields: {
-        name: body.name, department: body.department, jobTitle: body.jobTitle, attendanceSystem: body.attendanceSystem,
+        name: body.name, department: body.department, jobTitle: body.jobTitle,
+        departmentId: body.departmentId, positionId: body.positionId, attendanceSystem: body.attendanceSystem,
         hireDate: body.hireDate, baseSalary: body.baseSalary, workingDaysPerMonth: body.workingDaysPerMonth,
         shift: body.shift, wageType: body.wageType, hourlyRate: body.hourlyRate, phone: body.phone, notes: body.notes,
         countDay31: body.countDay31, restrictedBranchId: body.restrictedBranchId, employeeCode: body.employeeCode,

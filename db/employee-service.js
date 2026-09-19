@@ -17,6 +17,10 @@ const FIELD_MAP = {
   countDay31: "count_day_31", restrictedBranchId: "restricted_branch_id",
   employeeCode: "employee_code", status: "status", terminationDate: "termination_date",
   terminationReason: "termination_reason",
+  // HR Foundation Hardening (HRF-6): مصدر الحقيقة الجديد للقسم/المسمى الوظيفي - department/jobTitle
+  // النصيين فوق لسه مقبولين لتوافق رجعي (استخدام قديم)، لكن department_id/position_id هما اللي بيحدّثوا
+  // department/job_title تلقائيًا عن طريق trigger على مستوى القاعدة (trg_sync_employee_department_position)
+  departmentId: "department_id", positionId: "position_id",
 };
 
 class EmployeeUpdateError extends Error {
@@ -65,10 +69,14 @@ async function updateEmployee(client, { employeeId, actorUser, fields, req }) {
 
   const result = await client.query(`UPDATE employees SET ${setClauses.join(", ")} WHERE id = $${i} RETURNING *`, values);
 
+  // department/job_title بتتقارن بالقيمة الناتجة الفعلية (result.rows[0]) مش بالمدخل الخام - عشان لو
+  // التغيير جه عن طريق departmentId/positionId (مش النص مباشرة)، employee_history لسه يسجّل التغيير
+  // الفعلي في النص المشتق (اللي الـtrigger حدّثه)، مش يتجاهله لمجرد إن fields.department كان undefined
   await recordEmployeeHistoryChanges(client, {
     employeeId, before: beforeRow,
     changes: {
-      department: fields.department, job_title: fields.jobTitle,
+      department: (fields.department !== undefined || fields.departmentId !== undefined) ? result.rows[0].department : undefined,
+      job_title: (fields.jobTitle !== undefined || fields.positionId !== undefined) ? result.rows[0].job_title : undefined,
       restricted_branch_id: fields.restrictedBranchId, status: fields.status,
     },
     changedBy: actorUser.id, reason: fields.reason || null, effectiveDate: fields.effectiveDate || null,

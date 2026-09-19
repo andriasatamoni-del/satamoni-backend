@@ -214,7 +214,7 @@ router.get("/employees/:id", requireAuth, canManageStaff, async (req, res) => {
 router.patch("/employees/:id", requireAuth, canManageStaff, async (req, res) => {
   const { id } = req.params;
   const {
-    department, jobTitle, status, restrictedBranchId, terminationDate, terminationReason,
+    department, jobTitle, departmentId, positionId, status, restrictedBranchId, terminationDate, terminationReason,
     reason, effectiveDate, acknowledgeBlockers,
   } = req.body;
   const client = await pool.connect();
@@ -228,7 +228,10 @@ router.patch("/employees/:id", requireAuth, canManageStaff, async (req, res) => 
     await client.query("BEGIN");
     const { employee, terminationCascade } = await updateEmployee(client, {
       employeeId: Number(id), actorUser: req.user, req,
-      fields: { department, jobTitle, status, restrictedBranchId, terminationDate, terminationReason, reason, effectiveDate, acknowledgeBlockers },
+      fields: {
+        department, jobTitle, departmentId, positionId, status, restrictedBranchId,
+        terminationDate, terminationReason, reason, effectiveDate, acknowledgeBlockers,
+      },
     });
     await client.query("COMMIT");
     res.json({ ...employee, terminationCascade: terminationCascade || undefined });

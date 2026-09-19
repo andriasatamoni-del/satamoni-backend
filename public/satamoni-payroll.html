@@ -686,6 +686,12 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
 });
 
 function money(n) { return n === null || n === undefined ? "—" : `${Number(n).toFixed(2)} ج.م`; }
+// اسم القسم/المسمى الوظيفي بيتحط كـinnerHTML - لازم escaping قبل الحقن (نفس نمط satamoni-crm.html بالظبط)
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
 function populatePeriodSelectors(yearId, monthId) {
@@ -703,13 +709,29 @@ function populatePeriodSelectors(yearId, monthId) {
 // المرحلة 4D: مدير الفرع بيشوف تبويبي "الموظفين" و"تقارير HR" بس - باقي التبويبات (ملخص/بصمة/حضور
 // المطبخ المركزي/سلف/تشغيلات) بيانات مالية/تشغيلية أوسع من صلاحيته، فبتتخفي تمامًا (زي مافيش)
 const BRANCH_MANAGER_TABS = ["employees", "hrreports"];
+// HR Foundation Hardening (HRF-6): true لما empDepartment يتحمّل من /api/organization/departments
+// الحقيقي (value=id) - غالبًا دايمًا صح، إلا لو نداء الـAPI فشل فعليًا (fallback نادر للنص القديم)
+let empDepartmentIsIdBased = false;
 
 async function boot() {
   document.getElementById("main").style.display = "block";
   document.getElementById("accessDenied").style.display = "none";
 
-  document.getElementById("empDepartment").innerHTML = DEPARTMENTS.map(d => `<option value="${d}">${d}</option>`).join("");
-  document.getElementById("hrDeptFilter").innerHTML += DEPARTMENTS.map(d => `<option value="${d}">${d}</option>`).join("");
+  // HR Foundation Hardening (HRF-6): بقت entities حقيقية (GET /api/organization/departments) بدل
+  // مصفوفة DEPARTMENTS الثابتة - نفس الأقسام السبعة بالظبط (متزروعة من db/schema.sql) + أي قسم إضافي
+  // اتعمل تلقائيًا وقت الـmigration من بيانات قديمة. empDepartment بيبعت departmentId (id حقيقي)،
+  // hrDeptFilter لسه بيفلتر بالاسم النصي (تقارير HR بتستخدم عمود department النصي زي ما هو)
+  try {
+    const departments = await api("/api/organization/departments?status=active");
+    document.getElementById("empDepartment").innerHTML = departments.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join("");
+    document.getElementById("hrDeptFilter").innerHTML += departments.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("");
+    empDepartmentIsIdBased = true;
+  } catch (e) {
+    // مدير فرع من غير organization.view (نادر) - يفضل الفورم شغال، بس من غير قائمة أقسام ديناميكية
+    document.getElementById("empDepartment").innerHTML = DEPARTMENTS.map(d => `<option value="${d}">${d}</option>`).join("");
+    document.getElementById("hrDeptFilter").innerHTML += DEPARTMENTS.map(d => `<option value="${d}">${d}</option>`).join("");
+    empDepartmentIsIdBased = false;
+  }
 
   if (auth.user.role === "branch_manager") {
     document.querySelectorAll(".tabbtn").forEach(btn => {
@@ -884,7 +906,9 @@ document.getElementById("empSubmit").onclick = async () => {
       method: "POST",
       body: JSON.stringify({
         name: document.getElementById("empName").value.trim(),
-        department: document.getElementById("empDepartment").value,
+        ...(empDepartmentIsIdBased
+          ? { departmentId: Number(document.getElementById("empDepartment").value) }
+          : { department: document.getElementById("empDepartment").value }),
         jobTitle: document.getElementById("empJobTitle").value.trim() || null,
         attendanceSystem: document.getElementById("empAttendanceSystem").value,
         wageType: document.getElementById("empWageType").value,

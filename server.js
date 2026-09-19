@@ -70,6 +70,7 @@ app.use("/api/cash-sessions", require("./routes/cash-sessions"));
 app.use("/api/customers", require("./routes/customers"));
 app.use("/api/customer-auth", require("./routes/customer-auth"));
 app.use("/api/hr", require("./routes/hr"));
+app.use("/api/organization", require("./routes/organization"));
 app.use("/api/sync", require("./routes/sync"));
 app.use("/api/reports", require("./routes/reports"));
 app.use("/api/payroll", require("./routes/payroll"));

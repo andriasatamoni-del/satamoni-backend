@@ -68,6 +68,9 @@ const ROLE_PERMISSIONS = {
     // بس مفيش talabat.payment_override (تعديل طريقة دفع طلبات) خالص، ده محاسب/أدمن بس عمدًا زي ما
     // مطلوب صراحة (فصل بين مين بيلاحظ المشكلة ومين يقدر يعتمد تعديلها)
     "talabat.view", "talabat.retry",
+    // HR Foundation Hardening (HRF-6): رؤية بس - عشان يقدر يختار قسم/مسمى وظيفي حقيقي وقت تعديل موظف
+    // فرعه (canManageStaff)، مش إدارة الهيكل نفسه (organization.manage أدمن بس عمدًا)
+    "organization.view",
   ],
   accountant: [
     "inventory.view", "recipes.view",
@@ -101,6 +104,9 @@ const ROLE_PERMISSIONS = {
     // تكامل طلبات: المحاسب هو صاحب المطابقة اليومية (Talabat vs Stamoni) وهو معتمد تعديل طريقة الدفع
     // القادمة من طلبات (نفس منطق سقف تعديل الدفع العالي - قرار مالي بحت مش تشغيلي)
     "talabat.view", "talabat.retry", "talabat.payment_override", "talabat.reconciliation",
+    // HR Foundation Hardening (HRF-6): رؤية بس - عشان ينشئ/يعدّل موظف بقسم/مسمى وظيفي حقيقي، مش إدارة
+    // الهيكل نفسه (organization.manage أدمن بس عمدًا - قرار هيكلي على مستوى الشركة كلها)
+    "organization.view",
   ],
   cashier: [
     "orders.create", "orders.discount.request", "orders.void.request",
@@ -331,6 +337,11 @@ const PERMISSION_CATALOG = [
     { key: "talabat.reconciliation", label: "مطابقة طلبات اليومية" },
     { key: "talabat.mapping_manage", label: "إدارة ربط أصناف طلبات بمنتجات ستاموني" },
     { key: "talabat.integration_admin", label: "إعدادات التكامل الإدارية (اعتماد بيانات الاتصال)" },
+  ] },
+  // HR Foundation Hardening (HRF-6): إدارة الأقسام والمسميات الوظيفية (entities حقيقية بدل free-text)
+  { group: "organization", groupLabel: "الهيكل التنظيمي (أقسام ومسميات وظيفية)", permissions: [
+    { key: "organization.view", label: "رؤية قائمة الأقسام والمسميات الوظيفية" },
+    { key: "organization.manage", label: "إنشاء/تعديل/تعطيل قسم أو مسمى وظيفي" },
   ] },
   { group: "crm", groupLabel: "متابعة العملاء (CRM)", permissions: [
     { key: "crm.followups.view", label: "رؤية طابور/سجل متابعة الأوردرات" },
