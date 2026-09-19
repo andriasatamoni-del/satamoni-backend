@@ -108,10 +108,20 @@ router.post("/adjustment-requests", requirePermission("payment_control.adjustmen
   if (!paymentId || !reason) return res.status(400).json({ error: "لازم تحدد الدفعة والسبب" });
   const client = await pool.connect();
   try {
-    const paymentRes = await client.query("SELECT branch_id FROM payments WHERE id = $1", [paymentId]);
+    const paymentRes = await client.query(
+      `SELECT p.branch_id, o.source AS order_source
+       FROM payments p LEFT JOIN orders o ON o.id = p.order_id WHERE p.id = $1`,
+      [paymentId]
+    );
     if (paymentRes.rows.length === 0) return res.status(404).json({ error: "سجل الدفع مش موجود" });
     if (!assertOwnBranch(req.user, paymentRes.rows[0].branch_id)) {
       return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+    }
+    // تكامل طلبات: طريقة الدفع القادمة من Talabat مصدر حقيقة مقفول - حتى مجرد طلب تعديلها (مش بس
+    // اعتماده) لازم صلاحية talabat.payment_override منفصلة صراحة، مش payment_control.adjustment.request
+    // العامة اللي الكاشير أصلًا معاه (PREVENT مش TRUST -> REVIEW)
+    if (paymentRes.rows[0].order_source === "talabat" && !hasPermission(req.user, "talabat.payment_override")) {
+      return res.status(403).json({ error: "تعديل طريقة دفع أوردر طلبات محتاج صلاحية منفصلة (talabat.payment_override)" });
     }
     await client.query("BEGIN");
     const request = await createAdjustmentRequest(client, {
@@ -163,13 +173,16 @@ router.post("/adjustment-requests/:id/approve", requirePermission("payment_contr
   const client = await pool.connect();
   try {
     const reqRow = await client.query(
-      `SELECT par.id, p.branch_id FROM payment_adjustment_requests par
-       JOIN payments p ON p.id = par.payment_id WHERE par.id = $1`,
+      `SELECT par.id, p.branch_id, o.source AS order_source FROM payment_adjustment_requests par
+       JOIN payments p ON p.id = par.payment_id LEFT JOIN orders o ON o.id = p.order_id WHERE par.id = $1`,
       [req.params.id]
     );
     if (reqRow.rows.length === 0) return res.status(404).json({ error: "طلب التعديل مش موجود" });
     const branchId = reqRow.rows[0].branch_id;
     if (!assertOwnBranch(req.user, branchId)) return res.status(403).json({ error: "معندكش صلاحية على فرع تاني" });
+    if (reqRow.rows[0].order_source === "talabat" && !hasPermission(req.user, "talabat.payment_override")) {
+      return res.status(403).json({ error: "اعتماد تعديل طريقة دفع أوردر طلبات محتاج صلاحية منفصلة (talabat.payment_override)" });
+    }
 
     await client.query("BEGIN");
     const { approver } = await consumeApprovalGrant(client, {
@@ -494,6 +507,47 @@ router.get("/audit-logs", requirePermission("payment_control.audit.view"), async
        LEFT JOIN users u ON u.id = pal.actor_id
        ${where}
        ORDER BY pal.created_at DESC LIMIT 500`,
+      values
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/payment-control/talabat-payment-overrides - تكامل طلبات (TAL-6): تقرير "Payment Overrides"
+// - كل تعديل طريقة دفع أوردر طلبات اتعتمد فعليًا (مين طلب، مين اعتمد، السبب، القديم/الجديد، الأوردر)،
+// مبني على payment_audit_logs (سجل غير قابل للتعديل/الحذف - مفيش أي DELETE على الجدول ده في كل الكود)
+router.get("/talabat-payment-overrides", requirePermission("talabat.reconciliation"), async (req, res) => {
+  let branchId;
+  try { branchId = resolveBranchScope(req); } catch (err) { return res.status(403).json({ error: err.message }); }
+  const conditions = ["o.source = 'talabat'", "par.status = 'APPROVED'"];
+  const values = [];
+  let i = 1;
+  if (branchId) { conditions.push(`p.branch_id = $${i++}`); values.push(branchId); }
+  const where = `WHERE ${conditions.join(" AND ")}`;
+  try {
+    const result = await pool.query(
+      `SELECT
+         par.id AS adjustment_request_id, o.talabat_order_id, p.order_id, p.branch_id,
+         par.requested_by AS user_id, ru.name AS user_name,
+         pal.actor_id AS manager_id, mu.name AS manager_name,
+         par.reason,
+         (pal.before_state->>'payment_method_id')::int AS old_payment_method_id, opm.name AS old_payment_method,
+         (pal.after_state->>'payment_method_id')::int AS new_payment_method_id, npm.name AS new_payment_method,
+         par.requested_at, pal.created_at AS approved_at
+       FROM payment_adjustment_requests par
+       JOIN payments p ON p.id = par.payment_id
+       JOIN orders o ON o.id = p.order_id
+       LEFT JOIN payment_audit_logs pal
+         ON pal.payment_id = par.payment_id AND pal.action_type = 'ADJUSTMENT_APPROVED' AND pal.created_at = par.decided_at
+       LEFT JOIN users ru ON ru.id = par.requested_by
+       LEFT JOIN users mu ON mu.id = pal.actor_id
+       LEFT JOIN payment_methods opm ON opm.id = (pal.before_state->>'payment_method_id')::int
+       LEFT JOIN payment_methods npm ON npm.id = (pal.after_state->>'payment_method_id')::int
+       ${where}
+       ORDER BY par.decided_at DESC
+       LIMIT 500`,
       values
     );
     res.json(result.rows);
