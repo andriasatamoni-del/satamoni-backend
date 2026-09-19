@@ -381,8 +381,10 @@ describe("8) تقارير HR الأخرى", () => {
 });
 
 describe("9) سجل التدقيق (Audit Trail) - كل عملية HR حساسة متسجّلة", () => {
-  test("EMPLOYEE_CREATED وEMPLOYEE_HR_UPDATED وEMPLOYEE_WARNING_ISSUED وEMPLOYEE_LEAVE_RECORDED متسجّلين في audit_logs", async () => {
-    const actions = ["EMPLOYEE_CREATED", "EMPLOYEE_HR_UPDATED", "EMPLOYEE_WARNING_ISSUED", "EMPLOYEE_LEAVE_RECORDED", "EMPLOYEE_LEAVE_CANCELLED"];
+  // HRF-3: EMPLOYEE_HR_UPDATED (routes/hr.js) وEMPLOYEE_UPDATED (routes/payroll.js) كانوا اسمين مختلفين
+  // لنفس العملية فعليًا - اتوحّدوا لـEMPLOYEE_UPDATED بس بعد تجميع منطق التحديث في db/employee-service.js
+  test("EMPLOYEE_CREATED وEMPLOYEE_UPDATED وEMPLOYEE_WARNING_ISSUED وEMPLOYEE_LEAVE_RECORDED متسجّلين في audit_logs", async () => {
+    const actions = ["EMPLOYEE_CREATED", "EMPLOYEE_UPDATED", "EMPLOYEE_WARNING_ISSUED", "EMPLOYEE_LEAVE_RECORDED", "EMPLOYEE_LEAVE_CANCELLED"];
     for (const action of actions) {
       const res = await pool.query("SELECT COUNT(*) AS c FROM audit_logs WHERE action = $1", [action]);
       expect(Number(res.rows[0].c)).toBeGreaterThanOrEqual(1);

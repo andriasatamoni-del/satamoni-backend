@@ -7,9 +7,8 @@ const { logAudit } = require("../db/audit");
 const { postJournalEntry, reverseJournalEntry, getOrCreateBranchCashAccount, getAccountByCode } = require("../db/accounting-engine");
 const { computePayrollSummary, computePayrollCostByBranch, toCents } = require("../services/payroll-engine");
 const { computeRevenueAndCogsByBranch } = require("../services/revenue-engine");
-const { recordEmployeeHistoryChanges } = require("../db/employee-history");
 const { parsePayrollWorkbook, normalizeArabicName } = require("../db/payroll-excel-import");
-const { checkTerminationBlockers, applyTerminationCascade } = require("../db/employee-termination");
+const { updateEmployee, EmployeeUpdateError } = require("../db/employee-service");
 
 // ملف الرواتب الشهري نفسه محدود الحجم جدًا (ملف Excel واحد لكل شهر) - 20MB سقف سخي كفاية ومانع لأي حمل زيادة
 const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -142,76 +141,37 @@ router.post("/employees", async (req, res) => {
 // المرحلة 9A-4: نفس كاسكيد الإنهاء بالظبط اللي في routes/hr.js PATCH /employees/:id - المسار ده
 // (isActive:false -> status='terminated') بوابة تانية لنفس الفعل (توافق رجعي - راجع تعليق 4D فوق)،
 // فكان لازم يتغطى بنفس الفحص/التعطيل، وإلا حد يقدر يتفادى كل ضمانات 9A-4 لو استخدم المسار ده بدل hr.js
+// HR Foundation Hardening (HRF-3): الجسم الفعلي اتنقل لـdb/employee-service.js (تنفيذ كانوني واحد
+// يشاركه routes/hr.js) - إصلاح ضمني هنا: نقل الفرع (restrictedBranchId) بقى محتاج أدمن دايمًا (كان
+// من غير أي قيد هنا قبل كده - ثغرة صلاحيات حقيقية اتكشفت في التدقيق، الفحص المتاح للفرونت إند الحالي
+// أثبت إن ده مايكسرش أي استخدام حالي - محاسب ميبعتش restrictedBranchId من أي شاشة موجودة فعليًا)
 router.patch("/employees/:id", async (req, res) => {
   const { id } = req.params;
-  const before = await pool.query("SELECT * FROM employees WHERE id = $1", [id]);
-  if (before.rows.length === 0) return res.status(404).json({ error: "الموظف مش موجود" });
-
   const body = { ...req.body };
   if (body.isActive !== undefined && body.status === undefined) {
     body.status = body.isActive ? "active" : "terminated";
   }
   delete body.isActive; // is_active مشتق من status بالـtrigger، مش عمود يتكتب فيه مباشرة
 
-  const map = {
-    name: "name", department: "department", jobTitle: "job_title", attendanceSystem: "attendance_system",
-    hireDate: "hire_date", baseSalary: "base_salary", workingDaysPerMonth: "working_days_per_month",
-    shift: "shift", wageType: "wage_type", hourlyRate: "hourly_rate", phone: "phone", notes: "notes",
-    countDay31: "count_day_31", restrictedBranchId: "restricted_branch_id",
-    employeeCode: "employee_code", status: "status", terminationDate: "termination_date",
-    terminationReason: "termination_reason",
-  };
-  const fields = [];
-  const values = [];
-  let i = 1;
-  for (const [key, col] of Object.entries(map)) {
-    if (body[key] !== undefined) { fields.push(`${col} = $${i++}`); values.push(body[key]); }
-  }
-  if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
-  values.push(id);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const lockedBefore = await client.query("SELECT * FROM employees WHERE id = $1 FOR UPDATE", [id]);
-    const isTerminating = body.status === "terminated" && lockedBefore.rows[0].status !== "terminated";
-    let terminationCascade = null;
-    let acknowledgedBlockers = null;
-    if (isTerminating) {
-      const { blockers, driver } = await checkTerminationBlockers(client, lockedBefore.rows[0]);
-      if (blockers.length > 0 && body.acknowledgeBlockers !== true) {
-        await client.query("ROLLBACK");
-        return res.status(409).json({
-          error: "فيه بنود معلّقة لازم تراجعها قبل إنهاء خدمة الموظف - لو متأكد، ابعت الطلب تاني مع acknowledgeBlockers:true",
-          blockers,
-        });
-      }
-      acknowledgedBlockers = blockers;
-      terminationCascade = await applyTerminationCascade(client, { employee: lockedBefore.rows[0], driver, actorUserId: req.user.id });
-    }
-
-    const result = await client.query(`UPDATE employees SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`, values);
-    if (result.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "الموظف مش موجود" }); }
-    await recordEmployeeHistoryChanges(client, {
-      employeeId: Number(id), before: before.rows[0],
-      changes: { department: body.department, job_title: body.jobTitle, restricted_branch_id: body.restrictedBranchId, status: body.status },
-      changedBy: req.user.id, reason: body.reason || null,
+    const { employee, terminationCascade } = await updateEmployee(client, {
+      employeeId: Number(id), actorUser: req.user, req,
+      fields: {
+        name: body.name, department: body.department, jobTitle: body.jobTitle, attendanceSystem: body.attendanceSystem,
+        hireDate: body.hireDate, baseSalary: body.baseSalary, workingDaysPerMonth: body.workingDaysPerMonth,
+        shift: body.shift, wageType: body.wageType, hourlyRate: body.hourlyRate, phone: body.phone, notes: body.notes,
+        countDay31: body.countDay31, restrictedBranchId: body.restrictedBranchId, employeeCode: body.employeeCode,
+        status: body.status, terminationDate: body.terminationDate, terminationReason: body.terminationReason,
+        reason: body.reason, acknowledgeBlockers: body.acknowledgeBlockers,
+      },
     });
-    await logAudit(client, {
-      userId: req.user.id, action: "EMPLOYEE_UPDATED", entityType: "employee", entityId: Number(id),
-      oldValues: before.rows[0], newValues: result.rows[0], req,
-    });
-    if (isTerminating) {
-      await logAudit(client, {
-        userId: req.user.id, action: "EMPLOYEE_TERMINATION_CASCADE", entityType: "employee", entityId: Number(id),
-        newValues: terminationCascade,
-        metadata: { acknowledgedBlockerCodes: acknowledgedBlockers.map((b) => b.code), blockersFound: acknowledgedBlockers.length },
-        req,
-      });
-    }
     await client.query("COMMIT");
-    res.json({ ...result.rows[0], terminationCascade: terminationCascade || undefined });
+    res.json({ ...employee, terminationCascade: terminationCascade || undefined });
   } catch (err) {
     await client.query("ROLLBACK");
+    if (err instanceof EmployeeUpdateError) return res.status(err.status).json({ error: err.message, blockers: err.blockers });
     if (err.code === "23505") return res.status(409).json({ error: "كود الموظف ده مستخدم بالفعل" });
     if (err.code === "23514") return res.status(400).json({ error: "قيمة غير صحيحة (تحقق من status)" });
     res.status(500).json({ error: err.message });
