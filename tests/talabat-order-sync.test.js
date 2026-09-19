@@ -165,3 +165,62 @@ describe("syncNormalizedOrder - PREVENT -> DETECT -> AUDIT لكل حالة رب�
     expect(result.reason).toBe("NORMALIZED_ORDER_INVALID");
   });
 });
+
+// TAL-10: سيناريو "فشل إنشاء أوردر POS بعد استلام webhook ناجح" - مش نجاح صامت. هنا الفشل جاي من نفس
+// محرك المخزون اللي أي أوردر كاشير عادي بيمر منه (STRICT negative stock policy، رصيد صفر)
+describe("syncNormalizedOrder - فشل إنشاء أوردر POS (نفص مخزون) بعد استلام ناجح", () => {
+  let noStockItemId, noStockVariantId;
+
+  beforeAll(async () => {
+    const rawIngredient = await pool.query(
+      "INSERT INTO inventory_items (name, unit, unit_cost) VALUES ('مكوّن-صفر-رصيد-جست', 'KG', 10) RETURNING id"
+    );
+    const cat = await pool.query("INSERT INTO menu_categories (name) VALUES ('قسم-فشل-مخزون-جست') RETURNING id");
+    const mi = await pool.query(
+      "INSERT INTO menu_items (category_id, name) VALUES ($1,'صنف-فشل-مخزون-جست') RETURNING id",
+      [cat.rows[0].id]
+    );
+    noStockItemId = mi.rows[0].id;
+    const v = await pool.query(
+      "INSERT INTO menu_item_variants (item_id, label, price, talabat_price) VALUES ($1,'عادي',50,50) RETURNING id",
+      [noStockItemId]
+    );
+    noStockVariantId = v.rows[0].id;
+    await pool.query(
+      "INSERT INTO menu_item_variant_ingredients (variant_id, inventory_item_id, quantity_per_unit) VALUES ($1,$2,1)",
+      [noStockVariantId, rawIngredient.rows[0].id]
+    );
+    // مفيش أي رصيد مسجّل للمكوّن ده في الفرع خالص - رصيد صفر ضمنيًا، وسياسة الفرع الافتراضية STRICT
+    await pool.query(
+      `INSERT INTO talabat_product_mapping (branch_id, talabat_item_id, stamoni_menu_item_id, stamoni_variant_id, active, mapping_status)
+       VALUES ($1, 'item-no-stock-jest', $2, $3, TRUE, 'MAPPED')`,
+      [branchId, noStockItemId, noStockVariantId]
+    );
+  });
+
+  test("بيرجع FAILED/TALABAT_ORDER_FAILED، مفيش أوردر POS اتنشأ، وIntegration Error مرئي بيتسجل", async () => {
+    const normalizedOrder = baseNormalizedOrder({
+      items: [{ talabatItemId: "item-no-stock-jest", talabatSku: null, name: "صنف بلا رصيد", quantity: 1, unitPrice: 50, totalPrice: 50 }],
+    });
+    const result = await syncNormalizedOrder(normalizedOrder, {});
+    expect(result.status).toBe("FAILED");
+    expect(result.reason).toBe("TALABAT_ORDER_FAILED");
+
+    const orderCount = await pool.query("SELECT COUNT(*) FROM orders WHERE talabat_order_id = $1", [normalizedOrder.talabatOrderId]);
+    expect(Number(orderCount.rows[0].count)).toBe(0);
+
+    const talabatOrderRow = await pool.query(
+      "SELECT order_status, pos_order_id FROM talabat_orders WHERE talabat_order_id = $1",
+      [normalizedOrder.talabatOrderId]
+    );
+    expect(talabatOrderRow.rows[0].order_status).toBe("FAILED");
+    expect(talabatOrderRow.rows[0].pos_order_id).toBeNull();
+
+    const errRow = await pool.query(
+      "SELECT status FROM talabat_integration_errors WHERE talabat_order_id = $1 AND error_type = 'TALABAT_ORDER_FAILED'",
+      [normalizedOrder.talabatOrderId]
+    );
+    expect(errRow.rows.length).toBe(1);
+    expect(errRow.rows[0].status).toBe("OPEN");
+  });
+});
