@@ -2787,3 +2787,107 @@ CREATE TABLE whatsapp_complaints (
 );
 CREATE INDEX idx_whatsapp_complaints_status ON whatsapp_complaints(status);
 CREATE INDEX idx_whatsapp_complaints_order ON whatsapp_complaints(order_id);
+
+-- ============================================================================
+-- Talabat Partner API Integration (استبدال إعادة إدخال طلبات طلبات يدويًا في POS)
+-- راجع docs/TALABAT-INTEGRATION.md للتصميم الكامل. talabat_orders منفصل عمدًا عن orders (اللي بيمثّل
+-- الطلب الحقيقي في POS بعد الاستيراد) - جدول staging بيحتفظ بحالة/بيانات Talabat الخام زي ما وصلت،
+-- ومربوط 1:1 بطلب POS الحقيقي بعد نجاح الاستيراد (pos_order_id فريد - مينفعش طلب Talabat واحد يعمل
+-- أكتر من طلب POS). أسماء الحقول هنا مبنية على تصميمنا الداخلي، مش على spec حقيقي متأكد منه لحد دلوقتي
+-- (راجع services/talabat/talabat-client.js) - قابلة للتعديل وقت التكامل الفعلي مع Talabat Sandbox.
+-- ============================================================================
+
+CREATE TABLE talabat_orders (
+  id                        SERIAL PRIMARY KEY,
+  branch_id                 INTEGER NOT NULL REFERENCES branches(id),
+  talabat_order_id          TEXT NOT NULL UNIQUE, -- معرّف الطلب عند طلبات - مصدر منع التكرار الأساسي
+  talabat_external_order_id TEXT, -- بعض الـAPIs بتفرّق بين معرّف داخلي ومعرّف خارجي/عرض - اختياري لحد ما يتأكد
+  talabat_order_code        TEXT, -- كود قصير مقروء للعميل/الطيار لو موجود
+  order_status               TEXT NOT NULL DEFAULT 'RECEIVED'
+                               CHECK (order_status IN ('RECEIVED', 'MAPPING_ERROR', 'IMPORTED', 'FAILED', 'CANCELED')),
+  order_type                TEXT, -- delivery/pickup إلخ زي ما طلبات بترسله
+  payment_method             TEXT NOT NULL, -- النص الخام لطريقة الدفع من طلبات - Source of Truth، ملهوش تعديل يدوي مباشر
+  subtotal                  NUMERIC,
+  delivery_fee               NUMERIC,
+  discount                  NUMERIC,
+  total                      NUMERIC NOT NULL,
+  currency                  TEXT DEFAULT 'EGP',
+  pos_order_id               INTEGER UNIQUE REFERENCES orders(id), -- علاقة 1↔1 فعلية (UNIQUE) - نفس طلب POS منعمل مرتين
+  received_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+  accepted_at                 TIMESTAMPTZ,
+  canceled_at                   TIMESTAMPTZ,
+  cancellation_source             TEXT CHECK (cancellation_source IN ('TALABAT', 'STAMONI')),
+  raw_payload                       JSONB NOT NULL, -- الـpayload الخام الكامل زي ما وصل، بيتحفظ حتى لو فشل الاستيراد
+  created_at                          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at                             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_talabat_orders_branch ON talabat_orders(branch_id);
+CREATE INDEX idx_talabat_orders_status ON talabat_orders(order_status);
+
+-- كل صنف عند طلبات لازم يتربط بصنف/وصفة ستاموني حقيقية - مربوط بالفرع صراحة (مش عام) لأن قائمة طلبات
+-- بتتسجل لكل فرع/store مستقل عادةً حتى لو المنتج "نفسه" منطقيًا عبر الفروع
+CREATE TABLE talabat_product_mapping (
+  id                    SERIAL PRIMARY KEY,
+  branch_id             INTEGER NOT NULL REFERENCES branches(id),
+  talabat_item_id       TEXT NOT NULL,
+  talabat_sku           TEXT,
+  stamoni_menu_item_id  INTEGER REFERENCES menu_items(id),
+  stamoni_variant_id    INTEGER REFERENCES menu_item_variants(id),
+  active                BOOLEAN NOT NULL DEFAULT TRUE,
+  mapping_status        TEXT NOT NULL DEFAULT 'MAPPED' CHECK (mapping_status IN ('MAPPED', 'UNMAPPED', 'NEEDS_REVIEW')),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(branch_id, talabat_item_id)
+);
+
+-- Idempotency الحقيقي لاستقبال الـwebhook - dedupe_key هو الحارس الفعلي (UNIQUE)، مش مجرد سجل تاريخي.
+-- لو نفس الـwebhook وصل مرتين (retry من طلبات، إعادة إرسال شبكة)، الإدخال التاني برضه بيتسجل هنا
+-- (processing_status='DUPLICATE') بس من غير ما يعيد تنفيذ أي أثر عملي تاني
+CREATE TABLE talabat_webhook_events (
+  id                 SERIAL PRIMARY KEY,
+  event_id           TEXT, -- معرّف الحدث/التسليم من طلبات لو موجود
+  talabat_order_id   TEXT,
+  event_type         TEXT NOT NULL DEFAULT 'UNKNOWN', -- ORDER_CREATED/ORDER_UPDATED/ORDER_CANCELED/STATUS_CHANGED/UNKNOWN (تصنيف داخلي)
+  received_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_ip          TEXT,
+  processing_status  TEXT NOT NULL DEFAULT 'RECEIVED' CHECK (processing_status IN ('RECEIVED', 'PROCESSED', 'DUPLICATE', 'FAILED')),
+  error_message      TEXT,
+  raw_payload        JSONB NOT NULL,
+  dedupe_key         TEXT NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX idx_talabat_webhook_events_dedupe ON talabat_webhook_events(dedupe_key);
+
+-- أي فشل في الاستيراد (mapping ناقص، فشل إنشاء طلب POS، إلخ) - الطلب معتبرش نجح لمجرد إن الـwebhook
+-- اتستقبل. retry_count/last_retry_at بيدعموا آلية إعادة محاولة من شاشة Integration Errors
+CREATE TABLE talabat_integration_errors (
+  id                SERIAL PRIMARY KEY,
+  talabat_order_id  TEXT,
+  branch_id         INTEGER REFERENCES branches(id),
+  error_type        TEXT NOT NULL, -- TALABAT_ORDER_FAILED / MAPPING_ERROR / PAYMENT_METHOD_UNMAPPED / ...
+  error_message     TEXT NOT NULL,
+  raw_payload       JSONB,
+  retry_count       INTEGER NOT NULL DEFAULT 0,
+  last_retry_at     TIMESTAMPTZ,
+  status            TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'RETRYING', 'RESOLVED', 'IGNORED')),
+  resolved_by       INTEGER REFERENCES users(id),
+  resolved_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_talabat_integration_errors_status ON talabat_integration_errors(status);
+
+-- طريقة دفع طلبات (النص الخام زي "CASH"/"CARD") لازم تتربط بطريقة دفع ستاموني حقيقية عشان القفل يشتغل
+-- تلقائيًا زي أي طلب POS عادي (راجع db/payment-control-engine.js lockPaymentForOrder) - نفس فلسفة
+-- settlement_channel الموجود بالفعل على نفس الجدول بالظبط
+ALTER TABLE payment_methods ADD COLUMN talabat_payment_code TEXT;
+CREATE UNIQUE INDEX idx_payment_methods_talabat_code ON payment_methods(talabat_payment_code) WHERE talabat_payment_code IS NOT NULL;
+
+-- حساب نظام مخصّص لإسناد الطلبات اللي بتتسجل تلقائيًا من webhook طلبات (created_by/actor للمسار الداخلي
+-- في services/talabat/talabat-order-sync.js) - عشان سجل التدقيق يوضّح "مين سجّل الطلب ده" بدقة (حساب
+-- تكامل واضح، مش NULL غامض ولا حساب أدمن بشري حقيقي بالغلط). password_hash هنا bcrypt لقيمة عشوائية
+-- 32-byte اتولدت مرة واحدة ومتسجلتش/متطبعتش في أي مكان - الحساب ده مش متوقع يسجل دخول تفاعلي خالص
+-- (الـwebhook handler بيبني req.user داخليًا من غير ما يعدّي على JWT/login إطلاقًا)
+INSERT INTO users (name, email, password_hash, role, branch_id, is_active)
+VALUES ('Talabat Integration (System)', 'talabat-integration@system.internal',
+        '$2a$10$.cyk7sgzDg7Plm.Kca3gUO8UYVBdjrUGOSU43xmBzNGozORgJwIPm', 'admin', NULL, TRUE)
+ON CONFLICT (email) DO NOTHING;

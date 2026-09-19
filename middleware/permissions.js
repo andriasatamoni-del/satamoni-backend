@@ -64,6 +64,10 @@ const ROLE_PERMISSIONS = {
     // CRM-1: مدير الفرع يقدر يشوف/يسجّل متابعة أوردرات فرعه ويدير شكاوى فرعه زي الكول سنتر بالظبط
     // (مفيش فرق هنا - مدير الفرع كتير بيغطي دور الكول سنتر برضو في فروع صغيرة، زي KDS بالظبط)
     "crm.followups.view", "crm.followups.record", "crm.complaints.view", "crm.complaints.manage",
+    // تكامل طلبات: مدير الفرع يشوف أوردرات طلبات فرعه وعنده صلاحية إعادة محاولة استيراد فشل (retry) -
+    // بس مفيش talabat.payment_override (تعديل طريقة دفع طلبات) خالص، ده محاسب/أدمن بس عمدًا زي ما
+    // مطلوب صراحة (فصل بين مين بيلاحظ المشكلة ومين يقدر يعتمد تعديلها)
+    "talabat.view", "talabat.retry",
   ],
   accountant: [
     "inventory.view", "recipes.view",
@@ -94,6 +98,9 @@ const ROLE_PERMISSIONS = {
     "payment_control.view", "payment_control.adjustment.request",
     "payment_control.adjustment.approve", "payment_control.adjustment.approve_high",
     "payment_control.reconciliation.enter", "payment_control.exceptions.resolve", "payment_control.audit.view",
+    // تكامل طلبات: المحاسب هو صاحب المطابقة اليومية (Talabat vs Stamoni) وهو معتمد تعديل طريقة الدفع
+    // القادمة من طلبات (نفس منطق سقف تعديل الدفع العالي - قرار مالي بحت مش تشغيلي)
+    "talabat.view", "talabat.retry", "talabat.payment_override", "talabat.reconciliation",
   ],
   cashier: [
     "orders.create", "orders.discount.request", "orders.void.request",
@@ -135,6 +142,10 @@ const ROLE_PERMISSIONS = {
     // Payment Control & Reconciliation: الكاشير هو اللي هيلاحظ لو طريقة الدفع اتسجلت غلط على طلبه هو،
     // فمنطقي يقدر يبدأ طلب التعديل بنفسه (زي طلب الخصم/الاسترجاع بالظبط) - بس مش يعتمده هو نفسه
     "payment_control.adjustment.request",
+    // تكامل طلبات: الكاشير يشوف بس حالة أوردرات طلبات (اتوصّل/فشل استيراد/إلخ) - مفيش
+    // talabat.payment_override خالص (طريقة الدفع القادمة من طلبات قفل تمامًا من شاشة البيع العادية،
+    // التعديل الوحيد المسموح بيه محتاج صلاحية منفصلة صراحة - راجع docs/TALABAT-INTEGRATION.md)
+    "talabat.view",
   ],
   callcenter: [
     "orders.create", "orders.discount.request", "orders.void.request",
@@ -145,6 +156,8 @@ const ROLE_PERMISSIONS = {
     // CRM-1: الكول سنتر هو صاحب شاشة الـCRM الجديدة - بيسجّل متابعة الأوردرات المتسلّمة ويدير الشكاوى
     // من الاتصال لحد الحل (مفيش تقسيم "تسجيل بس" منفصل عن "حل" هنا - في مطعم صغير نفس الموظف بيعمل الاتنين)
     "crm.followups.view", "crm.followups.record", "crm.complaints.view", "crm.complaints.manage",
+    // الكول سنتر بيحتاج يشوف حالة أوردر طلبات لو عميل اتصل بيسأل عنه - رؤية بس، نفس منطق الكاشير فوق
+    "talabat.view",
   ],
   // المرحلة 7F: السائق أضيق دور في النظام عمدًا - طلباته المُسندة له بس (deliveries.view_own/update_own،
   // مقفولة كمان على مستوى الكود بمطابقة drivers.user_id مع req.user.id، مش الصلاحية دي بس)، وسجل
@@ -310,6 +323,14 @@ const PERMISSION_CATALOG = [
     { key: "payment_control.reconciliation.enter", label: "إدخال كشوف مطابقة خارجية" },
     { key: "payment_control.exceptions.resolve", label: "حل استثناءات المطابقة" },
     { key: "payment_control.audit.view", label: "رؤية سجل تدقيق المدفوعات" },
+  ] },
+  { group: "talabat", groupLabel: "تكامل طلبات (Talabat Integration)", permissions: [
+    { key: "talabat.view", label: "رؤية أوردرات طلبات وحالتها" },
+    { key: "talabat.retry", label: "إعادة محاولة استيراد أوردر فشل" },
+    { key: "talabat.payment_override", label: "تعديل طريقة دفع أوردر طلبات (استثنائي)" },
+    { key: "talabat.reconciliation", label: "مطابقة طلبات اليومية" },
+    { key: "talabat.mapping_manage", label: "إدارة ربط أصناف طلبات بمنتجات ستاموني" },
+    { key: "talabat.integration_admin", label: "إعدادات التكامل الإدارية (اعتماد بيانات الاتصال)" },
   ] },
   { group: "crm", groupLabel: "متابعة العملاء (CRM)", permissions: [
     { key: "crm.followups.view", label: "رؤية طابور/سجل متابعة الأوردرات" },
