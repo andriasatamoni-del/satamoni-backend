@@ -336,7 +336,7 @@ async function computePayrollSummary(pool, year, month) {
               SUM(amount) FILTER (WHERE adjustment_type = 'penalty') AS penalties,
               SUM(amount) FILTER (WHERE adjustment_type = 'bonus') AS bonuses
        FROM payroll_adjustments
-       WHERE EXTRACT(YEAR FROM entry_date) = $1 AND EXTRACT(MONTH FROM entry_date) = $2
+       WHERE EXTRACT(YEAR FROM entry_date) = $1 AND EXTRACT(MONTH FROM entry_date) = $2 AND status = 'ACTIVE'
        GROUP BY employee_id`,
       [year, month]
     ),
@@ -394,7 +394,7 @@ async function computePayrollCostByBranch(pool, year, month) {
               SUM(amount) FILTER (WHERE adjustment_type = 'penalty') AS penalties,
               SUM(amount) FILTER (WHERE adjustment_type = 'bonus') AS bonuses
        FROM payroll_adjustments
-       WHERE EXTRACT(YEAR FROM entry_date) = $1 AND EXTRACT(MONTH FROM entry_date) = $2
+       WHERE EXTRACT(YEAR FROM entry_date) = $1 AND EXTRACT(MONTH FROM entry_date) = $2 AND status = 'ACTIVE'
        GROUP BY employee_id`,
       [year, month]
     ),

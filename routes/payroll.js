@@ -532,24 +532,62 @@ router.post("/adjustments", async (req, res) => {
   if (!employeeId || !entryDate || !adjustmentType || amount === undefined) {
     return res.status(400).json({ error: "بيانات ناقصة" });
   }
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query("BEGIN");
+    const result = await client.query(
       `INSERT INTO payroll_adjustments (employee_id, entry_date, adjustment_type, amount, notes, created_by)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [employeeId, entryDate, adjustmentType, amount, notes || null, req.user.id]
     );
+    // HRF-4: أول Audit Log على إنشاء سلفة/جزاء/مكافأة - كان مفيش خالص قبل كده
+    await logAudit(client, {
+      userId: req.user.id, action: "PAYROLL_ADJUSTMENT_CREATED", entityType: "payroll_adjustment",
+      entityId: result.rows[0].id, newValues: result.rows[0], req,
+    });
+    await client.query("COMMIT");
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
-router.delete("/adjustments/:id", async (req, res) => {
+// POST /api/payroll/adjustments/:id/cancel - HRF-4: بدّل DELETE الصامت (بدون Audit Log، بدون سبب،
+// وبدون رجعة - ثغرة حقيقية اتكشفت في التدقيق). دلوقتي soft-cancel بس: السجل التاريخي مايتمسحش أبدًا،
+// status='CANCELLED' بيخليه يتستبعد تلقائيًا من حساب الرواتب (services/payroll-engine.js) من غير ما
+// يختفي من أي تقرير/مراجعة. لازم سبب صريح، ومسجّل بالكامل (مين/إمتى/ليه) في audit_logs
+router.post("/adjustments/:id/cancel", async (req, res) => {
+  const { reason } = req.body;
+  if (!reason) return res.status(400).json({ error: "لازم سبب الإلغاء" });
+  const client = await pool.connect();
   try {
-    await pool.query("DELETE FROM payroll_adjustments WHERE id = $1", [req.params.id]);
-    res.json({ ok: true });
+    await client.query("BEGIN");
+    const before = await client.query("SELECT * FROM payroll_adjustments WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (before.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "السجل مش موجود" }); }
+    if (before.rows[0].status === "CANCELLED") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "السجل ده ملغى بالفعل" });
+    }
+    const updated = await client.query(
+      `UPDATE payroll_adjustments SET status = 'CANCELLED', cancelled_by = $1, cancelled_at = now(), cancellation_reason = $2
+       WHERE id = $3 RETURNING *`,
+      [req.user.id, reason, req.params.id]
+    );
+    await logAudit(client, {
+      userId: req.user.id, action: "PAYROLL_ADJUSTMENT_CANCELLED", entityType: "payroll_adjustment",
+      entityId: Number(req.params.id), oldValues: before.rows[0], newValues: updated.rows[0],
+      metadata: { reason }, req,
+    });
+    await client.query("COMMIT");
+    res.json(updated.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

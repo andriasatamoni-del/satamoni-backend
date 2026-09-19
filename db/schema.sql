@@ -1841,7 +1841,15 @@ CREATE TABLE payroll_adjustments (
   shift_id        INTEGER REFERENCES pos_shifts(id),
   -- المرحلة 8.58: نفس فلسفة shift_id بالظبط - ربط مباشر بجرد المخزون اللي سبب السلفة (عجز جرد اتحمّل
   -- على موظف بعينه بدل ما يترحّل لحساب محاسبي عادي)
-  stocktake_id    INTEGER REFERENCES stocktakes(id)
+  stocktake_id    INTEGER REFERENCES stocktakes(id),
+  -- HR Foundation Hardening (HRF-4): كان فيه DELETE فعلي بدون أي أثر (حذف صامت لسلفة/جزاء/مكافأة، بدون
+  -- Audit Log، بدون سبب) - ثغرة حقيقية اتكشفت في التدقيق. دلوقتي الإلغاء بقى soft (status='CANCELLED')
+  -- زي فلسفة "لا حذف صامت" في كل المشروع (إجازة اتلغت، طلب اتلغى...) - السجل التاريخي مايتمسحش أبدًا،
+  -- وحساب الرواتب (services/payroll-engine.js) بيتجاهل أي صف CANCELLED تلقائيًا
+  status              TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'CANCELLED')),
+  cancelled_by        INTEGER REFERENCES users(id),
+  cancelled_at        TIMESTAMPTZ,
+  cancellation_reason TEXT
 );
 
 -- المرحلة 8.46: ربط تسوية كاش سائق ببونص التوصيل اللي اتسجل فعليًا للسائق (لو كان عنده employee_id مرتبط)

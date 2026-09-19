@@ -1419,17 +1419,23 @@ async function loadAdjustments() {
   const month = document.getElementById("adjFilterMonth").value;
   const rows = await api(`/api/payroll/adjustments?year=${year}&month=${month}`);
   document.getElementById("adjBody").innerHTML = rows.map(r => `
-    <tr>
+    <tr${r.status === "CANCELLED" ? ' style="opacity:.55;text-decoration:line-through"' : ""}>
       <td>${r.entry_date.slice(0, 10)}</td><td>${r.employee_name}</td><td>${typeLabels[r.adjustment_type]}</td>
       <td>${money(r.amount)}</td><td>${r.notes || "—"}</td>
-      <td><button class="linkbtn danger" data-deladj="${r.id}">حذف</button></td>
+      <td>${r.status === "CANCELLED"
+        ? `<span style="font-size:11px;color:var(--faint)" title="${r.cancellation_reason || ""}">ملغى</span>`
+        : `<button class="linkbtn danger" data-canceladj="${r.id}">إلغاء</button>`}</td>
     </tr>
   `).join("") || `<tr><td colspan="6">مفيش سلف/جزاءات/مكافآت مسجلة في الشهر ده</td></tr>`;
 
-  document.querySelectorAll("[data-deladj]").forEach(btn => {
+  document.querySelectorAll("[data-canceladj]").forEach(btn => {
     btn.onclick = async () => {
-      await api(`/api/payroll/adjustments/${btn.dataset.deladj}`, { method: "DELETE" });
-      loadAdjustments();
+      const reason = prompt("سبب إلغاء السلفة/الجزاء/المكافأة؟");
+      if (!reason) return;
+      try {
+        await api(`/api/payroll/adjustments/${btn.dataset.canceladj}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+        loadAdjustments();
+      } catch (e) { alert(e.message); }
     };
   });
 }
