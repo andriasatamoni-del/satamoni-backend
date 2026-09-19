@@ -1293,15 +1293,10 @@ router.post(
 // ومن غير ما المخزون أو القيد المحاسبي (اللي اتسجلوا وقت إنشاء الطلب مش وقت اكتماله) يترجعوا خالص -
 // ثغرة حقيقية اتكشفت من بلاغ كاشير حقيقي. دلوقتي أي طلب لسه مش "ملغي" بالفعل ينفع يتسترجع من هنا بنفس
 // الضمانات (PIN + عكس كامل) بغض النظر عن حالته
-router.post(
-  "/:id/void",
-  requireAuth,
-  // المرحلة 9A-2: requireRole هنا كان معناه إن "orders.cancel"/"orders.void.approve"/"orders.void.request"
-  // (المتاحين للأدمن يمنحهم/يلغيهم فرديًا لأي موظف من شاشة الصلاحيات - المرحلة 8.58) شكلية بالكامل،
-  // مبتأثرش على أي حد فعليًا يقدر يسترجع طلب - أي حد من الأدوار التلاتة كان يقدر يعدّي هنا بغض النظر
-  // عن أي إلغاء فردي. دلوقتي لازم يملك واحدة من الصلاحيات التلاتة دي فعليًا (زي ما بيتوقّع تمامًا)
-  requirePermission("orders.void.request", "orders.cancel", "orders.void.approve"),
-  async (req, res) => {
+// تكامل طلبات (services/talabat/talabat-cancellation.js): نفس فلسفة createOrderHandler بالظبط -
+// دالة مسمّاة مُصدَّرة عشان إلغاء أوردر طلبات (webhook) يستخدم نفس مسار الاسترجاع (عكس مخزون/ولاء/قيد
+// محاسبي، أبدًا DELETE) اللي أي إلغاء تاني في النظام بيعدّي منه، مش نسخة موازية منه
+async function voidOrderHandler(req, res) {
     const { reason, approvalToken } = req.body;
     if (!reason) return res.status(400).json({ error: "لازم سبب الاسترجاع" });
 
@@ -1449,7 +1444,16 @@ router.post(
     } finally {
       client.release();
     }
-  }
+}
+router.post(
+  "/:id/void",
+  requireAuth,
+  // المرحلة 9A-2: requireRole هنا كان معناه إن "orders.cancel"/"orders.void.approve"/"orders.void.request"
+  // (المتاحين للأدمن يمنحهم/يلغيهم فرديًا لأي موظف من شاشة الصلاحيات - المرحلة 8.58) شكلية بالكامل،
+  // مبتأثرش على أي حد فعليًا يقدر يسترجع طلب - أي حد من الأدوار التلاتة كان يقدر يعدّي هنا بغض النظر
+  // عن أي إلغاء فردي. دلوقتي لازم يملك واحدة من الصلاحيات التلاتة دي فعليًا (زي ما بيتوقّع تمامًا)
+  requirePermission("orders.void.request", "orders.cancel", "orders.void.approve"),
+  voidOrderHandler
 );
 
 // PUT /api/orders/:id - تعديل طلب لسه "تحت التحضير" بس (قبل ما ينتقل لحالة "في الطريق" أو يتسلم أو يتلغي).
@@ -2005,3 +2009,4 @@ router.put(
 
 module.exports = router;
 module.exports.createOrderHandler = createOrderHandler;
+module.exports.voidOrderHandler = voidOrderHandler;

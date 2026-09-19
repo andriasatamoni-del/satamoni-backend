@@ -10,8 +10,7 @@
 const pool = require("../../db/pool");
 const { createOrderHandler } = require("../../routes/orders");
 const { validateNormalizedOrder } = require("./talabat-payload-adapter");
-
-const SYSTEM_ACTOR_EMAIL = "talabat-integration@system.internal";
+const { SYSTEM_ACTOR_EMAIL, recordIntegrationError, getSystemActor, createCaptureResponse } = require("./talabat-shared");
 
 class TalabatSyncError extends Error {
   constructor(message, errorType) {
@@ -19,47 +18,6 @@ class TalabatSyncError extends Error {
     this.name = "TalabatSyncError";
     this.errorType = errorType;
   }
-}
-
-async function recordIntegrationError(client, { talabatOrderId, branchId = null, errorType, errorMessage, rawPayload = null }) {
-  await client.query(
-    `INSERT INTO talabat_integration_errors (talabat_order_id, branch_id, error_type, error_message, raw_payload)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [talabatOrderId, branchId, errorType, errorMessage, rawPayload ? JSON.stringify(rawPayload) : null]
-  );
-}
-
-async function getSystemActor(client) {
-  const result = await client.query(
-    "SELECT id, role, branch_id FROM users WHERE email = $1 AND is_active = TRUE",
-    [SYSTEM_ACTOR_EMAIL]
-  );
-  if (result.rows.length === 0) {
-    throw new Error(
-      "Talabat system actor user not found (talabat-integration@system.internal) - run db migrations"
-    );
-  }
-  const row = result.rows[0];
-  return { id: row.id, role: row.role, branchId: row.branch_id };
-}
-
-// Captures createOrderHandler's res.status(code).json(body) calls without a real HTTP response -
-// createOrderHandler's calling convention (res.status().json()) is unchanged from before TAL-2's
-// export, so this harness is the ONLY new surface, not a rewrite of the handler itself.
-function createCaptureResponse() {
-  let statusCode = 200;
-  let body = null;
-  const res = {
-    status(code) {
-      statusCode = code;
-      return res;
-    },
-    json(payload) {
-      body = payload;
-      return res;
-    },
-  };
-  return { res, getStatusCode: () => statusCode, getBody: () => body };
 }
 
 async function upsertTalabatOrderRow(client, { normalizedOrder, rawPayload, branchId, orderStatus }) {
