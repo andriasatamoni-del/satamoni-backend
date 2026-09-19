@@ -446,10 +446,15 @@ router.get("/attendance-punches", async (req, res) => {
   }
 });
 
-// PATCH /api/payroll/attendance-punches/:id - تصحيح بصمة ناقصة يدويًا أو تفعيل إذن تأخير
+// PATCH /api/payroll/attendance-punches/:id - تصحيح بصمة ناقصة يدويًا أو تفعيل إذن تأخير. HR Foundation
+// Hardening (HRF-5): العملية دي كانت overwrite صامت بالكامل (بدون Audit Log، بدون سبب) - أخطر عملية HR
+// من ناحية إمكانية التلاعب (تصحيح بصمة بيأثر مباشرة على الراتب) اتكشفت في التدقيق. دلوقتي لازم سبب
+// صريح، والقيمة الأصلية والجديدة بيتسجلوا كاملين في audit_logs (entity_type='attendance_punch') قبل ما
+// أي overwrite يحصل - القيمة القديمة تفضل قابلة للتتبّع دايمًا حتى لو الصف نفسه اتغيّر
 router.patch("/attendance-punches/:id", async (req, res) => {
   const { id } = req.params;
-  const { clockIn, clockOut, exempted } = req.body;
+  const { clockIn, clockOut, exempted, reason } = req.body;
+  if (!reason) return res.status(400).json({ error: "لازم سبب التصحيح" });
   const fields = [];
   const values = [];
   let i = 1;
@@ -458,12 +463,32 @@ router.patch("/attendance-punches/:id", async (req, res) => {
   if (exempted !== undefined) { fields.push(`exempted = $${i++}`); values.push(exempted); }
   if (fields.length === 0) return res.status(400).json({ error: "مفيش حاجة تتعدل" });
   values.push(id);
+  const client = await pool.connect();
   try {
-    const result = await pool.query(`UPDATE attendance_punches SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`, values);
-    if (result.rows.length === 0) return res.status(404).json({ error: "السجل مش موجود" });
+    await client.query("BEGIN");
+    const before = await client.query(
+      `SELECT ap.*, efc.employee_id FROM attendance_punches ap
+       LEFT JOIN employee_fingerprint_codes efc ON efc.branch_id = ap.branch_id AND efc.device_code = ap.device_code
+       WHERE ap.id = $1 FOR UPDATE OF ap`,
+      [id]
+    );
+    if (before.rows.length === 0) { await client.query("ROLLBACK"); return res.status(404).json({ error: "السجل مش موجود" }); }
+    const result = await client.query(`UPDATE attendance_punches SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`, values);
+    await logAudit(client, {
+      branchId: before.rows[0].branch_id, userId: req.user.id, action: "ATTENDANCE_PUNCH_CORRECTED",
+      entityType: "attendance_punch", entityId: Number(id),
+      oldValues: { clock_in: before.rows[0].clock_in, clock_out: before.rows[0].clock_out, exempted: before.rows[0].exempted },
+      newValues: { clock_in: result.rows[0].clock_in, clock_out: result.rows[0].clock_out, exempted: result.rows[0].exempted },
+      metadata: { reason, source: "MANUAL", employeeId: before.rows[0].employee_id || null },
+      req,
+    });
+    await client.query("COMMIT");
     res.json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

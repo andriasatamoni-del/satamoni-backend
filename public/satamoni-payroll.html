@@ -1321,6 +1321,8 @@ async function loadAttendanceTable() {
   document.querySelectorAll("[data-savepunch]").forEach(btn => {
     btn.onclick = async () => {
       const row = btn.closest("tr");
+      const reason = prompt("سبب تصحيح البصمة؟ (مثال: عطل جهاز البصمة، نسي يبصم...)");
+      if (!reason) return;
       try {
         await api(`/api/payroll/attendance-punches/${btn.dataset.savepunch}`, {
           method: "PATCH",
@@ -1328,6 +1330,7 @@ async function loadAttendanceTable() {
             clockIn: row.querySelector(".punch-in").value || null,
             clockOut: row.querySelector(".punch-out").value || null,
             exempted: row.querySelector(".punch-exempt").checked,
+            reason,
           }),
         });
         btn.textContent = "✓ اتحفظ";
