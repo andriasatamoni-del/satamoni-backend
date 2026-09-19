@@ -109,6 +109,7 @@ app.use("/api/payment-control", require("./routes/payment-control"));
 // المرحلة 8.43: أتمتة واتساب - رد آلي بذكاء اصطناعي على استفسارات العملاء، وتسجيل طلبات/شكاوى معلّقة
 app.use("/api/whatsapp", require("./routes/whatsapp"));
 app.use("/api/talabat", require("./routes/talabat-webhook"));
+app.use("/api/talabat", require("./routes/talabat"));
 // CRM-1: متابعة أوردرات الدليفري بعد التسليم (مكالمة تأكيد جودة/خدمة) + شكاوى العملاء
 app.use("/api/crm", require("./routes/crm"));
 
