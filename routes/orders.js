@@ -153,7 +153,12 @@ async function resolveOrderItems(client, items, source) {
 
 // POST /api/orders - إنشاء طلب جديد (من الموقع أو من شاشة الكاشير)
 // ده اللي هيستبدل window.storage في ملف الموقع الحالي
-router.post("/", requirePosAuthIfNeeded, async (req, res) => {
+//
+// تكامل طلبات (services/talabat/talabat-order-sync.js): الدالة دي مُسمّاة ومُصدَّرة (مش arrow function
+// مباشرة جوه router.post) عشان webhook طلبات يقدر يستدعيها داخليًا بـreq/res اصطناعيين (نفس المحرك
+// بالظبط - خصم مخزون/وصفة/قفل دفع - مش نسخة تانية موازية منه). صفر تغيير في المنطق الداخلي هنا، بس
+// نقل الجسم لدالة مسمّاة قابلة للاستدعاء من غير HTTP فعلي
+async function createOrderHandler(req, res) {
   const client = await pool.connect();
   try {
     const {
@@ -782,7 +787,8 @@ router.post("/", requirePosAuthIfNeeded, async (req, res) => {
   } finally {
     client.release();
   }
-});
+}
+router.post("/", requirePosAuthIfNeeded, createOrderHandler);
 
 // المرحلة 8E: كان الاستعلام ده من غير أي LIMIT - على فرع واحد أو تاريخ واحد مفيش مشكلة عمليًا، لكن
 // admin/accountant/callcenter لما يفتحوا الشاشة من غير فلتر فرع (زي شاشة "كل الفروع" في التوصيل)
@@ -1998,3 +2004,4 @@ router.put(
 );
 
 module.exports = router;
+module.exports.createOrderHandler = createOrderHandler;
