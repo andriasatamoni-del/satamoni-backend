@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<script>try{if(localStorage.getItem("satamoni-theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ستاموني — تكامل طلبات (Talabat)</title>
+<style>
+  :root {
+    --bg: #FFFFFF; --bg-alt: #F4F1EA; --card: #FFFFFF; --border: #E3DDD0; --ink: #221E17; --faint: #6E6459; --red: #C22A24; --gold: #A87C1F; --gold-bright: #8A5F16; --green: #2F7A3D; --line: #E7E1D5; --err: #B3261E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E0E10; --bg-alt: #18181B; --card: #1D1D20; --border: #2E2C27; --ink: #F4EFE4; --faint: #9C948A; --red: #C22A24; --gold: #CBA135; --gold-bright: #E8C468; --green: #3FA34D; --line: #2A2A2E; --err: #F08A83;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14px; }
+  #topbar { height: 56px; background: var(--bg-alt); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  #topbar .brand { font-weight: 800; color: var(--gold-bright); font-size: 17px; }
+  :root:not([data-theme="dark"]) #topbar {
+    background: #1B5FA8; border-bottom: 1px solid #164E8A; --ink: #FFFFFF; --faint: rgba(255,255,255,.82);
+    --line: rgba(255,255,255,.45); --green: #6FCF7A; --red: #FF6B60; --err: #FF8A80;
+  }
+  :root:not([data-theme="dark"]) #topbar .brand { color: #FFFFFF; }
+  #userInfo { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  #logoutBtn { background: transparent; border: 1px solid var(--line); color: var(--faint); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+
+  #main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 18px; color: var(--gold-bright); margin: 24px 0 12px; }
+  h1:first-child { margin-top: 0; }
+
+  #tabs { display: flex; gap: 6px; margin: 0 0 16px; flex-wrap: wrap; }
+  .tabbtn { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); color: var(--faint); cursor: pointer; font-weight: 700; font-size: 13px; }
+  .tabbtn.active { background: var(--red); color: #fff; border-color: var(--red); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .formbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .formbox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .formbox input, .formbox select { flex: 1; min-width: 140px; background: var(--bg-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 10px; font-size: 13px; font-family: inherit; }
+  .formbox button { padding: 10px 18px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .formbox label.small { flex: 0; white-space: nowrap; font-size: 12px; color: var(--faint); }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; text-align: center; }
+  .card .num { font-size: 24px; font-weight: 800; }
+  .card .label { font-size: 12px; color: var(--faint); margin-top: 4px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 10px; text-align: right; font-size: 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 700; background: var(--bg-alt); }
+  tr:last-child td { border-bottom: none; }
+  .tablewrap { overflow-x: auto; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; display: inline-block; }
+  .pill.ok { background: rgba(63,163,77,.15); color: var(--green); }
+  .pill.warn { background: rgba(168,124,31,.15); color: var(--gold); }
+  .pill.err { background: rgba(194,42,36,.15); color: var(--err); }
+  .smallbtn { padding: 5px 10px; border: none; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 11px; margin-inline-end: 4px; background: var(--red); color: #fff; }
+  .smallbtn:disabled { opacity: .5; cursor: not-allowed; }
+
+  #loginOverlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 60; }
+  #loginOverlay.hidden { display: none; }
+  #loginBox { width: 320px; text-align: center; }
+  #loginBox h1 { color: var(--gold-bright); margin-bottom: 24px; }
+  #loginBox input { width: 100%; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 10px; }
+  #loginBox button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: var(--red); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; margin-top: 6px; }
+  #loginErr { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #accessDenied { padding: 60px 20px; text-align: center; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">🛵 تكامل طلبات (Talabat)</div>
+  <div id="userInfo">
+    <span id="userName"></span>
+    <button id="themeToggleBtn" title="الوضع الليلي" style="background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">🌙</button>
+    <button id="logoutBtn">خروج</button>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div id="loginBox">
+    <h1>🛵 تسجيل دخول</h1>
+    <input id="loginEmail" type="email" placeholder="البريد الإلكتروني" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+    <button id="loginBtn">دخول</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="accessDenied" style="display:none">مفيش صلاحية على الشاشة دي.</div>
+
+<div id="main" style="display:none">
+  <div id="tabs">
+    <div class="tabbtn active" data-tab="dashboard">لوحة التحكم</div>
+    <div class="tabbtn" data-tab="paymentControl">Payment Control</div>
+  </div>
+
+  <!-- 1: لوحة التحكم -->
+  <div class="panel active" id="panel-dashboard">
+    <div class="formbox">
+      <div class="row">
+        <label class="small">الفرع</label>
+        <select id="dashBranchFilter"><option value="">كل الفروع</option></select>
+        <label class="small">التاريخ</label>
+        <input id="dashDateFilter" type="date" />
+        <button id="dashFilterBtn">تحديث</button>
+      </div>
+    </div>
+
+    <h1>حالة الاتصال</h1>
+    <div id="connectionStatusBox" class="formbox"></div>
+
+    <h1>أوردرات اليوم</h1>
+    <div class="cards" id="ordersTodayCards"></div>
+
+    <h1>ملخص طرق الدفع</h1>
+    <div class="tablewrap"><table>
+      <thead><tr><th>طريقة الدفع (كود Talabat)</th><th>عدد الأوردرات</th><th>الإجمالي</th></tr></thead>
+      <tbody id="paymentSummaryBody"></tbody>
+    </table></div>
+
+    <h1>الاستثناءات المفتوحة (Integration Errors)</h1>
+    <div class="tablewrap"><table>
+      <thead><tr><th>أوردر طلبات</th><th>النوع</th><th>الرسالة</th><th>محاولات</th><th>التاريخ</th><th></th></tr></thead>
+      <tbody id="exceptionsBody"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 2: Payment Control -->
+  <div class="panel" id="panel-paymentControl">
+    <div class="formbox">
+      <div class="row">
+        <label class="small">الفرع</label>
+        <select id="pcBranchFilter"><option value="">كل الفروع</option></select>
+        <label class="small">من</label>
+        <input id="pcFromFilter" type="date" />
+        <label class="small">إلى</label>
+        <input id="pcToFilter" type="date" />
+        <button id="pcFilterBtn">تحديث</button>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--faint);margin-bottom:12px">
+      مقارنة طريقة الدفع القادمة من طلبات مقابل طريقة الدفع الفعلية على أوردر POS - auto-flag لأي فرق،
+      من غير أي اعتماد على إدخال بشري.
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>أوردر طلبات</th><th>أوردر POS</th><th>دفع طلبات</th><th>دفع POS الفعلي</th><th>الحالة</th><th>التاريخ</th></tr></thead>
+      <tbody id="pcReportBody"></tbody>
+    </table></div>
+  </div>
+</div>
+
+<script>
+const API_BASE_URL = window.SATAMONI_API_URL || (location.protocol.startsWith("http") ? "" : "http://localhost:4000");
+const allowedRoles = ["admin", "branch_manager", "accountant", "cashier", "callcenter"];
+const CONNECTION_LABELS = {
+  NOT_CONFIGURED: { label: "مش مُفعّل - محتاج إعدادات Talabat", cls: "err" },
+  CONFIGURED_UNVERIFIED: { label: "الإعدادات متسجلة - لسه محتاجة تأكيد اتصال حقيقي", cls: "warn" },
+  CONNECTED: { label: "متصل", cls: "ok" },
+};
+const STATUS_LABELS = { RECEIVED: "مُستلَم", MAPPING_ERROR: "خطأ ربط", IMPORTED: "مُستورَد", FAILED: "فشل", CANCELED: "مُلغى" };
+
+const auth = {
+  token: sessionStorage.getItem("satamoni_token") || null,
+  user: JSON.parse(sessionStorage.getItem("satamoni_user") || "null"),
+};
+
+function showLogin() { document.getElementById("loginOverlay").classList.remove("hidden"); }
+function hideLogin() { document.getElementById("loginOverlay").classList.add("hidden"); }
+function setSession(token, user) {
+  auth.token = token; auth.user = user;
+  sessionStorage.setItem("satamoni_token", token);
+  sessionStorage.setItem("satamoni_user", JSON.stringify(user));
+  document.getElementById("userName").textContent = `${user.name} (${user.role})`;
+}
+function clearSession() {
+  auth.token = null; auth.user = null;
+  sessionStorage.removeItem("satamoni_token");
+  sessionStorage.removeItem("satamoni_user");
+}
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearSession(); showLogin(); throw new Error("انتهت الجلسة، سجل دخول تاني"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حصل خطأ");
+  return data;
+}
+function money(v) { return `${Number(v || 0).toFixed(2)} ج.م`; }
+function dt(v) { return v ? new Date(v).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" }) : "—"; }
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errBox = document.getElementById("loginErr");
+  errBox.textContent = "";
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    setSession(data.token, data.user);
+    if (!allowedRoles.includes(data.user.role)) {
+      hideLogin();
+      document.getElementById("accessDenied").style.display = "block";
+      return;
+    }
+    hideLogin();
+    boot();
+  } catch (e) { errBox.textContent = e.message; }
+};
+document.getElementById("logoutBtn").onclick = () => { clearSession(); location.reload(); };
+
+document.querySelectorAll(".tabbtn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${btn.dataset.tab}`));
+    loadTab(btn.dataset.tab);
+  };
+});
+function loadTab(tab) {
+  if (tab === "dashboard") loadDashboard();
+  if (tab === "paymentControl") loadPaymentControlReport();
+}
+
+async function loadBranches() {
+  try {
+    const branches = await api("/api/branches");
+    const opts = branches.map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join("");
+    document.getElementById("dashBranchFilter").insertAdjacentHTML("beforeend", opts);
+    document.getElementById("pcBranchFilter").insertAdjacentHTML("beforeend", opts);
+    if (auth.user.role !== "admin" && auth.user.branchId) {
+      document.getElementById("dashBranchFilter").value = auth.user.branchId;
+      document.getElementById("pcBranchFilter").value = auth.user.branchId;
+    }
+  } catch (e) { /* لو الراوت مش متاح للدور ده، مفيش فلتر فروع - عادي */ }
+}
+
+// ---------------- لوحة التحكم ----------------
+async function loadDashboard() {
+  const branchId = document.getElementById("dashBranchFilter").value;
+  const date = document.getElementById("dashDateFilter").value;
+  const qs = new URLSearchParams();
+  if (branchId) qs.set("branchId", branchId);
+  if (date) qs.set("date", date);
+  try {
+    const data = await api(`/api/talabat/dashboard-summary?${qs.toString()}`);
+    const conn = CONNECTION_LABELS[data.connectionStatus] || { label: data.connectionStatus, cls: "warn" };
+    document.getElementById("connectionStatusBox").innerHTML =
+      `<span class="pill ${conn.cls}">${conn.label}</span>`;
+
+    const counts = data.ordersToday || {};
+    document.getElementById("ordersTodayCards").innerHTML = Object.entries(STATUS_LABELS).map(([key, label]) => `
+      <div class="card"><div class="num">${counts[key] || 0}</div><div class="label">${label}</div></div>
+    `).join("");
+
+    document.getElementById("paymentSummaryBody").innerHTML = (data.paymentSummary || []).map(p => `
+      <tr><td>${esc(p.paymentMethod)}</td><td>${p.count}</td><td>${money(p.totalAmount)}</td></tr>
+    `).join("") || `<tr><td colspan="3">مفيش بيانات</td></tr>`;
+
+    document.getElementById("exceptionsBody").innerHTML = (data.openExceptions || []).map(e => `
+      <tr>
+        <td>${esc(e.talabat_order_id) || "—"}</td>
+        <td>${esc(e.error_type)}</td>
+        <td>${esc(e.error_message)}</td>
+        <td>${e.retry_count}</td>
+        <td>${dt(e.created_at)}</td>
+        <td><button class="smallbtn" data-retry-id="${e.id}">إعادة محاولة</button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="6">مفيش استثناءات مفتوحة 🎉</td></tr>`;
+    document.getElementById("exceptionsBody").querySelectorAll("[data-retry-id]").forEach(btn => {
+      btn.onclick = () => retryError(btn.dataset.retryId, btn);
+    });
+  } catch (e) {
+    document.getElementById("connectionStatusBox").textContent = e.message;
+  }
+}
+async function retryError(id, btn) {
+  btn.disabled = true;
+  try {
+    await api(`/api/talabat/integration-errors/${id}/retry`, { method: "POST" });
+    await loadDashboard();
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+document.getElementById("dashFilterBtn").onclick = loadDashboard;
+
+// ---------------- Payment Control ----------------
+async function loadPaymentControlReport() {
+  const branchId = document.getElementById("pcBranchFilter").value;
+  const from = document.getElementById("pcFromFilter").value;
+  const to = document.getElementById("pcToFilter").value;
+  const qs = new URLSearchParams();
+  if (branchId) qs.set("branchId", branchId);
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  const body = document.getElementById("pcReportBody");
+  body.innerHTML = `<tr><td colspan="6">جاري التحميل...</td></tr>`;
+  try {
+    const rows = await api(`/api/talabat/payment-control-report?${qs.toString()}`);
+    body.innerHTML = rows.map(r => {
+      let statusPill;
+      if (!r.mismatch) statusPill = `<span class="pill ok">مطابق</span>`;
+      else if (r.has_approved_override) statusPill = `<span class="pill warn">فرق (تعديل معتمد)</span>`;
+      else statusPill = `<span class="pill err">فرق غير مبرَّر ⚠️</span>`;
+      return `
+        <tr>
+          <td>${esc(r.talabat_order_id)}</td>
+          <td>#${r.pos_order_id}</td>
+          <td>${esc(r.expected_payment_method) || esc(r.talabat_payment_code)}</td>
+          <td>${esc(r.actual_payment_method) || "—"}</td>
+          <td>${statusPill}</td>
+          <td>${dt(r.received_at)}</td>
+        </tr>
+      `;
+    }).join("") || `<tr><td colspan="6">مفيش أوردرات في الفترة دي</td></tr>`;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6">${e.message}</td></tr>`;
+  }
+}
+document.getElementById("pcFilterBtn").onclick = loadPaymentControlReport;
+
+async function boot() {
+  document.getElementById("main").style.display = "block";
+  document.getElementById("accessDenied").style.display = "none";
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("dashDateFilter").value = today;
+  document.getElementById("pcFromFilter").value = today;
+  document.getElementById("pcToFilter").value = today;
+  await loadBranches();
+  loadDashboard();
+}
+
+if (auth.token && auth.user) {
+  document.getElementById("userName").textContent = `${auth.user.name} (${auth.user.role})`;
+  hideLogin();
+  if (allowedRoles.includes(auth.user.role)) boot();
+  else document.getElementById("accessDenied").style.display = "block";
+} else {
+  showLogin();
+}
+</script>
+<script src="/js/theme.js"></script>
+</body>
+</html>

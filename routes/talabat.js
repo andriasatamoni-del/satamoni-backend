@@ -3,17 +3,33 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
-const { requireAuth } = require("../middleware/auth");
+const { requireAuth, assertOwnBranch } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/permissions");
 const { validateIdParam } = require("../middleware/validate-id-param");
 const payloadAdapter = require("../services/talabat/talabat-payload-adapter");
 const { syncNormalizedOrder } = require("../services/talabat/talabat-order-sync");
 const { cancelTalabatOrder } = require("../services/talabat/talabat-cancellation");
 const { runDailyReconciliation } = require("../services/talabat/talabat-reconciliation");
+const talabatClient = require("../services/talabat/talabat-client");
 const { getCairoBusinessDate } = require("../db/business-date");
 
 router.use(requireAuth);
 router.param("id", validateIdParam);
+
+// أدمن من غير branchId = كل الفروع (null). أي دور تاني لازم فرعه هو أو فرع صريح يمر بـassertOwnBranch -
+// نفس فلسفة routes/payment-control.js resolveBranchScope بالظبط
+function resolveBranchScope(req) {
+  const requested = req.query.branchId;
+  if (requested !== undefined && requested !== null && requested !== "") {
+    if (!assertOwnBranch(req.user, requested)) {
+      const err = new Error("معندكش صلاحية على فرع تاني");
+      err.code = "FORBIDDEN_BRANCH";
+      throw err;
+    }
+    return Number(requested);
+  }
+  return req.user.role === "admin" ? null : req.user.branchId || null;
+}
 
 // GET /api/talabat/integration-errors - شاشة "Integration Errors" (رؤية بس)
 router.get("/integration-errors", requirePermission("talabat.view"), async (req, res) => {
@@ -107,6 +123,103 @@ router.get("/reconciliation", requirePermission("talabat.reconciliation"), async
   try {
     const result = await runDailyReconciliation({ branchId, from, to });
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/talabat/dashboard-summary?branchId=&date= - لوحة تحكم التكامل (TAL-9): حالة الاتصال الصادقة
+// (مش "CONNECTED" كاذبة من غير أي نداء حقيقي ناجح فعلًا)، أوردرات اليوم حسب الحالة، ملخص طرق الدفع،
+// وآخر الاستثناءات المفتوحة.
+router.get("/dashboard-summary", requirePermission("talabat.view"), async (req, res) => {
+  let branchId;
+  try { branchId = resolveBranchScope(req); } catch (err) { return res.status(403).json({ error: err.message }); }
+  const date = req.query.date || getCairoBusinessDate();
+
+  // isConfigured()=true لسه معناه "الإعدادات متسجلة"، مش "اتأكدنا من نداء حقيقي ناجح" - غير كده معندناش
+  // client حقيقي يشتغل (getAccessToken لسه NOT_IMPLEMENTED) فمينفعش CONNECTED تتقال أبدًا دلوقتي
+  const connectionStatus = talabatClient.isConfigured() ? "CONFIGURED_UNVERIFIED" : "NOT_CONFIGURED";
+
+  try {
+    const branchCondition = branchId ? "AND branch_id = $2" : "";
+    const dateValues = branchId ? [date, branchId] : [date];
+
+    const ordersByStatus = await pool.query(
+      `SELECT order_status, COUNT(*)::int AS count
+       FROM talabat_orders
+       WHERE (received_at AT TIME ZONE 'Africa/Cairo')::date = $1 ${branchCondition}
+       GROUP BY order_status`,
+      dateValues
+    );
+
+    const paymentSummary = await pool.query(
+      `SELECT payment_method, COUNT(*)::int AS count, COALESCE(SUM(total), 0) AS total_amount
+       FROM talabat_orders
+       WHERE (received_at AT TIME ZONE 'Africa/Cairo')::date = $1 ${branchCondition}
+       GROUP BY payment_method`,
+      dateValues
+    );
+
+    const exceptionsConditions = ["status = 'OPEN'"];
+    const exceptionsValues = [];
+    if (branchId) { exceptionsConditions.push(`branch_id = $${exceptionsValues.length + 1}`); exceptionsValues.push(branchId); }
+    const exceptions = await pool.query(
+      `SELECT * FROM talabat_integration_errors WHERE ${exceptionsConditions.join(" AND ")} ORDER BY created_at DESC LIMIT 100`,
+      exceptionsValues
+    );
+
+    const counts = { RECEIVED: 0, MAPPING_ERROR: 0, IMPORTED: 0, FAILED: 0, CANCELED: 0 };
+    for (const row of ordersByStatus.rows) counts[row.order_status] = row.count;
+
+    res.json({
+      connectionStatus,
+      date,
+      ordersToday: counts,
+      paymentSummary: paymentSummary.rows.map((r) => ({
+        paymentMethod: r.payment_method, count: r.count, totalAmount: Number(r.total_amount),
+      })),
+      openExceptions: exceptions.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/talabat/payment-control-report?branchId=&from=&to= - "Talabat Payment Control": Talabat
+// Payment مقابل POS Payment الفعلي لكل أوردر، auto-flag لأي فرق - مبني بالكامل من بيانات موجودة فعلًا
+// (talabat_orders + orders + payment_methods)، صفر اعتماد على إدخال بشري.
+router.get("/payment-control-report", requirePermission("talabat.reconciliation"), async (req, res) => {
+  let branchId;
+  try { branchId = resolveBranchScope(req); } catch (err) { return res.status(403).json({ error: err.message }); }
+  const to = req.query.to || getCairoBusinessDate();
+  const from = req.query.from || to;
+  const conditions = [
+    "t.pos_order_id IS NOT NULL",
+    "(t.received_at AT TIME ZONE 'Africa/Cairo')::date BETWEEN $1 AND $2",
+  ];
+  const values = [from, to];
+  if (branchId) { conditions.push(`t.branch_id = $${values.length + 1}`); values.push(branchId); }
+  try {
+    const result = await pool.query(
+      `SELECT
+         t.talabat_order_id, t.pos_order_id, t.branch_id, t.received_at,
+         t.payment_method AS talabat_payment_code, expected_pm.name AS expected_payment_method,
+         o.payment_method_id AS actual_payment_method_id, actual_pm.name AS actual_payment_method,
+         (expected_pm.id IS DISTINCT FROM o.payment_method_id) AS mismatch,
+         EXISTS (
+           SELECT 1 FROM payment_audit_logs pal
+           WHERE pal.order_id = t.pos_order_id AND pal.action_type = 'ADJUSTMENT_APPROVED'
+         ) AS has_approved_override
+       FROM talabat_orders t
+       JOIN orders o ON o.id = t.pos_order_id
+       LEFT JOIN payment_methods expected_pm ON expected_pm.talabat_payment_code = t.payment_method
+       LEFT JOIN payment_methods actual_pm ON actual_pm.id = o.payment_method_id
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY t.received_at DESC
+       LIMIT 500`,
+      values
+    );
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
