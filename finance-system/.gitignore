@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+output/_work/
+output/*_pass*.xlsx
