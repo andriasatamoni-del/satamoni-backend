@@ -95,7 +95,7 @@ def D_(a, b, c, e):
     pass
 
 
-def build(out, demo=True, with_br04=True, period=None, ov=None, scale=1.0, tag=""):
+def build(out, demo=True, with_br04=True, period=None, ov=None, scale=1.0, tag="", hook=None):
     fc.REG.clear()
     fc.ALL.clear()
     ov = ov or {}
@@ -191,6 +191,8 @@ def build(out, demo=True, with_br04=True, period=None, ov=None, scale=1.0, tag="
         E = dict(sales_rows={})
         pc.samples = []
 
+    if hook:
+        hook(REG)
     # ---------------- إنشاء الأوراق (الترتيب = ترتيب التبويبات النهائي بعد إعادة الترتيب)
     b1.define_named_lists(wb)
     b1.build_lists(wb)
