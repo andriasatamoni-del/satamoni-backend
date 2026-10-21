@@ -11,7 +11,7 @@ body { direction: rtl; font-family: 'Noto Naskh Arabic','Amiri','Tahoma','DejaVu
 .page { page-break-after: always; padding: 0; min-height: 275mm; position: relative; }
 .page.wide { page: wide; min-height: 178mm; }
 .hdr { display:flex; align-items:center; justify-content:space-between; border:2px solid #0b4f5c; padding:6px 8px; }
-.logo { width:34mm; height:18mm; border:1px dashed #888; display:flex; align-items:center; justify-content:center; font-size:8pt; color:#666; text-align:center; }
+.logo { width:34mm; height:18mm; display:flex; align-items:center; justify-content:center; font-size:8pt; color:#666; text-align:center; }
 .title { text-align:center; flex:1; }
 .title h1 { margin:0; font-size:17pt; color:#0b4f5c; }
 .title div { font-size:9.5pt; color:#444; }
@@ -50,7 +50,7 @@ def form_html(f):
     cp = "، ".join(f"{n} ({col}) ← {h}" for n, col, h, w in f["copies"])
     when = "، ".join(f"{n}: {w}" for n, col, h, w in f["copies"] if w) or "—"
     out = [f'<section class="page {"wide" if wide else ""}">']
-    out.append(f'''<div class="hdr"><div class="logo">ضع شعار ستاموني هنا<br/>(Logo)</div>
+    out.append(f'''<div class="hdr"><div class="logo"><img src="LOGO_SRC" style="height:17mm"/></div>
       <div class="title"><h1>{e(f["title"])}</h1><div>مطاعم ستاموني | نموذج رقم {f["no"]} | الإصدار 1.0</div></div>
       <div class="serial">الرقم المسلسل:<br/><b>{e(f["prefix"])} - ______ - ________</b><div style="font-size:8pt;color:#555">(كود الموقع - تسلسل 4 خانات)</div></div></div>''')
     out.append('<div class="meta"><div class="f"><span>التاريخ:</span> ____ / ____ / 20____</div><div class="f"><span>الفرع / الموقع (الكود):</span></div><div class="f"><span>الوردية / الوقت:</span></div></div>')
@@ -74,6 +74,8 @@ def form_html(f):
 
 
 def build(outdir):
+    import base64
+    LOGO = 'data:image/jpeg;base64,' + base64.b64encode(open(os.path.join(os.path.dirname(__file__), '..', 'forms', 'assets', 'satamoni_logo.jpg'), 'rb').read()).decode()
     os.makedirs(outdir, exist_ok=True)
     parts = [f"<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'><title>نماذج مطاعم ستاموني</title><style>{CSS}</style></head><body>"]
     rows = "".join(f"<tr><td>{f['no']}</td><td>{e(f['title'])}</td><td>{e(f['prefix'])}</td><td>{len(f['copies'])}</td><td>{e('، '.join(h for n, col, h, w in f['copies']))}</td></tr>" for f in C.FORMS)
@@ -84,7 +86,7 @@ def build(outdir):
         parts.append(form_html(f))
     parts.append("</body></html>")
     hp = os.path.join(outdir, "Satamoni_Forms_A4.html")
-    open(hp, "w", encoding="utf-8").write("".join(parts))
+    open(hp, "w", encoding="utf-8").write("".join(parts).replace("LOGO_SRC", LOGO))
     chrome = (glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome") + glob.glob("/opt/pw-browsers/chromium*/chrome-linux*/chrome"))
     pdf = os.path.join(outdir, "Satamoni_Forms_A4.pdf")
     if chrome:
